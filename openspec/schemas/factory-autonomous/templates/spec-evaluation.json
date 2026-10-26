@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "kind": "spec-evaluate",
+  "verdict": "UNKNOWN",
+  "summary": "",
+  "findings": [],
+  "checked_criteria": [],
+  "limitations": [],
+  "payload": {
+    "dimensions": {
+      "intent_coverage": "CHANGES",
+      "consistency": "CHANGES",
+      "testability": "CHANGES",
+      "feasibility": "CHANGES",
+      "risk_controls": "CHANGES"
+    },
+    "counterexample": "",
+    "uncovered_requirements": []
+  }
+}

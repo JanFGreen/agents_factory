@@ -1,0 +1,35 @@
+{
+  "schema_version": "1",
+  "kind": "ui-review",
+  "verdict": "PASS",
+  "summary": "Operation history list is consistent with existing components, works on desktop and mobile, by keyboard, and handles all four states.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "low",
+      "blocking": false,
+      "requirement_ids": [],
+      "location": {"path": "src/history/ui/HistoryList.tsx", "line": 112},
+      "problem": "Amount column is left-aligned while other money columns in the app are right-aligned (evidence ev-shot-0201).",
+      "expected_fix": "Use the existing MoneyCell component for alignment.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Environment serves candidate tree 9f1c2e7",
+    "Desktop 1280 px and mobile 375 px screenshots of /history",
+    "Loading, empty, error and success states",
+    "Keyboard-only filter + pagination flow",
+    "Focus visibility, labels and contrast of new filter controls"
+  ],
+  "limitations": [],
+  "payload": {
+    "viewports": [
+      {"name": "desktop", "width": 1280, "evidence_ids": ["ev-shot-0201", "ev-shot-0203"]},
+      {"name": "mobile", "width": 375, "evidence_ids": ["ev-shot-0202", "ev-shot-0204"]}
+    ],
+    "states": {"loading": "PASS", "empty": "PASS", "error": "PASS", "success": "PASS"},
+    "a11y": {"keyboard": "PASS", "focus_visible": "PASS", "labels": "PASS", "contrast": "PASS"},
+    "consistency_notes": ["Pagination reuses components/Pager.tsx", "Filter select reuses components/Select.tsx"]
+  }
+}

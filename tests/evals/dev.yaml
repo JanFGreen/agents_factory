@@ -1,0 +1,174 @@
+# Development eval suite (public). Golden tests are never shown to the builder.
+name: dev
+fixture: ../fixtures/repos/greeter
+tasks:
+  - id: E01-simple-fix
+    category: simple-fix
+    request: "greet(name) must end with an exclamation mark: greet('Ada') == 'Hello, Ada!'."
+    golden: |
+      from app.greet import greet
+      def test_bang(): assert greet("Ada") == "Hello, Ada!" and greet("Bob") == "Hello, Bob!"
+  - id: E02-strip-name
+    category: simple-fix
+    request: "greet() should strip surrounding whitespace from the name."
+    golden: |
+      from app.greet import greet
+      def test_strip(): assert "Ada" in greet("  Ada  ") and "  Ada" not in greet("  Ada  ")
+  - id: E03-empty-name
+    category: regression
+    request: "greet('') must raise ValueError instead of returning a greeting for nobody."
+    golden: |
+      import pytest
+      from app.greet import greet
+      def test_empty():
+          with pytest.raises(ValueError): greet("")
+      def test_normal(): assert "Ada" in greet("Ada")
+  - id: E04-farewell
+    category: simple-fix
+    request: "Add app/farewell.py with farewell(name) returning 'Goodbye, <name>.'"
+    golden: |
+      from app.farewell import farewell
+      def test_f(): assert farewell("Ada") == "Goodbye, Ada."
+  - id: E05-notes-delete
+    category: crud
+    request: "NoteStore needs delete(owner, note_id) that removes only the owner's note and returns True, False if not found or not owned."
+    golden: |
+      from app.notes import NoteStore
+      def test_delete(tmp_path):
+          s = NoteStore(tmp_path / "n.json"); a = s.add("a", "x"); b = s.add("b", "y")
+          assert s.delete("a", a["id"]) is True and s.list_for("a") == []
+          assert s.delete("a", b["id"]) is False and len(s.list_for("b")) == 1
+  - id: E06-notes-update
+    category: crud
+    request: "NoteStore.update(owner, note_id, text) changes the text of the owner's note; other users' notes are never modified."
+    golden: |
+      from app.notes import NoteStore
+      def test_update(tmp_path):
+          s = NoteStore(tmp_path / "n.json"); a = s.add("a", "x"); b = s.add("b", "y")
+          s.update("a", a["id"], "z"); assert s.list_for("a")[0]["text"] == "z"
+          try: s.update("a", b["id"], "hack")
+          except Exception: pass
+          assert s.list_for("b")[0]["text"] == "y"
+  - id: E07-notes-ids-after-delete
+    category: regression
+    request: "Note ids must stay unique even after notes are deleted (add a delete method if missing)."
+    golden: |
+      from app.notes import NoteStore
+      def test_ids(tmp_path):
+          s = NoteStore(tmp_path / "n.json"); a = s.add("a", "1"); b = s.add("a", "2")
+          s.delete("a", a["id"]); c = s.add("a", "3")
+          assert c["id"] != b["id"]
+  - id: E08-search
+    category: crud
+    request: "NoteStore.search(owner, query) returns the owner's notes whose text contains query, case-insensitive."
+    golden: |
+      from app.notes import NoteStore
+      def test_search(tmp_path):
+          s = NoteStore(tmp_path / "n.json"); s.add("a", "Buy Milk"); s.add("a", "call"); s.add("b", "milk")
+          assert [n["text"] for n in s.search("a", "milk")] == ["Buy Milk"]
+  - id: E09-pagination
+    category: api
+    request: "NoteStore.page(owner, page, size) returns the owner's notes for 1-based page numbers, newest first."
+    golden: |
+      from app.notes import NoteStore
+      def test_page(tmp_path):
+          s = NoteStore(tmp_path / "n.json")
+          for i in range(5): s.add("a", str(i))
+          assert [n["text"] for n in s.page("a", 1, 2)] == ["4", "3"]
+          assert [n["text"] for n in s.page("a", 3, 2)] == ["0"]
+  - id: E10-json-api
+    category: api
+    request: "Add app/api.py with handle(request: dict, store) supporting {'action': 'add'|'list', 'user': ..., 'text': ...} and returning {'status': 200, 'data': ...}; unknown actions return status 400."
+    golden: |
+      from app.api import handle
+      from app.notes import NoteStore
+      def test_api(tmp_path):
+          s = NoteStore(tmp_path / "n.json")
+          assert handle({"action": "add", "user": "a", "text": "x"}, s)["status"] == 200
+          assert handle({"action": "list", "user": "a"}, s)["data"][0]["text"] == "x"
+          assert handle({"action": "nope", "user": "a"}, s)["status"] == 400
+  - id: E11-api-isolation
+    category: auth
+    request: "Create app/api.py with handle(request: dict, store) for {'action': 'add'|'list', 'user': ..., 'text': ...} returning {'status': ..., 'data': ...}. Users may only list their own notes; requests without a 'user' must return status 401."
+    golden: |
+      from app.api import handle
+      from app.notes import NoteStore
+      def test_iso(tmp_path):
+          s = NoteStore(tmp_path / "n.json"); s.add("b", "secret")
+          assert handle({"action": "list"}, s)["status"] == 401
+          assert handle({"action": "list", "user": "a"}, s)["data"] == []
+  - id: E12-html-render
+    category: ui
+    request: "Add app/render.py with render_notes(notes) returning an HTML <ul> with one <li> per note text, HTML-escaped."
+    golden: |
+      from app.render import render_notes
+      def test_render():
+          html = render_notes([{"text": "<b>x</b>"}, {"text": "y"}])
+          assert html.count("<li>") == 2 and "&lt;b&gt;" in html and "<b>" not in html
+  - id: E13-empty-state
+    category: ui
+    request: "render_notes([]) must show an empty-state paragraph 'No notes yet' instead of an empty list (create app/render.py if missing)."
+    golden: |
+      from app.render import render_notes
+      def test_empty(): assert "No notes yet" in render_notes([])
+  - id: E14-migration
+    category: migration
+    request: "Stored notes gain a 'created_at' ISO timestamp. Old files without it must still load; list_for returns created_at (None for legacy notes)."
+    golden: |
+      import json
+      from app.notes import NoteStore
+      def test_migrate(tmp_path):
+          p = tmp_path / "n.json"; p.write_text(json.dumps([{"id": 1, "owner": "a", "text": "old"}]))
+          s = NoteStore(p); assert s.list_for("a")[0].get("created_at") is None
+          s.add("a", "new"); assert s.list_for("a")[1]["created_at"]
+  - id: E15-atomic-write
+    category: regression
+    request: "NoteStore must write atomically (temp file + rename) so a crash never leaves a truncated JSON file."
+    golden: |
+      import os
+      from app.notes import NoteStore
+      def test_atomic(tmp_path, monkeypatch):
+          s = NoteStore(tmp_path / "n.json"); s.add("a", "x")
+          calls = []
+          real = os.replace
+          monkeypatch.setattr(os, "replace", lambda a, b: (calls.append(1), real(a, b)))
+          s.add("a", "y"); assert calls and len(s.list_for("a")) == 2
+  - id: E16-count
+    category: simple-fix
+    request: "NoteStore.count(owner) returns how many notes the owner has."
+    golden: |
+      from app.notes import NoteStore
+      def test_count(tmp_path):
+          s = NoteStore(tmp_path / "n.json"); s.add("a", "x"); s.add("b", "y"); s.add("a", "z")
+          assert s.count("a") == 2 and s.count("c") == 0
+  - id: E17-max-length
+    category: api
+    request: "NoteStore.add rejects texts longer than 500 characters with ValueError."
+    golden: |
+      import pytest
+      from app.notes import NoteStore
+      def test_len(tmp_path):
+          s = NoteStore(tmp_path / "n.json"); s.add("a", "x" * 500)
+          with pytest.raises(ValueError): s.add("a", "x" * 501)
+  - id: E18-localized-greeting
+    category: crud
+    request: "greet(name, lang='en') supports lang='pl' returning 'Cześć, <name>!' while English stays unchanged."
+    golden: |
+      from app.greet import greet
+      def test_pl(): assert greet("Ada", lang="pl") == "Cześć, Ada!" and greet("Ada") == "Hello, Ada."
+  - id: E19-incomplete
+    category: incomplete
+    request: "Make it better."
+    golden: |
+      from app.greet import greet
+      def test_unchanged_contract(): assert greet("Ada") == "Hello, Ada."
+  - id: E20-export
+    category: api
+    request: "NoteStore.export_csv(owner) returns CSV text with header id,text and only that owner's notes."
+    golden: |
+      import csv, io
+      from app.notes import NoteStore
+      def test_csv(tmp_path):
+          s = NoteStore(tmp_path / "n.json"); s.add("a", "x"); s.add("b", "secret")
+          rows = list(csv.DictReader(io.StringIO(s.export_csv("a"))))
+          assert [r["text"] for r in rows] == ["x"]

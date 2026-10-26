@@ -1,0 +1,53 @@
+{
+  "schema_version": "1",
+  "kind": "select-option",
+  "verdict": "BLOCKED",
+  "summary": "No feasible option: both options require reading the payments ledger, for which the job has no authorized credential (FAILED_NO_FEASIBLE_OPTION).",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-1"],
+      "location": {"path": "openspec/changes/add-operation-history/options.md", "line": 12},
+      "problem": "OPT-A needs read access to the ledger service API; factory policy lists no credential for it (policy grants: app DB read/write only).",
+      "expected_fix": "Operator grants a scoped ledger read credential, or the request is revised to exclude ledger operations.",
+      "status": "open"
+    },
+    {
+      "id": "F-2",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-1"],
+      "location": {"path": "openspec/changes/add-operation-history/options.md", "line": 40},
+      "problem": "OPT-B replicates ledger rows nightly, which needs the same credential and adds a new trust boundary not allowed by constraints.",
+      "expected_fix": "Same as F-1; no option can satisfy REQ-1 without ledger access.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Hard constraints and policy credentials checked for OPT-A and OPT-B"
+  ],
+  "limitations": [],
+  "payload": {
+    "options": [
+      {
+        "option_id": "OPT-A",
+        "feasible": false,
+        "infeasible_reasons": ["Requires ledger API credential not granted by policy"],
+        "ratings": {"goal_fit": 5, "correctness": 4, "maintainability": 4, "delivery_time": 3, "cost": 3},
+        "estimated_cost_usd": 5.0,
+        "estimated_minutes": 100
+      },
+      {
+        "option_id": "OPT-B",
+        "feasible": false,
+        "infeasible_reasons": ["Requires ledger API credential not granted by policy", "Introduces a new trust boundary (nightly replication job)"],
+        "ratings": {"goal_fit": 4, "correctness": 3, "maintainability": 2, "delivery_time": 2, "cost": 3},
+        "estimated_cost_usd": 6.0,
+        "estimated_minutes": 140
+      }
+    ],
+    "selected_option_id": null
+  }
+}

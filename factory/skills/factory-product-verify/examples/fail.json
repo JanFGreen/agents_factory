@@ -1,0 +1,60 @@
+{
+  "schema_version": "1",
+  "kind": "product-verify",
+  "verdict": "CHANGES",
+  "summary": "QA: pagination loses the active filter after reload, and page 2 returns rows of another user when the filter is applied.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "critical",
+      "blocking": true,
+      "requirement_ids": ["REQ-1"],
+      "location": {"path": "src/history/api.py", "line": 58},
+      "problem": "GET /api/history?type=transfer&page=2 as user-a returned 3 rows with owner_id=user-b (evidence ev-e2e-0151, ev-db-0152); the filtered query path drops the owner condition.",
+      "expected_fix": "Apply the server-verified owner filter on every query path, including the filtered one, and add the isolation scenario SC-1-2 for filtered pages.",
+      "status": "open"
+    },
+    {
+      "id": "F-2",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "src/history/ui/HistoryList.tsx", "line": 77},
+      "problem": "After reload on page 2 with type=transfer the list shows page 1 unfiltered; URL query parameters are not read on mount (evidence ev-e2e-0153).",
+      "expected_fix": "Initialize filter and page state from the URL so that reload preserves both.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Environment serves candidate tree 4b7d0aa (GET /version)",
+    "AC-1 isolation without filter",
+    "AC-1 isolation with filter",
+    "AC-2 filter and pagination after reload"
+  ],
+  "limitations": [],
+  "payload": {
+    "perspective": "qa",
+    "environment": "local-sandbox job-01 http://127.0.0.1:18042 seed=history-v2",
+    "criteria": [
+      {
+        "acceptance_id": "AC-1",
+        "requirement_ids": ["REQ-1"],
+        "scenario_ids": ["SC-1-1", "SC-1-2"],
+        "action": "GET /api/history?type=transfer&page=2 as user-a; compare owner_id with DB",
+        "observed": "3 of 10 rows have owner_id=user-b",
+        "evidence_ids": ["ev-e2e-0151", "ev-db-0152"],
+        "result": "FAIL"
+      },
+      {
+        "acceptance_id": "AC-2",
+        "requirement_ids": ["REQ-2"],
+        "scenario_ids": ["SC-2-1"],
+        "action": "Filter type=transfer, open page 2, reload browser",
+        "observed": "After reload page 1 without filter is shown",
+        "evidence_ids": ["ev-e2e-0153"],
+        "result": "FAIL"
+      }
+    ],
+    "intent_gaps": []
+  }
+}

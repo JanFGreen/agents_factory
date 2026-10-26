@@ -1,0 +1,36 @@
+{
+  "schema_version": "1",
+  "kind": "security-review",
+  "verdict": "BLOCKED",
+  "summary": "New Stripe webhook handler: signature verification cannot be confirmed without a test-mode signing secret, which the job is not granted.",
+  "findings": [
+    {
+      "id": "F-14",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-5"],
+      "location": {"path": "src/billing/webhooks.py", "line": 17},
+      "problem": "Handler calls stripe.Webhook.construct_event with STRIPE_WEBHOOK_SECRET; policy grants no test-mode secret, so rejection of unsigned/replayed events cannot be exercised (risk trigger: webhook).",
+      "expected_fix": "Operator provides a test-mode webhook secret scoped to the sandbox, or a recorded signed fixture from the trusted evidence store.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Depth full: triggers 'webhook' and 'credential handling'",
+    "Policy credential grants inspected",
+    "Secret scan of diff (no secret committed)"
+  ],
+  "limitations": ["Production webhook endpoints are out of scope and were not contacted"],
+  "payload": {
+    "review_depth": "full",
+    "trust_boundaries": [
+      {"boundary": "HTTP POST /webhooks/stripe", "change": "new inbound webhook", "controls": ["signature verification (unverified)"], "evidence_ids": []}
+    ],
+    "threats": [
+      {"id": "T-1", "category": "authn", "description": "Forged or replayed webhook events accepted", "mitigated": false, "evidence_ids": []}
+    ],
+    "observed_risk": "high",
+    "risk_raise_required": true,
+    "secrets_detected": false
+  }
+}

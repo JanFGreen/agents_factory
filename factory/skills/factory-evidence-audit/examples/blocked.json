@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "kind": "evidence-audit",
+  "verdict": "BLOCKED",
+  "summary": "The only evidence for REQ-1 is a gate report written by the builder into the worktree; untrusted producer, merge recommendation blocked.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "critical",
+      "blocking": true,
+      "requirement_ids": ["REQ-1"],
+      "location": {"path": "reports/gate-pass.json", "line": null},
+      "problem": "File reports/gate-pass.json claims 'isolation tests PASS' but has no trusted-runner record (no argv, exit code or stdout hash in the evidence store); it was added in builder commit c71f2b9.",
+      "expected_fix": "Controller discards the file as evidence, records a policy event for the builder attempt, and runs SC-1-2 through the trusted runner.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Producer of each evidence item for REQ-1..REQ-3"
+  ],
+  "limitations": ["Remaining requirements not audited after trust breach"],
+  "payload": {
+    "candidate": {"head_sha": "c71f2b9a0e4d8c6b2a1f5e9d3c7b0a4e8f2d6c1b", "base_sha": "3a9e0c41d2b7f6e8a1c5d9b0e4f7a2c6d8b1e3f5", "spec_digest": "sha256:5d1f9a3c7e2b8d4f0a6c1e9b3d7f5a2c8e0b4d6f1a3c5e7b9d2f4a6c8e0b1d3f", "policy_digest": "sha256:a2c4e6b8d0f1a3c5e7b9d1f3a5c7e9b0d2f4a6c8e1b3d5f7a9c0e2b4d6f8a1c3"},
+    "criteria": [
+      {"requirement_id": "REQ-1", "status": "missing", "evidence_ids": [], "identity_match": false, "producer_trusted": false, "reason": "Only builder-written report available"}
+    ],
+    "stale_reports": [],
+    "missing_reports": ["trusted check run for SC-1-2"],
+    "recommendation": "block"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": "1",
+  "kind": "code-review",
+  "verdict": "BLOCKED",
+  "summary": "Cannot review: the diff artifact for head 5c0e88a9d311 is missing from the evidence store and the worktree was already cleaned up.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "artifacts/diff-task-03-attempt-2.patch", "line": null},
+      "problem": "Request references artifact diff-task-03-attempt-2 (sha256 listed in input identity) but the store returns not-found; worktree path /factory-data/worktrees/job-01/task-03 does not exist.",
+      "expected_fix": "Controller restores the worktree at head 5c0e88a9d311 or re-exports the diff, then re-runs the review.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": ["Input artifacts resolved against the evidence store"],
+  "limitations": ["No code read; no requirement traced"],
+  "payload": {
+    "reviewed_head_sha": "5c0e88a9d311",
+    "diff_stats": {"files": 0, "insertions": 0, "deletions": 0},
+    "requirements_checked": [],
+    "scope_creep": [],
+    "reclassification_signal": {"suggested_complexity": null, "reason": ""}
+  }
+}

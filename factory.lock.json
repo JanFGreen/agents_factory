@@ -1,0 +1,24 @@
+{
+  "openspec": {
+    "package": "@fission-ai/openspec",
+    "version": "1.15.0",
+    "node_required": ">=20.19.0",
+    "node_verified": "v20.20.0",
+    "installed_at": "tools/openspec",
+    "binary": "tools/openspec/node_modules/.bin/openspec",
+    "schema": "factory-autonomous",
+    "verified_commands": [
+      "openspec --version",
+      "openspec --help",
+      "openspec schema --help",
+      "openspec schema fork spec-driven factory-autonomous",
+      "openspec schema validate factory-autonomous",
+      "openspec schema which factory-autonomous",
+      "openspec templates --schema factory-autonomous",
+      "openspec new change <id>",
+      "openspec status --change <id>",
+      "openspec instructions apply --change <id>",
+      "openspec validate --all"
+    ]
+  }
+}

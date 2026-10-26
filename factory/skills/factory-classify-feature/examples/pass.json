@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "kind": "classify-feature",
+  "verdict": "PASS",
+  "summary": "FEAT-042 scored 5 across six dimensions with a new user-data endpoint (new trust boundary); risk medium because results must be isolated per user.",
+  "findings": [],
+  "checked_criteria": [
+    "All six dimensions scored with repository evidence",
+    "Known pattern searched (src/orders/list.py offers filter+pagination)",
+    "Trust boundaries from repo-map compared with the planned change",
+    "Policy risk floor for src/history/** (medium) respected"
+  ],
+  "limitations": [],
+  "payload": {
+    "dimensions": {
+      "scope": {"score": 1, "evidence": "Touches src/history/ (new) and src/web/pages/history.tsx; one backend module and one view."},
+      "coupling": {"score": 1, "evidence": "Reads src/operations/models.py:Operation used by 3 callers (grep 'Operation(' -> 3 hits)."},
+      "state_and_data": {"score": 1, "evidence": "New indexed query on operations(user_id, created_at); no migration of existing rows."},
+      "interfaces": {"score": 1, "evidence": "Additive GET /api/history endpoint; no change to existing routes in src/api/routes.py."},
+      "uncertainty": {"score": 0, "evidence": "Same filter+cursor pattern exists in src/orders/list.py:12-58."},
+      "verification": {"score": 1, "evidence": "API integration tests plus one UI E2E for filter+reload; harness in tests/e2e exists."}
+    },
+    "risk": "medium",
+    "risk_reasons": [
+      "Returns per-user operation data; must filter by server-verified user id (constraint 'Do not expose data of other users')",
+      "New HTTP endpoint is a new trust boundary"
+    ],
+    "single_atomic_task": false,
+    "known_pattern": true,
+    "new_trust_boundary": true,
+    "forced_complex_reasons": []
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": "1",
+  "kind": "intake",
+  "verdict": "BLOCKED",
+  "summary": "FEAT-044 requires a retention period for operation history that is a legal decision not present in the request or repository (NEEDS_INFO).",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "features/FEAT-044.yaml", "line": 3},
+      "problem": "Request: 'Keep operation history as long as the law requires and delete it afterwards.' No retention period is defined in docs/compliance.md or config; guessing it would create a business rule.",
+      "expected_fix": "Product owner provides the retention period (in months) and the deletion trigger as a new feature revision.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Snapshot hash matches",
+    "docs/compliance.md and config/*.yaml searched for a retention period (none found)"
+  ],
+  "limitations": [],
+  "payload": {
+    "goal": "Operation history is retained for the legally required period and deleted afterwards.",
+    "acceptance_criteria": [
+      "Operations older than the retention period are no longer returned or stored."
+    ],
+    "constraints": ["Deletion must not affect operations still inside the retention period"],
+    "open_questions": ["What is the legally required retention period, and does it differ per operation type?"],
+    "future_directions": []
+  }
+}

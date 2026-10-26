@@ -1,0 +1,29 @@
+{
+  "schema_version": "1",
+  "kind": "plan",
+  "verdict": "CHANGES",
+  "summary": "Selected OPT-B (materialized view) conflicts with REQ-2 requiring results fresh within 1 second; plan cannot satisfy the spec without a different option.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "openspec/changes/add-operation-history/decision.json", "line": null},
+      "problem": "OPT-B refreshes the materialized view every 15 minutes (options.md line 31); REQ-2 scenario 'new operation visible after reload' requires immediate visibility.",
+      "expected_fix": "Re-run option selection in the next analysis round with the freshness constraint applied to OPT-B, or amend options with an incremental refresh variant.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "decision.json and spec-evaluation.json are current",
+    "Selected option checked against every requirement scenario"
+  ],
+  "limitations": ["No tasks emitted because the selected option does not satisfy REQ-2"],
+  "payload": {
+    "tasks": [],
+    "future_needs": [
+      {"description": "Export of operation history", "status": "hypothetical"}
+    ]
+  }
+}

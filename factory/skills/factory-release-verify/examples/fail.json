@@ -1,0 +1,44 @@
+{
+  "schema_version": "1",
+  "kind": "release-verify",
+  "verdict": "CHANGES",
+  "summary": "Post-release SLO check failed: p95 of /api/history is 1.9 s under staging load; release FAILED, repair task opened with incident priority, rollback recommended (no data migration in this change).",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "src/history/repository.py", "line": 33},
+      "problem": "p95 latency of /api/history?type=... rose from 180 ms to 1900 ms within 12 minutes of release (ev-rel-0514); slow query log shows sequential scan on operations filtered by type (ev-rel-0515).",
+      "expected_fix": "Repair task with incident priority: add an index or adjust the query for (owner_id, type, created_at) and add a performance check; release broker may roll back to the previous artifact under its existing authorization.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Pre-release requirements present",
+    "Version endpoint reports expected artifact digest",
+    "Healthcheck probes",
+    "Synthetic flow",
+    "Error rate versus baseline",
+    "p95 latency of /api/history versus SLO 400 ms"
+  ],
+  "limitations": [],
+  "payload": {
+    "release_enabled": true,
+    "not_applicable_reason": null,
+    "artifact_id": "ghcr.io/acme/app@sha256:4f8a2c6e1b9d3f7a0c5e8b2d6f1a4c9e3b7d0f5a8c2e6b1d9f4a7c3e0b5d8f2a",
+    "environment": "staging",
+    "pre_release": {"rollback_plan": true, "permissions_ok": true},
+    "observation_window_minutes": 30,
+    "checks": [
+      {"name": "version", "result": "PASS", "observed": "GET /version returns sha 5e2a9c1", "evidence_ids": ["ev-rel-0510"]},
+      {"name": "healthcheck", "result": "PASS", "observed": "/healthz 200 OK in 72/72 probes until stop", "evidence_ids": ["ev-rel-0511"]},
+      {"name": "synthetic_flow", "result": "PASS", "observed": "Flow succeeded but took 4.1 s end to end", "evidence_ids": ["ev-rel-0512"]},
+      {"name": "error_rate", "result": "PASS", "observed": "5xx rate 0.04% vs baseline 0.03%", "evidence_ids": ["ev-rel-0513"]},
+      {"name": "slo", "result": "FAIL", "observed": "p95 /api/history 1900 ms (SLO 400 ms)", "evidence_ids": ["ev-rel-0514", "ev-rel-0515"]}
+    ],
+    "release_state": "FAILED",
+    "rollback_recommended": true
+  }
+}

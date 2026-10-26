@@ -1,0 +1,39 @@
+{
+  "schema_version": "1",
+  "kind": "root-cause",
+  "verdict": "CHANGES",
+  "summary": "Failure is intermittent (3 of 5 identical runs fail); race vs. shared test DB not yet distinguished, so the experiment must run before another build attempt.",
+  "findings": [
+    {
+      "id": "F-10",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-3"],
+      "location": {"path": "tests/history/test_api.py", "line": 88},
+      "problem": "test_only_own_operations is FLAKY: identical argv and head_sha 3f9c2a1e7b4d produced pass/fail (ev-rc-0011, ev-rc-0012). Two hypotheses remain open.",
+      "expected_fix": "Run the discriminating experiment (isolated DB per test, pytest -p no:randomly) and report which hypothesis holds before any code change.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Fingerprint match across attempts 1 and 2",
+    "Reproduction attempted; non-determinism observed",
+    "Hypotheses listed with evidence"
+  ],
+  "limitations": ["Experiment needs a second DB instance, not allowed in this read-only run"],
+  "payload": {
+    "failure_fingerprint": "pytest:tests/history/test_api.py::test_only_own_operations:AssertionError:foreign owner_id",
+    "error_class": "FLAKY",
+    "reproduction": {"argv": ["pytest", "tests/history/test_api.py", "-q"], "reproduced": true, "evidence_ids": ["ev-rc-0011", "ev-rc-0012"]},
+    "hypotheses": [
+      {"id": "H-1", "statement": "Tests share one DB and another test inserts user B rows without cleanup", "supporting_evidence": ["conftest.py:12 uses session-scoped db fixture"], "refuting_evidence": [], "status": "open"},
+      {"id": "H-2", "statement": "Request handler caches the previous user's query result", "supporting_evidence": ["src/history/api.py:23 module-level lru_cache"], "refuting_evidence": [], "status": "open"}
+    ],
+    "discriminating_experiment": {
+      "description": "Run the test file with a function-scoped fresh DB and random order disabled",
+      "expected_if_true": "H-1: failures disappear with isolated DB",
+      "expected_if_false": "H-2: failures persist with isolated DB"
+    },
+    "route_to": "BUILD"
+  }
+}

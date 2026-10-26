@@ -1,0 +1,77 @@
+# Agent Factory — wariant A (adapter Claude). Wartości startowe do ewaluacji, nie optimum.
+schema_version: 1
+data_dir: "~/.local/share/agent-factory"   # stan runtime poza repo: SQLite, artefakty, worktree, logi
+execution:
+  max_active_jobs: 1
+  max_agent_processes: 4
+  max_builders_per_job: 1
+  max_test_processes: 2
+  max_integration_candidates: 1
+  lease_ttl_seconds: 120
+  heartbeat_seconds: 20
+  command_timeout_seconds: 600
+  reviewer_timeout_seconds: 900
+  job_deadline_minutes: 120
+attempts:
+  intake: 2
+  feature_analysis_rounds: 3
+  task_build_and_review: 3
+  total_feature_build_attempts: 30
+  integration_rebuilds: 2
+  structured_output_repair: 1
+budget:
+  currency: USD
+  hard_limit_per_job: 25
+  warning_fraction: 0.70
+  reserve_for_verification_fraction: 0.25
+  unknown_price_policy: require_operator_limit
+  max_cost_per_agent_call: 1.50        # konserwatywna rezerwacja i --max-budget-usd na wywołanie
+policy:
+  mode: local                          # offline | local | pr | automerge | release
+  deploy: false
+  external_messages: false
+  protected_paths:                     # transytywne wejścia oceny: builder nie może ich zmieniać
+    - "factory/*"
+    - "openspec/*"
+    - ".github/*"
+    - "pytest.ini"
+    - "conftest.py"
+    - "*/conftest.py"
+    - "setup.cfg"
+    - "tox.ini"
+    - "pyproject.toml"
+    - "package.json"
+    - "jest.config.*"
+    - "vitest.config.*"
+    - "Makefile"
+  risk_path_rules:
+    high: ["*auth*", "*login*", "*permission*", "*migrations/*", "*secret*", "*payment*"]
+    medium: ["*api*", "*models*", "*schema*", "*db*"]
+merge:
+  enabled: false                       # włącz raz po konfiguracji docelowego repo
+  human_interaction: "off"             # off | before_merge | on_risk (tekst, nie boolean)
+  human_review_risk_levels: [high]
+  approval_timeout_action: wait
+  require_current_head: true
+  require_required_checks: true
+  allow_admin_bypass: false
+runtime:
+  claude_binary: claude
+  sandbox: required
+  # Modele są wyborem operatora; patrz docs/factory/model-routing.md (wymagają benchmarku ról).
+  roles:
+    default:                { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
+    intake:                 { runtime: claude, model: claude-haiku-5-5, tools: [Read, Glob, Grep] }
+    classifier:             { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
+    planner:                { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
+    decision:               { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
+    spec_author:            { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
+    spec_evaluator:         { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
+    decomposition_reviewer: { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
+    builder:                { runtime: claude, model: claude-sonnet-5-5, effort: high, tools: [Read, Edit, Write, Glob, Grep, Bash] }
+    code_reviewer:          { runtime: claude, model: claude-opus-5-5, effort: medium, tools: [Read, Glob, Grep] }
+    security_reviewer:      { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
+    ui_reviewer:            { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
+    product_evaluator:      { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep, Bash] }
+    test_reviewer:          { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
+    integration_evaluator:  { runtime: claude, model: claude-opus-5-5, effort: medium, tools: [Read, Glob, Grep] }

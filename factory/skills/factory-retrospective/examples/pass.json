@@ -1,0 +1,46 @@
+{
+  "schema_version": "1",
+  "kind": "retrospective",
+  "verdict": "PASS",
+  "summary": "INC-3 (cross-user rows on filtered page 2 found after merge) is an evaluation-layer false PASS: AC-1 and its counterexample ignored the filtered query path. Two proposals with regression tests, as a separate PR.",
+  "findings": [],
+  "checked_criteria": [
+    "Timeline rebuilt from events 1-214 of job-07",
+    "First wrong acceptance located: spec-evaluate round 1 PASS (report rv-se-0012)",
+    "Harness ruled out: runner records show 38 executed tests, correct candidate",
+    "Model layer ruled out: no evidence of model-specific behavior; same rubric gap reproduced on eval fixture",
+    "Each proposal has a regression test and targets a separate PR"
+  ],
+  "limitations": [],
+  "payload": {
+    "incident_ref": "job-07 FEAT-042 escaped defect INC-3",
+    "failure_layer": "evaluation",
+    "timeline": [
+      {"at": "2026-10-26T18:02:11Z", "event": "spec-evaluate PASS round 1 (rv-se-0012); counterexample covered unfiltered list only"},
+      {"at": "2026-10-26T19:15:40Z", "event": "product-verify qa PASS; isolation checked without filter (ev-e2e-0140)"},
+      {"at": "2026-10-26T20:01:05Z", "event": "MERGED PR #118"},
+      {"at": "2026-10-26T21:30:00Z", "event": "Operator reports user-b rows on filtered page 2 (INC-3)"}
+    ],
+    "root_cause": "AC-1 required isolation only for the default list; spec-evaluate's counterexample did not consider the filtered query path, so a filter query without owner condition passed all criteria.",
+    "proposals": [
+      {
+        "id": "P-1",
+        "change": "factory-spec-evaluate v2: require one counterexample per distinct data access path named in the spec for risk_controls on data isolation",
+        "target_files": ["factory/skills/factory-spec-evaluate/SKILL.md", "factory/prompts/spec-evaluator.v2.md"],
+        "regression_test": "tests/evals/spec_evaluate/test_filtered_isolation_counterexample.py (fixture spec of FEAT-042 round 1 must yield CHANGES)",
+        "separate_pr": true
+      },
+      {
+        "id": "P-2",
+        "change": "Add holdout category 'isolation under every filter combination' for features touching per-user data",
+        "target_files": ["factory/policies/holdout-categories.yaml"],
+        "regression_test": "tests/evals/product_verify/test_isolation_filtered_holdout.py",
+        "separate_pr": true
+      }
+    ],
+    "metrics": [
+      {"name": "escaped_defects_per_10_features", "value": "1"},
+      {"name": "spec_evaluate_false_pass_cases_in_suite", "value": "0 -> 1 added"}
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": "1",
+  "kind": "classify-feature",
+  "verdict": "BLOCKED",
+  "summary": "Repo map is stale: it was produced for base 3f1c9e2 but the job base is 8a77d01, which moved src/operations/ to packages/core/.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "packages/core/operations/models.py", "line": null},
+      "problem": "Request digest lists repo-map for base 3f1c9e2; git shows base 8a77d01 with src/operations/ removed (git diff --stat 3f1c9e2 8a77d01: 41 files renamed). Evidence from the old map would be wrong.",
+      "expected_fix": "Controller re-runs factory-repo-map for base 8a77d01, then re-runs classification.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Repo-map base compared with job base_sha"
+  ],
+  "limitations": ["No dimension scored; inputs stale"],
+  "payload": {
+    "dimensions": {
+      "scope": {"score": null, "evidence": "Not assessed: stale repo map."},
+      "coupling": {"score": null, "evidence": "Not assessed: stale repo map."},
+      "state_and_data": {"score": null, "evidence": "Not assessed: stale repo map."},
+      "interfaces": {"score": null, "evidence": "Not assessed: stale repo map."},
+      "uncertainty": {"score": null, "evidence": "Not assessed: stale repo map."},
+      "verification": {"score": null, "evidence": "Not assessed: stale repo map."}
+    },
+    "risk": "medium",
+    "risk_reasons": ["Intake risk floor medium (per-user data); kept until reassessed"],
+    "single_atomic_task": false,
+    "known_pattern": false,
+    "new_trust_boundary": true,
+    "forced_complex_reasons": []
+  }
+}

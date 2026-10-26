@@ -1,0 +1,34 @@
+{
+  "schema_version": "1",
+  "kind": "spec-author",
+  "verdict": "BLOCKED",
+  "summary": "OpenSpec CLI unavailable in the job sandbox: tools/openspec/node_modules is missing, so the change cannot be validated against factory-autonomous.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "tools/openspec/package.json", "line": null},
+      "problem": "Running tools/openspec/node_modules/.bin/openspec --version failed: 'No such file or directory'. factory.lock.json pins @fission-ai/openspec 1.15.0 but it is not installed in this worktree.",
+      "expected_fix": "Environment setup runs 'npm ci --prefix tools/openspec' (BLOCKED_ENV); re-run spec-author afterwards. Do not substitute npx @latest.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Pinned OpenSpec version read from factory.lock.json",
+    "Local binary presence checked"
+  ],
+  "limitations": ["Artifacts drafted but not validated; not handed to evaluation"],
+  "payload": {
+    "requirements": [
+      {"id": "REQ-1", "text": "The history SHALL contain only operations owned by the authenticated user.", "source": "original_request"}
+    ],
+    "intent_map": [
+      {"intent": "find own earlier operation", "requirement_ids": ["REQ-1"]}
+    ],
+    "acceptance_criteria": [
+      {"id": "AC-1", "requirement_ids": ["REQ-1"], "observable": "GET /api/history as user A returns only rows owned by A."}
+    ]
+  }
+}

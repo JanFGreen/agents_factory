@@ -1,0 +1,35 @@
+{
+  "schema_version": "1",
+  "kind": "release-verify",
+  "verdict": "BLOCKED",
+  "summary": "Pre-release check failed: the change contains migration 0043 and the rollback plan has no verified reverse procedure; release must not start.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "migrations/0043_history_index.py", "line": null},
+      "problem": "Rollback plan in docs/factory/operations.md covers artifact rollback only; migration 0043 has no tested downgrade, so a rollback would leave schema and code inconsistent.",
+      "expected_fix": "Provide and test the downgrade procedure for 0043 (or declare forward-fix-only with operator authorization) before release.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "artifact_id and environment present",
+    "Release tool permissions",
+    "Rollback plan completeness including data migrations"
+  ],
+  "limitations": ["No post-release checks: release not started"],
+  "payload": {
+    "release_enabled": true,
+    "not_applicable_reason": null,
+    "artifact_id": "ghcr.io/acme/app@sha256:4f8a2c6e1b9d3f7a0c5e8b2d6f1a4c9e3b7d0f5a8c2e6b1d9f4a7c3e0b5d8f2a",
+    "environment": "staging",
+    "pre_release": {"rollback_plan": false, "permissions_ok": true},
+    "observation_window_minutes": 30,
+    "checks": [],
+    "release_state": "PENDING",
+    "rollback_recommended": false
+  }
+}

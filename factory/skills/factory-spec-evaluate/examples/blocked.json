@@ -1,0 +1,34 @@
+{
+  "schema_version": "1",
+  "kind": "spec-evaluate",
+  "verdict": "BLOCKED",
+  "summary": "Feasibility cannot be established: REQ-5 requires operations from the external ledger service, and policy grants no ledger credential.",
+  "findings": [
+    {
+      "id": "F-3",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-5"],
+      "location": {"path": "openspec/changes/add-operation-history/specs/operation-history/spec.md", "line": 41},
+      "problem": "REQ-5 'History SHALL include card operations' — card operations exist only in the ledger service (src/integrations/ledger_client.py, LEDGER_TOKEN). factory/policies lists no LEDGER_TOKEN for this repo; no option can satisfy REQ-5 in the sandbox.",
+      "expected_fix": "Operator grants a scoped read-only ledger credential for test environments, or the feature owner submits a revision; the factory will not drop REQ-5 itself.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "intent_coverage, consistency, testability and risk_controls evaluated",
+    "feasibility checked against policy credentials and repo-map trust boundaries"
+  ],
+  "limitations": ["Feasibility depends on an operator decision outside the analysis rounds"],
+  "payload": {
+    "dimensions": {
+      "intent_coverage": "PASS",
+      "consistency": "PASS",
+      "testability": "PASS",
+      "feasibility": "CHANGES",
+      "risk_controls": "PASS"
+    },
+    "counterexample": "Show card operations from a cached CSV fixture: rejected by AC-5, which requires operations created in the ledger test environment to appear within 1 minute.",
+    "uncovered_requirements": []
+  }
+}

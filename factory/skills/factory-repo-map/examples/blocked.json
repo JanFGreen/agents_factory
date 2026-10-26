@@ -1,0 +1,39 @@
+{
+  "schema_version": "1",
+  "kind": "repo-map",
+  "verdict": "BLOCKED",
+  "summary": "Dependencies cannot be installed: uv.lock references a private index requiring a credential the job does not have, and network is not granted.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "pyproject.toml", "line": 38},
+      "problem": "[[tool.uv.index]] 'internal' at https://pypi.internal.example points to a private index; 'uv sync --frozen' failed with 401 (artifact-install-8a77d01). No credential for this index in policy.",
+      "expected_fix": "Operator provides a read-only index credential to the sandbox or a pre-populated package cache; then re-run repo-map.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Worktree HEAD equals base_sha",
+    "Install command attempted via trusted runner"
+  ],
+  "limitations": ["No baseline tests could run without installed dependencies"],
+  "payload": {
+    "repo_instructions": ["AGENTS.md"],
+    "commands": [
+      {"purpose": "install", "argv": ["uv", "sync", "--frozen"], "source": ".github/workflows/ci.yml:24", "verified": true},
+      {"purpose": "test", "argv": ["uv", "run", "pytest", "-q"], "source": ".github/workflows/ci.yml:31", "verified": false}
+    ],
+    "modules": [],
+    "trust_boundaries": [],
+    "baseline": {
+      "commands_run": [
+        {"argv": ["uv", "sync", "--frozen"], "exit_code": 1, "tests_executed": null, "evidence_id": "artifact-install-8a77d01"}
+      ],
+      "failing_before_change": []
+    },
+    "unknowns": ["Module map deferred until dependencies resolve"]
+  }
+}

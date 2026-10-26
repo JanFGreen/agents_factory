@@ -1,0 +1,81 @@
+{
+  "schema_version": "1",
+  "kind": "root-cause",
+  "verdict": "PASS",
+  "summary": "Confirmed: cursor uses created_at only, so rows with equal timestamps repeat on page 2; next attempt changes the cursor to (created_at, id) instead of retrying the same fix.",
+  "findings": [
+    {
+      "id": "F-9",
+      "severity": "medium",
+      "blocking": false,
+      "requirement_ids": [
+        "REQ-2"
+      ],
+      "location": {
+        "path": "src/history/repository.py",
+        "line": 47
+      },
+      "problem": "Diagnosis (non-blocking for this report; the failing check itself blocks the task): Keyset condition 'created_at < :cursor' drops/duplicates rows sharing a timestamp; fixture user_a_mixed_operations inserts 5 rows in one transaction with identical created_at.",
+      "expected_fix": "Builder encodes cursor as (created_at, id) and orders by created_at desc, id desc; keep the test unchanged.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Attempts 1 and 2 share fingerprint pytest:test_filter_across_pages:AssertionError",
+    "Failure reproduced once in sandbox",
+    "Three hypotheses evaluated with evidence",
+    "Discriminating experiment executed"
+  ],
+  "limitations": [],
+  "payload": {
+    "failure_fingerprint": "pytest:tests/history/test_api.py::test_filter_across_pages:AssertionError:ids not disjoint",
+    "error_class": "FAIL_CODE",
+    "reproduction": {
+      "argv": [
+        "pytest",
+        "tests/history/test_api.py::test_filter_across_pages",
+        "-q"
+      ],
+      "reproduced": true,
+      "evidence_ids": [
+        "ev-rc-0007"
+      ]
+    },
+    "hypotheses": [
+      {
+        "id": "H-1",
+        "statement": "Cursor on created_at alone is not unique for rows inserted in one transaction",
+        "supporting_evidence": [
+          "src/history/repository.py:47 uses created_at only",
+          "fixture rows have identical created_at (tests/history/conftest.py:40)"
+        ],
+        "refuting_evidence": [],
+        "status": "confirmed"
+      },
+      {
+        "id": "H-2",
+        "statement": "Filter is not applied on page 2",
+        "supporting_evidence": [],
+        "refuting_evidence": [
+          "page 2 contains only type=transfer rows in ev-rc-0007"
+        ],
+        "status": "refuted"
+      },
+      {
+        "id": "H-3",
+        "statement": "SQLite timestamp precision differs from Postgres in CI",
+        "supporting_evidence": [],
+        "refuting_evidence": [
+          "failure reproduces on the same SQLite fixture locally and in runner"
+        ],
+        "status": "refuted"
+      }
+    ],
+    "discriminating_experiment": {
+      "description": "Re-run the test with fixture timestamps spaced 1 ms apart (read-only copy of fixture in sandbox)",
+      "expected_if_true": "test passes with spaced timestamps (cause is timestamp ties)",
+      "expected_if_false": "test still fails (cause is elsewhere)"
+    },
+    "route_to": "BUILD"
+  }
+}

@@ -1,0 +1,30 @@
+[project]
+name = "agent-factory"
+version = "0.1.0"
+description = "Agent Factory: autonomous, evidence-gated software factory controller (variant A, Claude adapter)"
+authors = [
+    { name = "Jan Zielinski", email = "jan.zielinski@soteranalytics.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.9,<3",
+    "pyyaml>=6,<7",
+]
+
+[project.scripts]
+factory = "agent_factory.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6,<7",
+    "pytest>=8,<9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["fixtures", ".hypothesis", ".venv"]
+markers = ["live: real model/provider calls; run only with AGENT_FACTORY_LIVE=1 (skipped runs are NOT_RUN, never PASS)"]

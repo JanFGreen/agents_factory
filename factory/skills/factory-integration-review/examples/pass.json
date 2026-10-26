@@ -1,0 +1,36 @@
+{
+  "schema_version": "1",
+  "kind": "integration-review",
+  "verdict": "PASS",
+  "summary": "Candidate 9f1c2e7 combines add-operation-history with 4 new base commits; base changes do not touch history modules, all required checks and critical scenarios pass.",
+  "findings": [],
+  "checked_criteria": [
+    "All results refer to candidate_tree_sha 9f1c2e7a5b3d8f0c4e6a2b9d1f7c3e5a8b0d4f6c",
+    "Base diff 1d4e8b2..3a9e0c4 reviewed for overlap with src/history, migrations, lockfile",
+    "1 conflict resolution reviewed for semantic change",
+    "Required checks unit, integration, lint, typecheck, e2e: success",
+    "Critical scenarios SC-1-2 and SC-2-1 re-run on candidate"
+  ],
+  "limitations": [],
+  "payload": {
+    "base_sha": "3a9e0c41d2b7f6e8a1c5d9b0e4f7a2c6d8b1e3f5",
+    "head_sha": "c71f2b9a0e4d8c6b2a1f5e9d3c7b0a4e8f2d6c1b",
+    "candidate_tree_sha": "9f1c2e7a5b3d8f0c4e6a2b9d1f7c3e5a8b0d4f6c",
+    "conflicts": [
+      {"path": "src/app/routes.py", "resolution": "kept both new routes /history and /settings/export in sorted order", "semantic_change": false}
+    ],
+    "required_checks": [
+      {"name": "unit", "status": "success"},
+      {"name": "integration", "status": "success"},
+      {"name": "lint", "status": "success"},
+      {"name": "typecheck", "status": "success"},
+      {"name": "e2e", "status": "success"}
+    ],
+    "critical_scenarios": [
+      {"scenario_id": "SC-1-2", "result": "PASS", "evidence_ids": ["ev-e2e-0301"]},
+      {"scenario_id": "SC-2-1", "result": "PASS", "evidence_ids": ["ev-e2e-0302"]}
+    ],
+    "interaction_risks": [],
+    "route_to": "MERGE_RECOMMENDATION"
+  }
+}

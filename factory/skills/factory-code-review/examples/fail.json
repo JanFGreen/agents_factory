@@ -1,0 +1,42 @@
+{
+  "schema_version": "1",
+  "kind": "code-review",
+  "verdict": "CHANGES",
+  "summary": "Filter is dropped when following the cursor, and an unplanned CSV export endpoint was added.",
+  "findings": [
+    {
+      "id": "F-7",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "src/history/api.py", "line": 44},
+      "problem": "When 'cursor' is present the handler calls repository.list(owner_id, cursor=...) without 'type'; GET /api/history?type=transfer&cursor=X returns all types on page 2. Test SC-2-1 only checks page 1 sizes.",
+      "expected_fix": "Encode the filter in the cursor or pass type on every page; extend SC-2-1 to assert types on page 2.",
+      "status": "open"
+    },
+    {
+      "id": "F-8",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "src/history/export.py", "line": 1},
+      "problem": "New GET /api/history/export.csv is not in any requirement or task; export is recorded as hypothetical in future-needs.md.",
+      "expected_fix": "Remove the export endpoint from this task.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Gate PASS ev-run-0207 refers to head_sha 7a1d09c4e2f0",
+    "REQ-2 traced across pages",
+    "REQ-3 owner filter traced",
+    "file_scope and future-needs compared to diff"
+  ],
+  "limitations": [],
+  "payload": {
+    "reviewed_head_sha": "7a1d09c4e2f0",
+    "diff_stats": {"files": 4, "insertions": 211, "deletions": 9},
+    "requirements_checked": ["REQ-2", "REQ-3"],
+    "scope_creep": ["src/history/export.py: CSV export endpoint (hypothetical future need)"],
+    "reclassification_signal": {"suggested_complexity": null, "reason": ""}
+  }
+}

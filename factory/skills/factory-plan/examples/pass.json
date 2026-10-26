@@ -1,0 +1,80 @@
+{
+  "schema_version": "1",
+  "kind": "plan",
+  "verdict": "PASS",
+  "summary": "Plan for OPT-A: contract first, then filtered endpoint and UI list in parallel, then feature E2E acceptance; 4 tasks, 155 minutes.",
+  "findings": [],
+  "checked_criteria": [
+    "decision.json and spec-evaluation.json match spec_digest of the read spec",
+    "Every REQ-1..REQ-3 mapped to at least one task",
+    "depends_on graph acyclic and all referenced task IDs exist",
+    "Shared contract TASK-01 precedes consumers TASK-02 and TASK-03",
+    "Parallel tasks TASK-02/TASK-03 have disjoint file_scope",
+    "Final feature acceptance task present",
+    "Depth 1 <= 3, leaves 4 <= 20"
+  ],
+  "limitations": [],
+  "payload": {
+    "tasks": [
+      {
+        "task_id": "TASK-01",
+        "requirement_ids": ["REQ-1", "REQ-2"],
+        "depends_on": [],
+        "inputs": ["openspec/changes/add-operation-history/specs/operation-history/spec.md"],
+        "outputs": ["history-api-contract-v1"],
+        "file_scope": ["src/history/contract.py", "tests/history/test_contract.py"],
+        "risk": "low",
+        "estimated_minutes": 25,
+        "acceptance": "Contract defines filter params, page cursor and response shape; sample payloads validate",
+        "verification": ["history-contract-test"],
+        "parallel_safe_with": [],
+        "future_constraints": ["Keep response fields stable for possible export (hypothetical, note only)"]
+      },
+      {
+        "task_id": "TASK-02",
+        "requirement_ids": ["REQ-2", "REQ-3"],
+        "depends_on": ["TASK-01"],
+        "inputs": ["history-api-contract-v1"],
+        "outputs": ["filtered-history-endpoint"],
+        "file_scope": ["src/history/api.py", "src/history/repository.py", "tests/history/test_api.py"],
+        "risk": "medium",
+        "estimated_minutes": 45,
+        "acceptance": "GET /api/history returns only the authenticated user's operations, filtered and paginated",
+        "verification": ["history-api-contract-test", "tenant-isolation-test"],
+        "parallel_safe_with": ["TASK-03"],
+        "future_constraints": ["Do not couple the filter to the UI component"]
+      },
+      {
+        "task_id": "TASK-03",
+        "requirement_ids": ["REQ-1", "REQ-2"],
+        "depends_on": ["TASK-01"],
+        "inputs": ["history-api-contract-v1"],
+        "outputs": ["history-list-view"],
+        "file_scope": ["web/src/history/HistoryList.tsx", "web/src/history/HistoryList.test.tsx"],
+        "risk": "low",
+        "estimated_minutes": 45,
+        "acceptance": "List renders loading/empty/error states and keeps filter and page in the URL after reload",
+        "verification": ["history-list-component-test"],
+        "parallel_safe_with": ["TASK-02"],
+        "future_constraints": []
+      },
+      {
+        "task_id": "TASK-04",
+        "requirement_ids": ["REQ-1", "REQ-2", "REQ-3"],
+        "depends_on": ["TASK-02", "TASK-03"],
+        "inputs": ["filtered-history-endpoint", "history-list-view"],
+        "outputs": ["feature-acceptance-evidence"],
+        "file_scope": ["tests/e2e/test_operation_history.py"],
+        "risk": "medium",
+        "estimated_minutes": 40,
+        "acceptance": "User A sees only own operations; filter plus pagination survive reload; user B data never returned",
+        "verification": ["e2e-operation-history"],
+        "parallel_safe_with": [],
+        "future_constraints": []
+      }
+    ],
+    "future_needs": [
+      {"description": "Export of operation history", "status": "hypothetical"}
+    ]
+  }
+}

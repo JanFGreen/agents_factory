@@ -1,0 +1,29 @@
+{
+  "schema_version": "1",
+  "kind": "plan",
+  "verdict": "BLOCKED",
+  "summary": "Multi-tenant login with data migration needs 27 leaf tasks, exceeding max_leaf_tasks_per_feature 20; analysis ends with a staging proposal, scope unchanged.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-1", "REQ-2", "REQ-3", "REQ-4", "REQ-5", "REQ-6"],
+      "location": {"path": "openspec/changes/multi-tenant-login/tasks.md", "line": null},
+      "problem": "Smallest valid decomposition has 27 leaves (tenant schema 6, migration with rollback 7, auth flows 8, admin UI 4, E2E 2); limit is 20.",
+      "expected_fix": "Operator either raises the leaf limit for this feature or authorizes a split into stages: Stage 1 tenant schema + migration (REQ-1..REQ-3), Stage 2 auth flows + admin UI (REQ-4..REQ-6).",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Every requirement mapped in the draft decomposition",
+    "Leaf count and depth compared to policy limits"
+  ],
+  "limitations": [],
+  "payload": {
+    "tasks": [],
+    "future_needs": [
+      {"description": "SSO via external identity provider", "status": "committed_next"}
+    ]
+  }
+}

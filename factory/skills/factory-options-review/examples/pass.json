@@ -1,0 +1,34 @@
+{
+  "schema_version": "1",
+  "kind": "options-review",
+  "verdict": "PASS",
+  "summary": "Three real options critiqued; OPT-C (client-side filtering) is infeasible because it exposes other users' data; recommend OPT-A (0.81, wins tie with OPT-B on maintainability).",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "low",
+      "blocking": false,
+      "requirement_ids": ["REQ-3"],
+      "location": {"path": "openspec/changes/add-operation-history/options.md", "line": 22},
+      "problem": "OPT-A estimate of 90 minutes omits the index creation step; likely +10 minutes. Does not change ranking.",
+      "expected_fix": "Include the index task in the plan estimate.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Option count 3 >= policy minimum 2 for standard",
+    "Hard constraints (existing login, no foreign data) checked for each option",
+    "OPT-A reuses cursor pattern from src/orders/list.py:12-58",
+    "Ratings recomputed with weights 0.30/0.25/0.20/0.15/0.10 and tie-break",
+    "No option builds the hypothetical export"
+  ],
+  "limitations": [],
+  "payload": {
+    "options": [
+      {"option_id": "OPT-A", "feasible": true, "infeasible_reasons": [], "ratings": {"goal_fit": 5, "correctness": 4, "maintainability": 4, "delivery_time": 3, "cost": 3}, "estimated_cost_usd": 4.5, "estimated_minutes": 100},
+      {"option_id": "OPT-B", "feasible": true, "infeasible_reasons": [], "ratings": {"goal_fit": 4, "correctness": 4, "maintainability": 3, "delivery_time": 5, "cost": 5}, "estimated_cost_usd": 2.0, "estimated_minutes": 45},
+      {"option_id": "OPT-C", "feasible": false, "infeasible_reasons": ["Downloads all operations to the browser; violates 'Do not expose data of other users' (no owner filter in src/history/export.py:31)"], "ratings": {"goal_fit": 3, "correctness": 1, "maintainability": 3, "delivery_time": 5, "cost": 5}, "estimated_cost_usd": 1.5, "estimated_minutes": 30}
+    ],
+    "selected_option_id": "OPT-A"
+  }
+}

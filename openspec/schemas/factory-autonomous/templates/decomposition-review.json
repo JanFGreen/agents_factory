@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "kind": "decomposition-review",
+  "verdict": "UNKNOWN",
+  "summary": "",
+  "findings": [],
+  "checked_criteria": [],
+  "limitations": [],
+  "payload": {
+    "requirements_map": {},
+    "per_task": [],
+    "dag_ok": false
+  }
+}

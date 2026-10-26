@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "kind": "security-review",
+  "verdict": "PASS",
+  "summary": "Full review of new GET /api/history at 3f9c2a1e7b4d: owner scoping from server session verified by sandbox IDOR attempt; no secrets, no injection surface.",
+  "findings": [],
+  "checked_criteria": [
+    "Gate evidence ev-run-0210 (incl. secret scan) refers to head_sha 3f9c2a1e7b4d",
+    "Depth full: trigger 'new data endpoint' present",
+    "AuthN: endpoint requires session (src/history/api.py:19 @login_required)",
+    "AuthZ: owner_id from session, query parameter owner_id ignored (api.py:28)",
+    "Injection: repository uses bound parameters only (repository.py:40-52)",
+    "Cursor is signed and validated; malformed cursor -> 400",
+    "Secrets scan of diff and fixtures"
+  ],
+  "limitations": [],
+  "payload": {
+    "review_depth": "full",
+    "trust_boundaries": [
+      {"boundary": "HTTP GET /api/history", "change": "new data endpoint", "controls": ["session auth decorator", "owner_id from server session", "signed cursor"], "evidence_ids": ["ev-sec-0031", "ev-run-0210"]}
+    ],
+    "threats": [
+      {"id": "T-1", "category": "authz", "description": "IDOR: user A passes owner_id=B or a cursor minted for B", "mitigated": true, "evidence_ids": ["ev-sec-0031"]},
+      {"id": "T-2", "category": "injection", "description": "SQL injection through type filter", "mitigated": true, "evidence_ids": ["ev-run-0210"]},
+      {"id": "T-3", "category": "data_exposure", "description": "Response includes internal account fields", "mitigated": true, "evidence_ids": ["ev-run-0210"]}
+    ],
+    "observed_risk": "medium",
+    "risk_raise_required": false,
+    "secrets_detected": false
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "kind": "spec-author",
+  "verdict": "PASS",
+  "summary": "Round 1 OpenSpec change add-operation-history written: 4 requirements, 3 intents fully mapped, strict validation passed.",
+  "findings": [],
+  "checked_criteria": [
+    "Every intent of the original request mapped to at least one requirement",
+    "Every requirement has a failure or boundary scenario where one exists",
+    "Requirement IDs stable (first round)",
+    "openspec validate add-operation-history --strict --no-interactive exit 0 (artifact-openspec-validate-r1)"
+  ],
+  "limitations": [],
+  "payload": {
+    "requirements": [
+      {"id": "REQ-1", "text": "The history SHALL contain only operations owned by the authenticated user.", "source": "original_request"},
+      {"id": "REQ-2", "text": "The user SHALL filter history by operation type and date range.", "source": "original_request"},
+      {"id": "REQ-3", "text": "History SHALL be paginated and the filter and page SHALL survive a page reload via URL parameters.", "source": "original_request"},
+      {"id": "REQ-4", "text": "With no matching operations the history SHALL show an empty state.", "source": "derived_necessary_dependency"}
+    ],
+    "intent_map": [
+      {"intent": "find own earlier operation", "requirement_ids": ["REQ-1"]},
+      {"intent": "filter", "requirement_ids": ["REQ-2", "REQ-4"]},
+      {"intent": "pagination works together with filter, also after reload", "requirement_ids": ["REQ-3"]}
+    ],
+    "acceptance_criteria": [
+      {"id": "AC-1", "requirement_ids": ["REQ-1"], "observable": "GET /api/history as user A returns only rows with owner A while user B has 5 operations."},
+      {"id": "AC-2", "requirement_ids": ["REQ-2"], "observable": "Filter type=transfer returns only transfers; invalid type returns 400 with a field error."},
+      {"id": "AC-3", "requirement_ids": ["REQ-2", "REQ-3"], "observable": "With 45 transfers, page 2 with type=transfer shows items 21-40; after reload the same items and filter are shown."},
+      {"id": "AC-4", "requirement_ids": ["REQ-4"], "observable": "A user with no operations sees the empty state text, not an error."}
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "schema_version": "1",
+  "kind": "retrospective",
+  "verdict": "CHANGES",
+  "summary": "Layer identified as harness (e2e suite skipped silently), but proposal P-1 has no regression test and the timeline lacks the gate run that reported success.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "factory/checks/e2e.yaml", "line": 4},
+      "problem": "Proposal P-1 (fail the gate when the e2e suite executes 0 tests) has no regression test that fails today.",
+      "expected_fix": "Add a runner unit test feeding a suite run with exit code 0 and 0 executed tests, expecting FAIL_POLICY.",
+      "status": "open"
+    },
+    {
+      "id": "F-2",
+      "severity": "low",
+      "blocking": false,
+      "requirement_ids": [],
+      "location": {"path": "events/job-09", "line": null},
+      "problem": "Timeline omits event 87 (CHECKS PASS with e2e tests_executed=0), the decisive point.",
+      "expected_fix": "Add event 87 to the timeline with its runner record ID.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Timeline rebuilt from events of job-09",
+    "Failure layer classified with runner evidence",
+    "Proposals checked for regression tests"
+  ],
+  "limitations": [],
+  "payload": {
+    "incident_ref": "job-09 FEAT-051 checks PASS with skipped e2e",
+    "failure_layer": "harness",
+    "timeline": [
+      {"at": "2026-10-25T10:12:00Z", "event": "BUILD_TASK attempt 1 finished"},
+      {"at": "2026-10-25T10:40:31Z", "event": "Regression in checkout flow found by integration-review"}
+    ],
+    "root_cause": "The e2e runner exits 0 when the browser binary is missing and the suite collects 0 tests; the gate treated exit code 0 as PASS.",
+    "proposals": [
+      {
+        "id": "P-1",
+        "change": "Runner marks a required suite with 0 executed tests as FAIL_POLICY",
+        "target_files": ["src/agent_factory/runner.py"],
+        "regression_test": "",
+        "separate_pr": true
+      }
+    ],
+    "metrics": [{"name": "gate_runs_with_zero_tests_last_30_days", "value": "4"}]
+  }
+}

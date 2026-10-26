@@ -1,0 +1,44 @@
+{
+  "schema_version": "1",
+  "kind": "code-review",
+  "verdict": "PASS",
+  "summary": "TASK-02 at 3f9c2a1e7b4d satisfies REQ-2 and REQ-3; earlier F-1 (cursor ties) verified fixed; one low maintainability note.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "src/history/repository.py", "line": 47},
+      "problem": "Cursor on created_at alone duplicated rows with equal timestamps (attempt 1). Now (created_at, id) keyset with matching ORDER BY; test_filter_across_pages passes in ev-run-0210.",
+      "expected_fix": "None; verified fixed.",
+      "status": "fixed"
+    },
+    {
+      "id": "F-6",
+      "severity": "low",
+      "blocking": false,
+      "requirement_ids": [],
+      "location": {"path": "src/history/api.py", "line": 61},
+      "problem": "Page size limit 100 is a literal duplicated from contract.py:12.",
+      "expected_fix": "Import MAX_PAGE_SIZE from src/history/contract.py.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Gate PASS ev-run-0210 refers to head_sha 3f9c2a1e7b4d",
+    "REQ-2 filter + cursor traced for first page, middle page, last page, malformed cursor",
+    "REQ-3 owner_id taken from session in api.py:28 and applied in every repository branch",
+    "Contract history-api-contract-v1 response fields match",
+    "Changes inside file_scope",
+    "Earlier finding F-1 re-checked"
+  ],
+  "limitations": [],
+  "payload": {
+    "reviewed_head_sha": "3f9c2a1e7b4d",
+    "diff_stats": {"files": 3, "insertions": 142, "deletions": 18},
+    "requirements_checked": ["REQ-2", "REQ-3"],
+    "scope_creep": [],
+    "reclassification_signal": {"suggested_complexity": null, "reason": ""}
+  }
+}

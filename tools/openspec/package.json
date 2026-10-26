@@ -1,0 +1,9 @@
+{
+  "name": "agent-factory-openspec-tool",
+  "private": true,
+  "description": "Pinned local OpenSpec CLI for Agent Factory (see factory.lock.json).",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@fission-ai/openspec": "1.15.0"
+  }
+}

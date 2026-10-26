@@ -1,0 +1,40 @@
+{
+  "schema_version": "1",
+  "kind": "product-verify",
+  "verdict": "BLOCKED",
+  "summary": "Cannot verify: the sandbox has no second synthetic user, so the isolation criterion AC-1 cannot be executed.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-1"],
+      "location": {"path": "tests/fixtures/seeds/history-v2.sql", "line": null},
+      "problem": "Seed history-v2 creates only user-a; isolation between users cannot be observed. Testing with a real account is not allowed.",
+      "expected_fix": "Workspace manager provides a seed with at least two synthetic users owning operations (test data task in the plan).",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Environment serves candidate tree 9f1c2e7 (GET /version)"
+  ],
+  "limitations": [
+    "AC-1, AC-2 and AC-3 not run: required synthetic data missing"
+  ],
+  "payload": {
+    "perspective": "qa",
+    "environment": "local-sandbox job-01 http://127.0.0.1:18042 seed=history-v2",
+    "criteria": [
+      {
+        "acceptance_id": "AC-1",
+        "requirement_ids": ["REQ-1"],
+        "scenario_ids": ["SC-1-1", "SC-1-2"],
+        "action": "Not executed: second synthetic user missing",
+        "observed": "",
+        "evidence_ids": [],
+        "result": "NOT_RUN"
+      }
+    ],
+    "intent_gaps": []
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": "1",
+  "kind": "test-design",
+  "verdict": "CHANGES",
+  "summary": "REQ-4 'history loads quickly' has no measurable threshold, so no assertion can distinguish a correct from a wrong implementation.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": ["REQ-4"],
+      "location": {"path": "openspec/changes/add-operation-history/specs/operation-history/spec.md", "line": 48},
+      "problem": "Scenario 'History loads quickly' states no latency bound or data size; any implementation passes.",
+      "expected_fix": "Spec author defines a bound (e.g. p95 < 300 ms for 10k operations on the fixture DB) in the next analysis round.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Scenarios designed for REQ-1..REQ-3",
+    "REQ-4 checked for an observable criterion"
+  ],
+  "limitations": [],
+  "payload": {
+    "strategy": "Integration tests for REQ-1..REQ-3; REQ-4 pending a measurable criterion.",
+    "scenarios": [
+      {"scenario_id": "SC-3-1", "requirement_ids": ["REQ-3"], "level": "integration", "given": "users A and B each have 3 operations", "when": "A requests history", "then": "only A's operations returned", "assertions": ["all(i.owner_id == A.id)"], "red_expected": true, "fixtures": ["two_users_with_operations"], "visibility": "public"}
+    ],
+    "uncovered_requirements": ["REQ-4"]
+  }
+}

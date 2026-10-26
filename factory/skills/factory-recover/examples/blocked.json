@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "kind": "recover",
+  "verdict": "BLOCKED",
+  "summary": "Merge request ob-12 is inflight and GitHub is unreachable, so it is unknown whether PR #118 was merged; escalating instead of re-sending a merge.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "outbox/ob-12", "line": null},
+      "problem": "GitHub API returned connection timeouts on 3 read attempts (ev-run-0401); state of merge operation ob-12 cannot be observed.",
+      "expected_fix": "Retry read-only reconciliation after connectivity returns; if still unclear, operator confirms PR #118 state. Do not re-send the merge.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "DB state MERGING v31 read",
+    "Worktree clean at candidate head",
+    "No live agent processes"
+  ],
+  "limitations": ["GitHub remote state not observable"],
+  "payload": {
+    "observed": {
+      "db_state": "MERGING v31",
+      "lease": {"epoch": 7, "expired": true},
+      "git": {"worktree": "~/.local/share/agent-factory/worktrees/job-01-integration", "head_sha": "c71f2b9a0e4d8c6b2a1f5e9d3c7b0a4e8f2d6c1b", "dirty": false},
+      "processes": [],
+      "outbox": [
+        {"operation_id": "ob-12", "kind": "pr_merge", "state": "inflight", "remote_observed": "unreachable: connection timeout"}
+      ]
+    },
+    "proposed_actions": [
+      {"action": "mark_unknown", "target": "ob-12", "reason": "Remote effect cannot be observed", "destructive": false},
+      {"action": "escalate", "target": "ob-12", "reason": "Merge is a destructive external effect with unknown state", "destructive": true}
+    ],
+    "duplicates_detected": [],
+    "proposed_next_state": "NEEDS_HUMAN"
+  }
+}

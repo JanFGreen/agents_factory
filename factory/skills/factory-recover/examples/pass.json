@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "kind": "recover",
+  "verdict": "PASS",
+  "summary": "Controller restart during REVIEW: worktree clean at the reviewed head, reviewer session ended, PR comment already posted; reconcile outbox and resume REVIEW with a new lease epoch.",
+  "findings": [],
+  "checked_criteria": [
+    "DB state REVIEW v17 and lease epoch 4 read",
+    "Artifacts of events 112-117 present in evidence store with matching hashes",
+    "Worktree head equals checkpoint last_confirmed_sha c71f2b9, no dirty files",
+    "Runtime poll for run-42 returned terminal state succeeded",
+    "Outbox ob-7 remote state read from GitHub (comment marker found)",
+    "Budget ledger: 11.40 of 25.00 USD used"
+  ],
+  "limitations": [],
+  "payload": {
+    "observed": {
+      "db_state": "REVIEW v17",
+      "lease": {"epoch": 4, "expired": true},
+      "git": {"worktree": "~/.local/share/agent-factory/worktrees/job-01-task-02", "head_sha": "c71f2b9a0e4d8c6b2a1f5e9d3c7b0a4e8f2d6c1b", "dirty": false},
+      "processes": [{"handle": "run-42", "alive": false}],
+      "outbox": [
+        {"operation_id": "ob-7", "kind": "pr_comment", "state": "inflight", "remote_observed": "PR #118 has comment with marker af:job-01:rev3:review-summary"}
+      ]
+    },
+    "proposed_actions": [
+      {"action": "reconcile_outbox", "target": "ob-7", "reason": "Comment with idempotency marker already exists on PR #118", "destructive": false},
+      {"action": "resume", "target": "task-02", "reason": "Collect pending security-review on same head with new lease epoch 5", "destructive": false}
+    ],
+    "duplicates_detected": [],
+    "proposed_next_state": "REVIEW"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": "1",
+  "kind": "repo-map",
+  "verdict": "CHANGES",
+  "summary": "CI and README disagree on the test command, and the CI command runs zero tests on this base; the map cannot name a reliable test gate.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": ".github/workflows/ci.yml", "line": 31},
+      "problem": "CI runs 'pytest tests/unit' but tests/unit was removed in 8a77d01; trusted run exit 5 with 0 tests collected (artifact-baseline-pytest-8a77d01). README.md:44 says 'pytest tests/'.",
+      "expected_fix": "Operator confirms the authoritative test command (likely 'uv run pytest tests/') for the check manifest; repository CI fix is a separate change.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Worktree HEAD equals base_sha",
+    "Command sources compared (CI vs README)",
+    "Baseline test executed by trusted runner"
+  ],
+  "limitations": [],
+  "payload": {
+    "repo_instructions": ["README.md"],
+    "commands": [
+      {"purpose": "test", "argv": ["pytest", "tests/unit"], "source": ".github/workflows/ci.yml:31", "verified": true},
+      {"purpose": "test", "argv": ["pytest", "tests/"], "source": "README.md:44", "verified": false}
+    ],
+    "modules": [
+      {"path": "src/api", "responsibility": "HTTP routes", "depends_on": ["src/operations"]},
+      {"path": "src/operations", "responsibility": "Operation model and persistence", "depends_on": []}
+    ],
+    "trust_boundaries": [
+      {"name": "HTTP API", "location": "src/api/routes.py", "notes": "session auth"}
+    ],
+    "baseline": {
+      "commands_run": [
+        {"argv": ["pytest", "tests/unit"], "exit_code": 5, "tests_executed": 0, "evidence_id": "artifact-baseline-pytest-8a77d01"}
+      ],
+      "failing_before_change": ["CI test command collects 0 tests"]
+    },
+    "unknowns": ["Authoritative test command"]
+  }
+}

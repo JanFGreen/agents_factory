@@ -1,0 +1,46 @@
+{
+  "schema_version": "1",
+  "kind": "spec-evaluate",
+  "verdict": "CHANGES",
+  "summary": "Round 1: isolation is only checked in the UI, so a leaking API passes; reload persistence of filter+page has no observable criterion.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-1"],
+      "location": {"path": "openspec/changes/add-operation-history/specs/operation-history/spec.md", "line": 14},
+      "problem": "REQ-1 scenario only states 'the list shows A's operations'. Counterexample (API returns all rows, UI filters) passes. Constraint 'Do not expose data of other users' is not enforced by any criterion.",
+      "expected_fix": "Add a scenario asserting the API response for user A excludes user B's rows, with B having operations.",
+      "status": "open"
+    },
+    {
+      "id": "F-2",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": ["REQ-3"],
+      "location": {"path": "openspec/changes/add-operation-history/acceptance-map.yaml", "line": 15},
+      "problem": "Request says filter and pagination work together 'also after reload'; AC-3 checks pagination without a filter and never reloads.",
+      "expected_fix": "AC-3: with filter applied, open page 2, reload, assert same items and filter state from URL.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Intents re-derived independently and compared with intent-map.yaml",
+    "Each AC checked for observable result",
+    "Baseline specs openspec/specs/listing compared",
+    "Counterexample constructed"
+  ],
+  "limitations": [],
+  "payload": {
+    "dimensions": {
+      "intent_coverage": "CHANGES",
+      "consistency": "PASS",
+      "testability": "CHANGES",
+      "feasibility": "PASS",
+      "risk_controls": "CHANGES"
+    },
+    "counterexample": "GET /api/history returns every user's operations and the view hides foreign rows; current AC-1 (UI-only) accepts it.",
+    "uncovered_requirements": ["REQ-3"]
+  }
+}

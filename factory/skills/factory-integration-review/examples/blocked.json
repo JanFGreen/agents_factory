@@ -1,0 +1,38 @@
+{
+  "schema_version": "1",
+  "kind": "integration-review",
+  "verdict": "BLOCKED",
+  "summary": "Candidate cannot be tested: the integration test database container fails to start in the sandbox (BLOCKED_ENV).",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "factory/checks/integration.yaml", "line": 7},
+      "problem": "Runner reports 'port 55432 already allocated' for the postgres service on every attempt (ev-run-0321, ev-run-0322); no check result exists for the candidate.",
+      "expected_fix": "Workspace manager frees or reallocates the port for this job; re-run required checks on the same candidate.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Candidate identity frozen and recorded"
+  ],
+  "limitations": ["No required check or critical scenario result available for the candidate"],
+  "payload": {
+    "base_sha": "3a9e0c41d2b7f6e8a1c5d9b0e4f7a2c6d8b1e3f5",
+    "head_sha": "c71f2b9a0e4d8c6b2a1f5e9d3c7b0a4e8f2d6c1b",
+    "candidate_tree_sha": "9f1c2e7a5b3d8f0c4e6a2b9d1f7c3e5a8b0d4f6c",
+    "conflicts": [],
+    "required_checks": [
+      {"name": "unit", "status": "missing"},
+      {"name": "integration", "status": "missing"},
+      {"name": "e2e", "status": "missing"}
+    ],
+    "critical_scenarios": [
+      {"scenario_id": "SC-1-2", "result": "NOT_RUN", "evidence_ids": []}
+    ],
+    "interaction_risks": [],
+    "route_to": null
+  }
+}

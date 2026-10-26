@@ -1,0 +1,62 @@
+{
+  "schema_version": "1",
+  "kind": "decomposition-review",
+  "verdict": "CHANGES",
+  "summary": "REQ-3 (reload persistence) has no task, TASK-03 and TASK-04 both edit src/history/api.py while marked parallel-safe, and TASK-06 builds the hypothetical export.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-3"],
+      "location": {"path": "openspec/changes/add-operation-history/tasks.md", "line": 1},
+      "problem": "No task lists REQ-3; URL state for filter+page after reload is not built or verified anywhere.",
+      "expected_fix": "Add REQ-3 to the UI task with a reload verification, and to the E2E acceptance task.",
+      "status": "open"
+    },
+    {
+      "id": "F-2",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "openspec/changes/add-operation-history/tasks.md", "line": 21},
+      "problem": "TASK-03 and TASK-04 are parallel_safe_with each other but both have file_scope src/history/api.py.",
+      "expected_fix": "Serialize TASK-04 after TASK-03 or split file ownership.",
+      "status": "open"
+    },
+    {
+      "id": "F-3",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "openspec/changes/add-operation-history/tasks.md", "line": 34},
+      "problem": "TASK-06 'CSV export endpoint' implements a future direction with status hypothetical (future-needs.md:4).",
+      "expected_fix": "Remove TASK-06; keep export as a note in future-needs.md.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Coverage both ways",
+    "DAG integrity",
+    "File-scope conflicts for parallel tasks",
+    "Future needs statuses"
+  ],
+  "limitations": [],
+  "payload": {
+    "requirements_map": {
+      "REQ-1": ["TASK-02", "TASK-05"],
+      "REQ-2": ["TASK-03", "TASK-04", "TASK-05"],
+      "REQ-3": [],
+      "REQ-4": ["TASK-04"]
+    },
+    "per_task": [
+      {"task_id": "TASK-01", "verdict": "PASS", "notes": "Contract task fine."},
+      {"task_id": "TASK-02", "verdict": "PASS", "notes": "Isolation test present."},
+      {"task_id": "TASK-03", "verdict": "CHANGES", "notes": "File conflict with TASK-04 (F-2)."},
+      {"task_id": "TASK-04", "verdict": "CHANGES", "notes": "Missing REQ-3 reload state (F-1); conflict (F-2)."},
+      {"task_id": "TASK-05", "verdict": "CHANGES", "notes": "E2E does not cover reload (F-1)."},
+      {"task_id": "TASK-06", "verdict": "CHANGES", "notes": "Speculative export (F-3)."}
+    ],
+    "dag_ok": true
+  }
+}

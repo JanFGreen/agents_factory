@@ -1,0 +1,49 @@
+{
+  "schema_version": "1",
+  "kind": "security-review",
+  "verdict": "CHANGES",
+  "summary": "IDOR: the endpoint trusts the owner_id query parameter; sandbox request as user A returned user B's operations. Risk raised to high.",
+  "findings": [
+    {
+      "id": "F-12",
+      "severity": "critical",
+      "blocking": true,
+      "requirement_ids": ["REQ-3"],
+      "location": {"path": "src/history/api.py", "line": 28},
+      "problem": "owner_id = request.args.get('owner_id', session.user_id). Sandbox: GET /api/history?owner_id=2 with session of user 1 returned 3 operations of user 2 (ev-sec-0034).",
+      "expected_fix": "Derive owner_id only from the verified server session; reject or ignore the parameter; add an isolation test for the parameter.",
+      "status": "open"
+    },
+    {
+      "id": "F-13",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "src/history/repository.py", "line": 44},
+      "problem": "Type filter interpolated with f-string into ORDER/WHERE clause: f\"... WHERE type = '{type}'\"; type=transfer' OR '1'='1 returns all rows of the owner in sandbox (ev-sec-0035).",
+      "expected_fix": "Use bound parameters and validate type against the enum from the contract.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Gate evidence refers to head_sha 7a1d09c4e2f0",
+    "Depth full: triggers 'new data endpoint' and 'raw SQL'",
+    "IDOR attempt in sandbox with synthetic users",
+    "Injection attempt on type filter",
+    "Secret scan of diff"
+  ],
+  "limitations": [],
+  "payload": {
+    "review_depth": "full",
+    "trust_boundaries": [
+      {"boundary": "HTTP GET /api/history", "change": "new data endpoint", "controls": ["session auth decorator"], "evidence_ids": ["ev-sec-0034", "ev-sec-0035"]}
+    ],
+    "threats": [
+      {"id": "T-1", "category": "authz", "description": "IDOR via owner_id query parameter", "mitigated": false, "evidence_ids": ["ev-sec-0034"]},
+      {"id": "T-2", "category": "injection", "description": "SQL injection via type filter", "mitigated": false, "evidence_ids": ["ev-sec-0035"]}
+    ],
+    "observed_risk": "high",
+    "risk_raise_required": true,
+    "secrets_detected": false
+  }
+}

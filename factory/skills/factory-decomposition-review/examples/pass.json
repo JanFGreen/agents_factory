@@ -1,0 +1,34 @@
+{
+  "schema_version": "1",
+  "kind": "decomposition-review",
+  "verdict": "PASS",
+  "summary": "Five-task DAG for add-operation-history covers REQ-1..REQ-4, contract first, UI integrated in parallel after the contract, E2E acceptance last.",
+  "findings": [],
+  "checked_criteria": [
+    "1 coverage: every REQ mapped to tasks with verification; every task traced to a REQ",
+    "2 DAG: acyclic, all depends_on resolve, contract TASK-01 precedes consumers",
+    "3 leaves: estimates 20-45 min, explicit inputs/outputs and verification",
+    "4 conflicts: TASK-02 (src/history) and TASK-04 (src/web/pages) file scopes disjoint",
+    "5 vertical integration: TASK-03 and TASK-04 both consume history-api-contract-v1",
+    "6 supporting work: index migration with downgrade in TASK-02, seed data in TASK-05",
+    "7 future needs: export recorded as hypothetical, no task builds it",
+    "8 feature acceptance: TASK-05 E2E covers filter+page+reload and tenant isolation"
+  ],
+  "limitations": [],
+  "payload": {
+    "requirements_map": {
+      "REQ-1": ["TASK-01", "TASK-02", "TASK-05"],
+      "REQ-2": ["TASK-01", "TASK-03", "TASK-04", "TASK-05"],
+      "REQ-3": ["TASK-01", "TASK-03", "TASK-04", "TASK-05"],
+      "REQ-4": ["TASK-04", "TASK-05"]
+    },
+    "per_task": [
+      {"task_id": "TASK-01", "verdict": "PASS", "notes": "Contract defines cursor, filter params and error shape; contract test listed."},
+      {"task_id": "TASK-02", "verdict": "PASS", "notes": "Owner predicate from session user; tenant-isolation-test; migration has downgrade."},
+      {"task_id": "TASK-03", "verdict": "PASS", "notes": "Filter+cursor endpoint; invalid filter 400 covered."},
+      {"task_id": "TASK-04", "verdict": "PASS", "notes": "URL state for reload; empty state; keyboard navigation in verification."},
+      {"task_id": "TASK-05", "verdict": "PASS", "notes": "Parent acceptance with two seeded users."}
+    ],
+    "dag_ok": true
+  }
+}

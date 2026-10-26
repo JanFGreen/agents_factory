@@ -1,0 +1,11 @@
+# Python
+.venv/
+__pycache__/
+
+# Agent Factory runtime data (never commit state, logs or holdout)
+.factory-data/
+
+# Pinned OpenSpec CLI install (package.json + package-lock.json are committed)
+tools/openspec/node_modules/
+.hypothesis/
+.pytest_cache/

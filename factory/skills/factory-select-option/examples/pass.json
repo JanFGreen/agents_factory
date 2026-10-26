@@ -1,0 +1,49 @@
+{
+  "schema_version": "1",
+  "kind": "select-option",
+  "verdict": "PASS",
+  "summary": "OPT-A (server-side filtered history endpoint reusing the existing session auth) selected with score 0.81; tie with OPT-B broken on maintainability.",
+  "findings": [],
+  "checked_criteria": [
+    "All options from options.md rated exactly once",
+    "Hard constraint 'reuse existing login' checked for every option",
+    "Hard constraint 'no data of other users' checked for every option",
+    "Weighted score recomputed with policy weights 0.30/0.25/0.20/0.15/0.10",
+    "Tie-break order applied: correctness, maintainability, cost, time, option_id",
+    "Blocking findings of options-review F-2 addressed (OPT-C marked infeasible)"
+  ],
+  "limitations": [
+    "Pagination performance on >100k rows estimated from schema, not measured"
+  ],
+  "payload": {
+    "options": [
+      {
+        "option_id": "OPT-A",
+        "feasible": true,
+        "infeasible_reasons": [],
+        "ratings": {"goal_fit": 5, "correctness": 4, "maintainability": 4, "delivery_time": 3, "cost": 3},
+        "estimated_cost_usd": 4.5,
+        "estimated_minutes": 90
+      },
+      {
+        "option_id": "OPT-B",
+        "feasible": true,
+        "infeasible_reasons": [],
+        "ratings": {"goal_fit": 4, "correctness": 4, "maintainability": 3, "delivery_time": 5, "cost": 5},
+        "estimated_cost_usd": 2.0,
+        "estimated_minutes": 45
+      },
+      {
+        "option_id": "OPT-C",
+        "feasible": false,
+        "infeasible_reasons": [
+          "Client-side filtering downloads all operations, violating constraint 'Do not expose other users' data' (src/history/export.py:31 has no owner filter)"
+        ],
+        "ratings": {"goal_fit": 3, "correctness": 1, "maintainability": 3, "delivery_time": 5, "cost": 5},
+        "estimated_cost_usd": 1.5,
+        "estimated_minutes": 30
+      }
+    ],
+    "selected_option_id": "OPT-A"
+  }
+}

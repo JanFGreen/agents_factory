@@ -1,0 +1,44 @@
+{
+  "schema_version": "1",
+  "kind": "repo-map",
+  "verdict": "PASS",
+  "summary": "Mapped application repo at base 8a77d01: uv/pytest/ruff/mypy commands from CI, 5 modules, 4 trust boundaries; baseline 214 tests passing.",
+  "findings": [],
+  "checked_criteria": [
+    "Worktree HEAD equals base_sha and tree is clean",
+    "Commands derived from .github/workflows/ci.yml",
+    "Baseline test and lint executed by trusted runner with tests_executed > 0",
+    "Trust boundaries located in route, auth, client and migration code"
+  ],
+  "limitations": ["E2E suite (tests/e2e) not run: requires browser sandbox not granted for baseline"],
+  "payload": {
+    "repo_instructions": ["AGENTS.md", "README.md"],
+    "commands": [
+      {"purpose": "install", "argv": ["uv", "sync", "--frozen"], "source": ".github/workflows/ci.yml:24", "verified": true},
+      {"purpose": "test", "argv": ["uv", "run", "pytest", "-q"], "source": ".github/workflows/ci.yml:31", "verified": true},
+      {"purpose": "lint", "argv": ["uv", "run", "ruff", "check", "."], "source": ".github/workflows/ci.yml:28", "verified": true},
+      {"purpose": "typecheck", "argv": ["uv", "run", "mypy", "src"], "source": ".github/workflows/ci.yml:29", "verified": false}
+    ],
+    "modules": [
+      {"path": "src/api", "responsibility": "HTTP routes and request validation", "depends_on": ["src/auth", "src/operations", "src/orders"]},
+      {"path": "src/auth", "responsibility": "Session cookie authentication", "depends_on": []},
+      {"path": "src/operations", "responsibility": "Operation model and persistence", "depends_on": ["src/db"]},
+      {"path": "src/orders", "responsibility": "Order listing with filter and cursor pagination", "depends_on": ["src/db"]},
+      {"path": "src/db", "responsibility": "SQLAlchemy engine, sessions and Alembic migrations", "depends_on": []}
+    ],
+    "trust_boundaries": [
+      {"name": "HTTP API", "location": "src/api/routes.py", "notes": "All routes except /health use require_session (src/auth/session.py:18)"},
+      {"name": "Session auth", "location": "src/auth/session.py", "notes": "Signed cookie; user id from server-side session store"},
+      {"name": "Payment provider client", "location": "src/orders/payments.py", "notes": "Outbound HTTPS; key from PAYMENTS_API_KEY"},
+      {"name": "DB migrations", "location": "src/db/migrations/", "notes": "Alembic; 23 revisions"}
+    ],
+    "baseline": {
+      "commands_run": [
+        {"argv": ["uv", "run", "pytest", "-q"], "exit_code": 0, "tests_executed": 214, "evidence_id": "artifact-baseline-pytest-8a77d01"},
+        {"argv": ["uv", "run", "ruff", "check", "."], "exit_code": 0, "tests_executed": null, "evidence_id": "artifact-baseline-ruff-8a77d01"}
+      ],
+      "failing_before_change": []
+    },
+    "unknowns": ["mypy not executed: not in the allowed baseline command list for this run"]
+  }
+}

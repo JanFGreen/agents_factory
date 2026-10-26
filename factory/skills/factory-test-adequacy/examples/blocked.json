@@ -1,0 +1,27 @@
+{
+  "schema_version": "1",
+  "kind": "test-adequacy",
+  "verdict": "BLOCKED",
+  "summary": "Trusted runner could not execute the suite: test database container fails to start (ERROR_ENV), so 0 tests ran on this snapshot.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "factory/checks/manifest.yaml", "line": null},
+      "problem": "Runner evidence ev-run-0201: 'pytest tests/history' exited 4 after 'could not connect to postgres at 127.0.0.1:5433'; tests_executed 0.",
+      "expected_fix": "Repair the test harness (BLOCKED_ENV); do not change product code to bypass the environment.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": ["Runner evidence inspected for head_sha 3f9c2a1e7b4d"],
+  "limitations": ["Detection power cannot be judged without an executed run"],
+  "payload": {
+    "requirement_coverage": {},
+    "fault_probes": [],
+    "weakened_tests": [],
+    "fixture_sanity": [],
+    "tests_executed": 0
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "kind": "decomposition-review",
+  "verdict": "BLOCKED",
+  "summary": "Multi-tenant login migration needs 27 leaf tasks after correct splitting, above the 20-leaf limit; finishing requires an operator limit raise or an authorized split into epics.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-1", "REQ-2", "REQ-3", "REQ-4", "REQ-5", "REQ-6", "REQ-7"],
+      "location": {"path": "openspec/changes/multi-tenant-login/tasks.md", "line": null},
+      "problem": "27 leaves, each already <=45 min with distinct verification; merging leaves would exceed one executor's context (e.g. TASK-11 user backfill + TASK-12 tenant claims). max_leaf_tasks_per_feature is 20. Dropping requirements is not allowed.",
+      "expected_fix": "Operator raises the leaf limit for FEAT-051 with a reason, or authorizes splitting into epics E1 (tenant model + migration, REQ-1..3) and E2 (login + admin UI, REQ-4..7).",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Leaf count against max_leaf_tasks_per_feature",
+    "Depth against max_depth (2, OK)",
+    "Leaf atomicity checked before suggesting merges"
+  ],
+  "limitations": [],
+  "payload": {
+    "requirements_map": {
+      "REQ-1": ["TASK-01", "TASK-02"],
+      "REQ-2": ["TASK-03", "TASK-04", "TASK-05"],
+      "REQ-3": ["TASK-06", "TASK-07", "TASK-08", "TASK-09", "TASK-10", "TASK-11", "TASK-12"],
+      "REQ-4": ["TASK-13", "TASK-14", "TASK-15", "TASK-16"],
+      "REQ-5": ["TASK-17", "TASK-18", "TASK-19"],
+      "REQ-6": ["TASK-20", "TASK-21", "TASK-22", "TASK-23"],
+      "REQ-7": ["TASK-24", "TASK-25", "TASK-26", "TASK-27"]
+    },
+    "per_task": [
+      {"task_id": "TASK-11", "verdict": "PASS", "notes": "User backfill with dry-run and rollback; atomic."},
+      {"task_id": "TASK-12", "verdict": "PASS", "notes": "Tenant claims in session; atomic."},
+      {"task_id": "TASK-27", "verdict": "PASS", "notes": "Feature-level E2E across two tenants."}
+    ],
+    "dag_ok": true
+  }
+}

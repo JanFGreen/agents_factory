@@ -1,0 +1,46 @@
+{
+  "schema_version": "1",
+  "kind": "evidence-audit",
+  "verdict": "CHANGES",
+  "summary": "REQ-2 evidence predates the last commit and the ui-review report is for the previous head; rework (re-run) required before merge.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "openspec/changes/add-operation-history/acceptance-map.yaml", "line": 19},
+      "problem": "Evidence ev-e2e-0142 is bound to head 4b7d0aa, not to candidate head c71f2b9; commit c71f2b9 changed src/history/ui/HistoryList.tsx after the run.",
+      "expected_fix": "Re-run scenario SC-2-1 on the current candidate via the trusted runner.",
+      "status": "open"
+    },
+    {
+      "id": "F-2",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "openspec/changes/add-operation-history/acceptance-map.yaml", "line": 27},
+      "problem": "ui-review report rv-ui-0211 was produced for head 4b7d0aa; no ui-review exists for the current head.",
+      "expected_fix": "Run factory-ui-review on the current candidate.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Every intent-map requirement has an acceptance-matrix row",
+    "Identity of each evidence item compared with candidate",
+    "Producer of each evidence item",
+    "Presence and freshness of required reports"
+  ],
+  "limitations": [],
+  "payload": {
+    "candidate": {"head_sha": "c71f2b9a0e4d8c6b2a1f5e9d3c7b0a4e8f2d6c1b", "base_sha": "3a9e0c41d2b7f6e8a1c5d9b0e4f7a2c6d8b1e3f5", "spec_digest": "sha256:5d1f9a3c7e2b8d4f0a6c1e9b3d7f5a2c8e0b4d6f1a3c5e7b9d2f4a6c8e0b1d3f", "policy_digest": "sha256:a2c4e6b8d0f1a3c5e7b9d1f3a5c7e9b0d2f4a6c8e1b3d5f7a9c0e2b4d6f8a1c3"},
+    "criteria": [
+      {"requirement_id": "REQ-1", "status": "verified", "evidence_ids": ["ev-e2e-0301"], "identity_match": true, "producer_trusted": true, "reason": "Isolation scenario on candidate"},
+      {"requirement_id": "REQ-2", "status": "stale", "evidence_ids": ["ev-e2e-0142"], "identity_match": false, "producer_trusted": true, "reason": "Bound to head 4b7d0aa"},
+      {"requirement_id": "REQ-3", "status": "verified", "evidence_ids": ["ev-run-0290"], "identity_match": true, "producer_trusted": true, "reason": "API contract test, 14 tests executed"}
+    ],
+    "stale_reports": ["ui-review rv-ui-0211 (head 4b7d0aa)"],
+    "missing_reports": ["ui-review for head c71f2b9"],
+    "recommendation": "rework"
+  }
+}

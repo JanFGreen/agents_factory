@@ -1,0 +1,52 @@
+{
+  "schema_version": "1",
+  "kind": "test-adequacy",
+  "verdict": "CHANGES",
+  "summary": "Isolation test cannot fail: fixture has a single user; an existing pagination assertion was loosened without a requirement change.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-3"],
+      "location": {"path": "tests/history/conftest.py", "line": 22},
+      "problem": "Fixture 'two_users_with_operations' creates operations only for user A (B has none), so test_only_own_operations passes even with the owner filter removed (probe missed).",
+      "expected_fix": "Give user B at least one operation of each type and assert B's IDs are absent from A's response.",
+      "status": "open"
+    },
+    {
+      "id": "F-2",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": ["REQ-1"],
+      "location": {"path": "tests/history/test_api.py", "line": 57},
+      "problem": "Assertion changed from 'len(items) == 10' to 'assert items' in this diff; no requirement change justifies it.",
+      "expected_fix": "Restore the exact page-size assertion.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Runner evidence matches head_sha 7a1d09c4e2f0",
+    "tests_executed 16 > 0",
+    "Fault probes for authorization and pagination",
+    "Weakening scan of existing tests"
+  ],
+  "limitations": [],
+  "payload": {
+    "requirement_coverage": {
+      "REQ-1": ["tests/history/test_api.py::test_first_page"],
+      "REQ-3": ["tests/history/test_api.py::test_only_own_operations"]
+    },
+    "fault_probes": [
+      {"probe": "remove owner_id filter in HistoryRepository.list", "detected_by": [], "result": "missed"},
+      {"probe": "return 11 rows for page_size 10", "detected_by": [], "result": "missed"}
+    ],
+    "weakened_tests": [
+      {"path": "tests/history/test_api.py", "change": "assert len(items) == 10 -> assert items", "justified": false}
+    ],
+    "fixture_sanity": [
+      {"fixture": "two_users_with_operations", "issue": "user B has no operations; isolation not exercised"}
+    ],
+    "tests_executed": 16
+  }
+}

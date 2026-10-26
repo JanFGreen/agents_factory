@@ -1,0 +1,49 @@
+{
+  "schema_version": "1",
+  "kind": "product-verify",
+  "verdict": "PASS",
+  "summary": "QA: all 3 acceptance criteria of FEAT-042 observed in the sandbox, including isolation between users and filter+pagination after reload.",
+  "findings": [],
+  "checked_criteria": [
+    "Environment serves candidate tree 9f1c2e7 (GET /version)",
+    "AC-1 user sees only own operations (checked as user-a and user-b)",
+    "AC-2 filter and pagination work together after reload",
+    "AC-3 empty filter result shows empty state, not an error",
+    "Holdout category 'pagination boundaries' executed (3 variants)"
+  ],
+  "limitations": [],
+  "payload": {
+    "perspective": "qa",
+    "environment": "local-sandbox job-01 http://127.0.0.1:18042 seed=history-v2",
+    "criteria": [
+      {
+        "acceptance_id": "AC-1",
+        "requirement_ids": ["REQ-1"],
+        "scenario_ids": ["SC-1-1", "SC-1-2"],
+        "action": "GET /api/history as user-a, then as user-b; compare owner_id of rows with DB",
+        "observed": "user-a receives 42 rows all owner_id=user-a; user-b receives 7 rows all owner_id=user-b; DB counts match",
+        "evidence_ids": ["ev-e2e-0140", "ev-db-0141"],
+        "result": "PASS"
+      },
+      {
+        "acceptance_id": "AC-2",
+        "requirement_ids": ["REQ-2"],
+        "scenario_ids": ["SC-2-1"],
+        "action": "Filter by type=transfer, open page 2, reload browser",
+        "observed": "Page 2 shows 10 transfer rows owned by user-a; URL keeps type=transfer&page=2 and same rows after reload",
+        "evidence_ids": ["ev-e2e-0142"],
+        "result": "PASS"
+      },
+      {
+        "acceptance_id": "AC-3",
+        "requirement_ids": ["REQ-2"],
+        "scenario_ids": ["SC-2-3"],
+        "action": "Filter by type=refund for user-b (no refunds seeded)",
+        "observed": "Empty state 'No operations match the filter' rendered, HTTP 200 with items=[]",
+        "evidence_ids": ["ev-e2e-0143"],
+        "result": "PASS"
+      }
+    ],
+    "intent_gaps": []
+  }
+}

@@ -1,0 +1,66 @@
+enabled: true
+schema_version: 2
+feature_input:
+  accepted_sources: ["file", "cli", "github_issue"]
+  preserve_original_request: true
+  immutable_source_snapshot: true
+  required_fields: ["feature_id", "goal", "original_request", "repo_id"]
+complexity:
+  dimensions: ["scope", "coupling", "state_and_data", "interfaces", "uncertainty", "verification"]
+  dimension_min: 0
+  dimension_max: 2
+  trivial_max_score: 2
+  standard_max_score: 6
+  trivial_requires_low_risk: true
+  trivial_requires_single_atomic_task: true
+  trivial_requires_known_pattern: true
+  unknown_dimensions_allow_trivial: false
+  reclassify_on_actual_diff: true
+  risk_is_separate: true
+paths:
+  trivial:
+    spec_format: "micro"
+    minimum_options: 1
+    planned_tasks: 1
+    skip_decomposition_loop: true
+    skip_required_code_checks: false
+  standard:
+    spec_format: "openspec"
+    minimum_options: 2
+    require_decomposition: true
+  complex:
+    spec_format: "openspec"
+    minimum_options: 2
+    require_decomposition: true
+analysis:
+  max_rounds_per_feature: 3
+  count_initial_round: true
+  shared_across_spec_options_and_decomposition: true
+  reset_on_child_task: false
+  reset_on_model_switch: false
+  reset_on_replan: false
+  stop_when_all_required_checks_pass: true
+  max_consecutive_rounds_without_progress: 2
+  max_feasibility_spikes_per_feature: 1
+  on_limit: "ANALYSIS_LIMIT_REACHED"
+  allow_scope_reduction_to_pass: false
+spec_evaluation:
+  enabled: true
+  timing: "before_build"
+  require_ai_pass: true
+  human_approval: false
+  independent_reviewer_context: true
+  mandatory_dimensions: ["intent_coverage", "consistency", "testability", "feasibility", "risk_controls"]
+decomposition:
+  max_depth: 3
+  max_leaf_tasks_per_feature: 20
+  target_task_minutes: 45
+  full_requirement_coverage: true
+  require_acyclic_dependencies: true
+  require_parent_end_to_end_acceptance: true
+  future_scope_policy: "record_constraints_do_not_build_speculative_features"
+implementation:
+  max_attempts_per_leaf_task: 3
+  max_build_attempts_per_feature: 30
+  integration_rebuilds: 2
+  attempts_do_not_reset_after_reclassification: true

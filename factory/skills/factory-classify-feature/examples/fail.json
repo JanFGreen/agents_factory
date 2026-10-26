@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "kind": "classify-feature",
+  "verdict": "CHANGES",
+  "summary": "Cannot evidence scope or interfaces: the feature mentions 'history' without saying whether it is the operations history or the audit log, which live in different modules.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "features/FEAT-045.yaml", "line": 2},
+      "problem": "Goal 'show history with filters' matches two modules: src/operations/ (user operations) and src/audit/ (admin audit log, high-risk path rule). Scores and risk differ by module.",
+      "expected_fix": "Intake clarifies which history is meant (re-run factory-intake on the request; ask NEEDS_INFO only if the request itself is ambiguous).",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Feature revision matches",
+    "Repo-map modules searched for 'history' (2 candidates)"
+  ],
+  "limitations": [
+    "scope and interfaces left null until the target module is known"
+  ],
+  "payload": {
+    "dimensions": {
+      "scope": {"score": null, "evidence": "Target module ambiguous: src/operations/ vs src/audit/."},
+      "coupling": {"score": 1, "evidence": "Both candidate modules have 2-4 callers."},
+      "state_and_data": {"score": 1, "evidence": "Either option adds a read query only."},
+      "interfaces": {"score": null, "evidence": "Depends on target module (public API vs admin API)."},
+      "uncertainty": {"score": 1, "evidence": "Ambiguous target."},
+      "verification": {"score": 1, "evidence": "Integration tests exist for both modules."}
+    },
+    "risk": "high",
+    "risk_reasons": ["src/audit/** has policy risk floor high; cannot be excluded yet"],
+    "single_atomic_task": false,
+    "known_pattern": true,
+    "new_trust_boundary": true,
+    "forced_complex_reasons": []
+  }
+}

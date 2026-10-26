@@ -1,0 +1,34 @@
+{
+  "schema_version": "1",
+  "kind": "test-adequacy",
+  "verdict": "PASS",
+  "summary": "TASK-02 tests ran on head 3f9c2a1 (18 executed) and detect all 4 fault probes; no weakening.",
+  "findings": [],
+  "checked_criteria": [
+    "Runner evidence ev-run-0192 matches head_sha 3f9c2a1e7b4d",
+    "tests_executed 18 > 0, no skipped suites",
+    "Public scenarios SC-2-1, SC-2-2, SC-3-1 mapped to tests",
+    "Fault probes for authorization, pagination, filter, validation",
+    "Diff of existing tests inspected for weakening",
+    "Fixtures checked for two principals and rows > page size"
+  ],
+  "limitations": ["No mutation tool configured; probes judged from test code"],
+  "payload": {
+    "requirement_coverage": {
+      "REQ-2": ["tests/history/test_api.py::test_filter_across_pages", "tests/history/test_api.py::test_invalid_cursor_400"],
+      "REQ-3": ["tests/history/test_api.py::test_only_own_operations"]
+    },
+    "fault_probes": [
+      {"probe": "remove owner_id filter in HistoryRepository.list", "detected_by": ["tests/history/test_api.py::test_only_own_operations"], "result": "detected"},
+      {"probe": "off-by-one: cursor includes last row of previous page", "detected_by": ["tests/history/test_api.py::test_filter_across_pages"], "result": "detected"},
+      {"probe": "apply type filter only on first page", "detected_by": ["tests/history/test_api.py::test_filter_across_pages"], "result": "detected"},
+      {"probe": "accept malformed cursor and return first page", "detected_by": ["tests/history/test_api.py::test_invalid_cursor_400"], "result": "detected"}
+    ],
+    "weakened_tests": [],
+    "fixture_sanity": [
+      {"fixture": "two_users_with_operations", "issue": "none"},
+      {"fixture": "user_a_mixed_operations", "issue": "none"}
+    ],
+    "tests_executed": 18
+  }
+}

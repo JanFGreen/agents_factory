@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "kind": "evidence-audit",
+  "verdict": "PASS",
+  "summary": "All 3 requirements of FEAT-042 are verified by trusted, candidate-bound evidence; all required reports are current. Recommend merge.",
+  "findings": [],
+  "checked_criteria": [
+    "Every intent-map requirement has an acceptance-matrix row",
+    "Every evidence item identity equals candidate 9f1c2e7 and current spec/policy digests",
+    "All test/check evidence produced by the trusted runner with executed test counts > 0",
+    "Required reports for risk=medium present and current: checks, code-review, security-review (baseline), ui-review, product-verify pm+qa, integration-review, spec-evaluate, decomposition-review",
+    "No open blocking finding; fixed findings F-1, F-2 confirmed by product-verify"
+  ],
+  "limitations": [],
+  "payload": {
+    "candidate": {"head_sha": "c71f2b9a0e4d8c6b2a1f5e9d3c7b0a4e8f2d6c1b", "base_sha": "3a9e0c41d2b7f6e8a1c5d9b0e4f7a2c6d8b1e3f5", "spec_digest": "sha256:5d1f9a3c7e2b8d4f0a6c1e9b3d7f5a2c8e0b4d6f1a3c5e7b9d2f4a6c8e0b1d3f", "policy_digest": "sha256:a2c4e6b8d0f1a3c5e7b9d1f3a5c7e9b0d2f4a6c8e1b3d5f7a9c0e2b4d6f8a1c3"},
+    "criteria": [
+      {"requirement_id": "REQ-1", "status": "verified", "evidence_ids": ["ev-e2e-0140", "ev-db-0141", "ev-e2e-0301"], "identity_match": true, "producer_trusted": true, "reason": "E2E isolation assertion user-a vs user-b, re-run on integration candidate"},
+      {"requirement_id": "REQ-2", "status": "verified", "evidence_ids": ["ev-e2e-0142", "ev-e2e-0302"], "identity_match": true, "producer_trusted": true, "reason": "Filter + pagination + reload scenario on candidate"},
+      {"requirement_id": "REQ-3", "status": "verified", "evidence_ids": ["ev-run-0290"], "identity_match": true, "producer_trusted": true, "reason": "API contract test, 14 tests executed"}
+    ],
+    "stale_reports": [],
+    "missing_reports": [],
+    "recommendation": "merge"
+  }
+}

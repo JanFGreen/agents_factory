@@ -1,0 +1,40 @@
+{
+  "schema_version": "1",
+  "kind": "retrospective",
+  "verdict": "BLOCKED",
+  "summary": "Cannot analyze INC-5: runner records and review reports of job-04 were removed by retention policy; only state transitions remain.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {
+        "path": "evidence/job-04",
+        "line": null
+      },
+      "problem": "Evidence manifest lists 23 artifacts for job-04, all with status 'expired' (retention 7 days); no verdict or runner record can be read.",
+      "expected_fix": "Operator decides whether to extend retention for incident-linked jobs; analysis can proceed only on a reproduction of the incident.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Event log of job-04 read (state transitions only)"
+  ],
+  "limitations": [
+    "No reports or runner evidence available for job-04"
+  ],
+  "payload": {
+    "incident_ref": "job-04 FEAT-033 INC-5",
+    "failure_layer": "policy",
+    "timeline": [
+      {
+        "at": "2026-10-14T08:00:00Z",
+        "event": "MERGED PR #97"
+      }
+    ],
+    "root_cause": "Original incident layer not determinable; the evidence retention policy removed all reports and runner records of an incident-linked job, which is itself a policy gap.",
+    "proposals": [],
+    "metrics": []
+  }
+}

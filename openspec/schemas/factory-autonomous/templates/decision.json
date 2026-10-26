@@ -1,0 +1,22 @@
+{
+  "schema_version": "1",
+  "kind": "select-option",
+  "verdict": "PASS",
+  "summary": "",
+  "findings": [],
+  "checked_criteria": [],
+  "limitations": [],
+  "payload": {
+    "options": [
+      {
+        "option_id": "OPT-A",
+        "feasible": true,
+        "infeasible_reasons": [],
+        "ratings": {"goal_fit": 0, "correctness": 0, "maintainability": 0, "delivery_time": 0, "cost": 0},
+        "estimated_cost_usd": 0,
+        "estimated_minutes": 0
+      }
+    ],
+    "selected_option_id": null
+  }
+}

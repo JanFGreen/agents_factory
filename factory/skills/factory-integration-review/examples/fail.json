@@ -1,0 +1,53 @@
+{
+  "schema_version": "1",
+  "kind": "integration-review",
+  "verdict": "CHANGES",
+  "summary": "Base migration 0042 renamed operations.kind to operations.type; the feature still queries kind and the e2e check is still pending.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "src/history/repository.py", "line": 33},
+      "problem": "Filter query uses column operations.kind, renamed to type by base migration migrations/0042_rename_kind.py:12; integration test test_filter_by_type fails on candidate (ev-run-0311).",
+      "expected_fix": "Update the history repository and its tests to use operations.type; no spec change needed.",
+      "status": "open"
+    },
+    {
+      "id": "F-2",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": ".github/workflows/ci.yml", "line": 48},
+      "problem": "Required check e2e is pending on this candidate; pending is not success.",
+      "expected_fix": "Wait for e2e to complete on the rebuilt candidate before re-review.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "All results refer to candidate_tree_sha 2e6b9d1f0a7c3e5b8d4f6a2c1e9b7d3f5a0c8e4b",
+    "Base diff reviewed for overlap with src/history and migrations",
+    "Required check statuses on candidate",
+    "Critical scenario SC-2-1 on candidate"
+  ],
+  "limitations": [],
+  "payload": {
+    "base_sha": "7c2d5f8a1e4b9c0d3f6a8e2b5d7c1f4a9e0b3d6c",
+    "head_sha": "c71f2b9a0e4d8c6b2a1f5e9d3c7b0a4e8f2d6c1b",
+    "candidate_tree_sha": "2e6b9d1f0a7c3e5b8d4f6a2c1e9b7d3f5a0c8e4b",
+    "conflicts": [],
+    "required_checks": [
+      {"name": "unit", "status": "success"},
+      {"name": "integration", "status": "failure"},
+      {"name": "lint", "status": "success"},
+      {"name": "typecheck", "status": "success"},
+      {"name": "e2e", "status": "pending"}
+    ],
+    "critical_scenarios": [
+      {"scenario_id": "SC-2-1", "result": "FAIL", "evidence_ids": ["ev-run-0311"]}
+    ],
+    "interaction_risks": ["Base migration 0042 renamed operations.kind to operations.type"],
+    "route_to": "BUILD"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "kind": "test-design",
+  "verdict": "BLOCKED",
+  "summary": "REQ-2 reload persistence needs a browser e2e runner; the repository has none and the sandbox policy forbids downloading browser binaries.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "factory/checks/manifest.yaml", "line": null},
+      "problem": "Trusted check manifest lists no e2e/browser command; network policy for the test sandbox is 'deny', so Playwright browsers cannot be installed (repo-map unknowns U-2).",
+      "expected_fix": "Operator adds a pre-provisioned browser runner to the trusted checks, or allows the pinned browser download for the sandbox.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Required test levels per requirement determined",
+    "Trusted check manifest inspected for an e2e runner"
+  ],
+  "limitations": ["UI scenarios cannot be executed until a browser runner exists"],
+  "payload": {
+    "strategy": "Integration tests possible; e2e level unavailable.",
+    "scenarios": [],
+    "uncovered_requirements": ["REQ-2"]
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schema_version": "1",
+  "kind": "recover",
+  "verdict": "CHANGES",
+  "summary": "Lease expired but the old builder session is still alive and has written 2 uncommitted files; it must be cancelled and fenced before a new attempt, and its late result rejected.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "worktrees/job-01-task-03", "line": null},
+      "problem": "Runtime poll for run-57 reports running (epoch 2), while the DB lease expired at 2026-10-26T21:40:12Z; worktree has uncommitted changes in src/history/repository.py and tests/history/test_filter.py.",
+      "expected_fix": "Controller cancels run-57, revokes its tool access, issues lease epoch 3, and keeps the uncommitted changes as a checkpoint commit for the next attempt; any result with epoch 2 is rejected.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "DB state BUILD_TASK v9 and lease epoch 2 read",
+    "Artifacts of last events present",
+    "Worktree state inspected",
+    "Runtime poll for run-57",
+    "Outbox: no pending operations",
+    "Budget ledger: 6.10 of 25.00 USD used"
+  ],
+  "limitations": [],
+  "payload": {
+    "observed": {
+      "db_state": "BUILD_TASK v9",
+      "lease": {"epoch": 2, "expired": true},
+      "git": {"worktree": "worktrees/job-01-task-03", "head_sha": "e4a7c1d9b2f0e6a3c8d5b1f7a9e2c4d6b0f3a8e1", "dirty": true},
+      "processes": [{"handle": "run-57", "alive": true}],
+      "outbox": []
+    },
+    "proposed_actions": [
+      {"action": "cancel_process", "target": "run-57", "reason": "Stale lease epoch 2; only one builder per worktree", "destructive": false},
+      {"action": "resume", "target": "task-03", "reason": "New attempt with lease epoch 3 from checkpoint including uncommitted files", "destructive": false}
+    ],
+    "duplicates_detected": [],
+    "proposed_next_state": "BUILD_TASK"
+  }
+}

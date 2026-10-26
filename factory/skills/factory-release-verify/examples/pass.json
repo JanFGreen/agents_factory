@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "kind": "release-verify",
+  "verdict": "PASS",
+  "summary": "Artifact of merge 5e2a9c1 verified on staging over a 30 minute window: version, health, synthetic history flow, error rate and SLO all PASS.",
+  "findings": [],
+  "checked_criteria": [
+    "Pre-release: artifact_id, environment, permissions and rollback plan present",
+    "Version endpoint reports expected artifact digest",
+    "Healthcheck probes for the full 30 minute window",
+    "Synthetic flow: open history, filter type=transfer, page 2, reload as synthetic user",
+    "Error rate versus 24h baseline, no new exception types",
+    "p95 latency of /api/history within SLO 400 ms"
+  ],
+  "limitations": [],
+  "payload": {
+    "release_enabled": true,
+    "not_applicable_reason": null,
+    "artifact_id": "ghcr.io/acme/app@sha256:4f8a2c6e1b9d3f7a0c5e8b2d6f1a4c9e3b7d0f5a8c2e6b1d9f4a7c3e0b5d8f2a",
+    "environment": "staging",
+    "pre_release": {"rollback_plan": true, "permissions_ok": true},
+    "observation_window_minutes": 30,
+    "checks": [
+      {"name": "version", "result": "PASS", "observed": "GET /version returns sha 5e2a9c1 and expected digest", "evidence_ids": ["ev-rel-0500"]},
+      {"name": "healthcheck", "result": "PASS", "observed": "/healthz 200 OK in 180/180 probes", "evidence_ids": ["ev-rel-0501"]},
+      {"name": "synthetic_flow", "result": "PASS", "observed": "synthetic-user-1 sees 10 own transfer rows on page 2 after reload", "evidence_ids": ["ev-rel-0502"]},
+      {"name": "error_rate", "result": "PASS", "observed": "5xx rate 0.02% vs baseline 0.03%; no new exception types", "evidence_ids": ["ev-rel-0503"]},
+      {"name": "slo", "result": "PASS", "observed": "p95 /api/history 212 ms (SLO 400 ms)", "evidence_ids": ["ev-rel-0504"]}
+    ],
+    "release_state": "VERIFIED",
+    "rollback_recommended": false
+  }
+}

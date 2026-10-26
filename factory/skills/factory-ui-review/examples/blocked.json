@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "kind": "ui-review",
+  "verdict": "BLOCKED",
+  "summary": "Cannot review: the trusted runner has no browser available in this sandbox, so no screen of the candidate could be rendered.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "factory/checks/browser.yaml", "line": null},
+      "problem": "Runner reported 'chromium executable not found' (evidence ev-run-0220); UI review without rendering is not allowed.",
+      "expected_fix": "Operator installs the pinned browser for the trusted runner (BLOCKED_ENV); re-run the review on the same candidate.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [],
+  "limitations": ["No viewport, state or accessibility check executed"],
+  "payload": {
+    "viewports": [],
+    "states": {"loading": "NOT_RUN", "empty": "NOT_RUN", "error": "NOT_RUN", "success": "NOT_RUN"},
+    "a11y": {"keyboard": "NOT_RUN", "focus_visible": "NOT_RUN", "labels": "NOT_RUN", "contrast": "NOT_RUN"},
+    "consistency_notes": []
+  }
+}

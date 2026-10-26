@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "kind": "intake",
+  "verdict": "PASS",
+  "summary": "FEAT-042 normalized: user-scoped operation history with combined filter and pagination; criteria derived for reload persistence and empty state.",
+  "findings": [],
+  "checked_criteria": [
+    "Snapshot hash matches the stored source snapshot",
+    "Every intent of the original request (history, filter, pagination) appears in goal or criteria",
+    "User-supplied criteria kept verbatim",
+    "Constraints include existing login and tenant isolation",
+    "Future directions classified",
+    "Requested operations are within the local mode permission scope"
+  ],
+  "limitations": [],
+  "payload": {
+    "goal": "A signed-in user can find their own earlier operation in a filterable, paginated history.",
+    "acceptance_criteria": [
+      "The user sees only their own operations.",
+      "Filter and pagination work together, also after a page reload.",
+      "With no operations the history shows an empty state instead of an error.",
+      "Requesting another user's operations via the API returns no foreign rows."
+    ],
+    "constraints": [
+      "Use the existing login (session cookie auth in src/auth/session.py)",
+      "Do not expose data of other users"
+    ],
+    "open_questions": [],
+    "future_directions": [
+      {"description": "History export may appear later.", "status": "hypothetical"}
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "kind": "spec-author",
+  "verdict": "CHANGES",
+  "summary": "Round 2: baseline spec orders/listing requires cursor pagination, but the request implies page numbers; an explicit MODIFIED decision is needed before the spec is consistent.",
+  "findings": [
+    {
+      "id": "F-4",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": ["REQ-3"],
+      "location": {"path": "openspec/specs/listing/spec.md", "line": 18},
+      "problem": "Baseline 'Requirement: Cursor pagination' says all list endpoints SHALL use opaque cursors; REQ-3 draft uses page numbers ('page 2'). Writing REQ-3 as-is contradicts the accepted contract without a delta.",
+      "expected_fix": "Next round: either express REQ-3 with cursors (URL keeps cursor + filter) or add a MODIFIED delta for listing with justification; options-review must reconsider OPT-A accordingly.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "F-1 addressed: REQ-1 now has foreign-user scenario",
+    "F-2 addressed: AC-2 states invalid filter response",
+    "Baseline specs under openspec/specs read in full"
+  ],
+  "limitations": [],
+  "payload": {
+    "requirements": [
+      {"id": "REQ-1", "text": "The history SHALL contain only operations owned by the authenticated user.", "source": "original_request"},
+      {"id": "REQ-2", "text": "The user SHALL filter history by operation type and date range.", "source": "original_request"},
+      {"id": "REQ-3", "text": "History SHALL be paginated and filter and page SHALL survive a reload.", "source": "original_request"}
+    ],
+    "intent_map": [
+      {"intent": "find own earlier operation", "requirement_ids": ["REQ-1"]},
+      {"intent": "filter", "requirement_ids": ["REQ-2"]},
+      {"intent": "pagination works together with filter, also after reload", "requirement_ids": ["REQ-3"]}
+    ],
+    "acceptance_criteria": [
+      {"id": "AC-1", "requirement_ids": ["REQ-1"], "observable": "GET /api/history as user A returns only rows owned by A."},
+      {"id": "AC-2", "requirement_ids": ["REQ-2"], "observable": "Invalid type filter returns 400 with a field error."},
+      {"id": "AC-3", "requirement_ids": ["REQ-3"], "observable": "After reload the same page of filtered results is shown."}
+    ]
+  }
+}

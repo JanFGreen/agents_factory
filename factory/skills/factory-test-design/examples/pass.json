@@ -1,0 +1,29 @@
+{
+  "schema_version": "1",
+  "kind": "test-design",
+  "verdict": "PASS",
+  "summary": "7 scenarios cover REQ-1..REQ-3 including tenant isolation, pagination boundaries and reload persistence; one holdout category reserved.",
+  "findings": [],
+  "checked_criteria": [
+    "Spec digest matches evaluated spec",
+    "Every requirement has happy path and at least one error or boundary scenario",
+    "Authorization scenario for user-owned data present",
+    "Feature-level e2e scenario present",
+    "All new scenarios have red_expected true or a regression-guard reason",
+    "No holdout case copied into public plan"
+  ],
+  "limitations": [],
+  "payload": {
+    "strategy": "Contract tests for history-api-contract-v1, integration tests on SQLite fixture DB for filtering and isolation, component tests for HistoryList, one Playwright e2e flow.",
+    "scenarios": [
+      {"scenario_id": "SC-1-1", "requirement_ids": ["REQ-1"], "level": "integration", "given": "user A has 25 operations", "when": "A requests page 1 with page_size 10", "then": "10 newest operations of A and a next cursor", "assertions": ["len(items) == 10", "items sorted by created_at desc", "next_cursor is not None"], "red_expected": true, "fixtures": ["user_a_25_operations"], "visibility": "public"},
+      {"scenario_id": "SC-1-2", "requirement_ids": ["REQ-1"], "level": "integration", "given": "user A has no operations", "when": "A requests history", "then": "empty list and no cursor", "assertions": ["items == []", "next_cursor is None"], "red_expected": true, "fixtures": ["user_a_empty"], "visibility": "public"},
+      {"scenario_id": "SC-2-1", "requirement_ids": ["REQ-2"], "level": "integration", "given": "A has 5 transfers and 5 logins", "when": "A filters type=transfer page_size 3, then follows cursor", "then": "pages contain only transfers, 3 then 2, no duplicates", "assertions": ["all(i.type == 'transfer')", "len(page1)+len(page2) == 5", "ids disjoint"], "red_expected": true, "fixtures": ["user_a_mixed_operations"], "visibility": "public"},
+      {"scenario_id": "SC-2-2", "requirement_ids": ["REQ-2"], "level": "integration", "given": "any user", "when": "request with malformed cursor", "then": "400 with error code invalid_cursor", "assertions": ["status == 400", "body.code == 'invalid_cursor'"], "red_expected": true, "fixtures": [], "visibility": "public"},
+      {"scenario_id": "SC-2-3", "requirement_ids": ["REQ-2"], "level": "e2e", "given": "A on history page with filter transfer and page 2", "when": "A reloads the browser", "then": "same filter and page are shown", "assertions": ["url contains type=transfer&page=2", "rendered rows equal pre-reload rows"], "red_expected": true, "fixtures": ["user_a_mixed_operations"], "visibility": "public"},
+      {"scenario_id": "SC-3-1", "requirement_ids": ["REQ-3"], "level": "integration", "given": "users A and B each have 3 operations", "when": "A requests history with and without filters", "then": "only A's operations returned", "assertions": ["all(i.owner_id == A.id)", "no B id present"], "red_expected": true, "fixtures": ["two_users_with_operations"], "visibility": "public"},
+      {"scenario_id": "SC-3-2", "requirement_ids": ["REQ-3"], "level": "integration", "given": "pagination boundary variants", "when": "evaluator-held data variants", "then": "category: tenant isolation under pagination boundaries", "assertions": ["no foreign owner_id in any page"], "red_expected": true, "fixtures": ["evaluator_private"], "visibility": "holdout_category"}
+    ],
+    "uncovered_requirements": []
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "kind": "options-review",
+  "verdict": "CHANGES",
+  "summary": "Only one real option: OPT-B is OPT-A with a different endpoint name, and OPT-A has no evidence for its isolation claim.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "openspec/changes/add-operation-history/options.md", "line": 30},
+      "problem": "OPT-B differs from OPT-A only by route name (/api/operations/history vs /api/history); same query, same boundary. Standard path requires >= 2 real options.",
+      "expected_fix": "Replace OPT-B with a materially different approach (e.g. keyset pagination on a read model, or reusing orders listing service) or justify why no alternative exists.",
+      "status": "open"
+    },
+    {
+      "id": "F-2",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-1"],
+      "location": {"path": "openspec/changes/add-operation-history/options.md", "line": 14},
+      "problem": "OPT-A claims 'isolated by design' but the described query in options.md:16 has no user_id predicate; correctness rating 5 is unsupported.",
+      "expected_fix": "State the owner predicate source (server session user id from src/auth/session.py) and adjust the correctness rating.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Option count against policy minimum",
+    "Hard constraint checks per option",
+    "Rating evidence for correctness"
+  ],
+  "limitations": [],
+  "payload": {
+    "options": [
+      {"option_id": "OPT-A", "feasible": true, "infeasible_reasons": [], "ratings": {"goal_fit": 5, "correctness": 3, "maintainability": 4, "delivery_time": 3, "cost": 3}, "estimated_cost_usd": 4.5, "estimated_minutes": 90},
+      {"option_id": "OPT-B", "feasible": true, "infeasible_reasons": [], "ratings": {"goal_fit": 5, "correctness": 3, "maintainability": 4, "delivery_time": 3, "cost": 3}, "estimated_cost_usd": 4.5, "estimated_minutes": 90}
+    ],
+    "selected_option_id": null
+  }
+}

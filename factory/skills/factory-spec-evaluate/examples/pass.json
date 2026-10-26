@@ -1,0 +1,49 @@
+{
+  "schema_version": "1",
+  "kind": "spec-evaluate",
+  "verdict": "PASS",
+  "summary": "Round 2 spec for add-operation-history passes all five dimensions; previous findings F-1 and F-2 fixed, counterexample rejected by AC-1 API check.",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": ["REQ-1"],
+      "location": {"path": "openspec/changes/add-operation-history/specs/operation-history/spec.md", "line": 14},
+      "problem": "Fixed: REQ-1 now has scenario 'Foreign operations hidden' asserting the API response (round 1 only checked the UI list).",
+      "expected_fix": "None; verified in round 2.",
+      "status": "fixed"
+    },
+    {
+      "id": "F-2",
+      "severity": "medium",
+      "blocking": true,
+      "requirement_ids": ["REQ-2"],
+      "location": {"path": "openspec/changes/add-operation-history/acceptance-map.yaml", "line": 9},
+      "problem": "Fixed: AC-2 now specifies 400 with a field error for an invalid type filter.",
+      "expected_fix": "None; verified in round 2.",
+      "status": "fixed"
+    }
+  ],
+  "checked_criteria": [
+    "Intents re-derived from the original request independently (3 intents) and compared with intent-map.yaml",
+    "intent_coverage: REQ-1..REQ-4 cover all intents; future-needs.md holds only export (hypothetical, not in request scope)",
+    "consistency: REQ-3 uses cursors, matching openspec/specs/listing/spec.md",
+    "testability: every AC observable via API body or rendered state, incl. empty and invalid filter",
+    "feasibility: OPT-A uses existing session auth and orders cursor pattern; estimate 90 min within budget",
+    "risk_controls: tenant isolation scenario at API level, auth required, index on (user_id, created_at)",
+    "Counterexample constructed and rejected"
+  ],
+  "limitations": [],
+  "payload": {
+    "dimensions": {
+      "intent_coverage": "PASS",
+      "consistency": "PASS",
+      "testability": "PASS",
+      "feasibility": "PASS",
+      "risk_controls": "PASS"
+    },
+    "counterexample": "Return all users' operations from /api/history and filter by owner in the React view: rejected, because AC-1 asserts the API response for user A contains no rows of user B.",
+    "uncovered_requirements": []
+  }
+}

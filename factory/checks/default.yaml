@@ -1,0 +1,11 @@
+# Zaufany manifest komend. Przechowywany w kontrolerze, nie w gałęzi joba.
+schema_version: 1
+checks:
+  - name: unit
+    argv: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml={report}"]
+    timeout_seconds: 600
+    report: junit
+    min_tests: 1
+    required: true
+    network: localhost
+    stage: task

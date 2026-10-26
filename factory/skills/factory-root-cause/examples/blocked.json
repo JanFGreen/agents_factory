@@ -1,0 +1,37 @@
+{
+  "schema_version": "1",
+  "kind": "root-cause",
+  "verdict": "BLOCKED",
+  "summary": "Both attempts failed with ERROR_ENV: the runner's Postgres image cannot be pulled; product code is not the cause.",
+  "findings": [
+    {
+      "id": "F-11",
+      "severity": "high",
+      "blocking": true,
+      "requirement_ids": [],
+      "location": {"path": "factory/checks/manifest.yaml", "line": null},
+      "problem": "ev-run-0201 and ev-run-0204: 'docker pull postgres:16.4' -> 'toomanyrequests: rate limit exceeded'; tests_executed 0 in both attempts.",
+      "expected_fix": "Harness owner provides a cached image or registry credential; attempts spent on ERROR_ENV should not be retried as code fixes.",
+      "status": "open"
+    }
+  ],
+  "checked_criteria": [
+    "Fingerprint match across attempts",
+    "Error class determined from runner evidence"
+  ],
+  "limitations": ["Reproduction not possible: sandbox has no registry access"],
+  "payload": {
+    "failure_fingerprint": "checks:integration-db:setup:ERROR_ENV:image pull rate limited",
+    "error_class": "ERROR_ENV",
+    "reproduction": {"argv": ["docker", "pull", "postgres:16.4"], "reproduced": false, "evidence_ids": ["ev-run-0201", "ev-run-0204"]},
+    "hypotheses": [
+      {"id": "H-1", "statement": "Registry rate limit blocks the DB image pull", "supporting_evidence": ["'toomanyrequests' in both runner logs"], "refuting_evidence": [], "status": "open"}
+    ],
+    "discriminating_experiment": {
+      "description": "Harness owner pulls the image with the registry credential on the runner host",
+      "expected_if_true": "pull succeeds and tests execute",
+      "expected_if_false": "pull fails with a different error"
+    },
+    "route_to": "BLOCKED_ENV"
+  }
+}

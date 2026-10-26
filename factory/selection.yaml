@@ -1,0 +1,21 @@
+enabled: true
+schema_version: 2
+objective: "best_feasible_solution"
+weights:
+  goal_fit: 0.3
+  correctness: 0.25
+  maintainability: 0.2
+  delivery_time: 0.15
+  cost: 0.1
+ratings:
+  min: 0
+  max: 5
+  higher_is_better: true
+hard_constraints: ["preserve_all_requested_requirements", "respect_permissions", "compatible_with_repository", "within_operator_limits"]
+near_tie_delta: 0.03
+tie_break: ["correctness_desc", "maintainability_desc", "estimated_cost_asc", "estimated_time_asc", "option_id_asc"]
+require_exactly_one_selected_option: true
+human_spec_approval: false
+ai_spec_evaluation: true
+require_ai_spec_eval_pass: true
+analysis_policy_file: "workflow.yaml"
