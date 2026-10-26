@@ -64,10 +64,10 @@ Envelope per contract, `kind: "spec-author"`. Payload (`micro_spec` only on the 
 }
 ```
 
-- `PASS`: artifacts written, intent map complete, OpenSpec validation passed (standard/complex).
+- `PASS`: artifacts returned in `payload.files`, intent map complete, format follows the schema (the controller runs the validator).
 - `CHANGES`: you found an inconsistency you could not resolve inside the round
   (e.g. baseline spec contradicts the request and needs an explicit MODIFIED delta decision).
-- `BLOCKED`: a needed business decision is missing, or the OpenSpec CLI/validator is unavailable.
+- `BLOCKED`: a needed business decision is missing. Never BLOCKED because this run cannot write files or run the validator.
 
 ## Limits
 

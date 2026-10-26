@@ -18,6 +18,11 @@ from .state import Store, new_id, now
 
 JOB_ID = re.compile(r"^job-[0-9a-f]{12}$")
 BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,100}$")
+# Build/test by-products are never part of a candidate (they would pollute diffs, scope checks and reviews).
+GENERATED_EXCLUDES = [
+    ":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/*.pyc", ":(exclude,glob)**/.pytest_cache/**",
+    ":(exclude,glob)**/node_modules/**", ":(exclude,glob)**/.DS_Store", ":(exclude,glob)**/.coverage",
+]
 AUTHOR = ["-c", "user.name=Agent Factory", "-c", "user.email=agent-factory@localhost", "-c", "commit.gpgsign=false"]
 
 
@@ -102,8 +107,8 @@ class WorkspaceManager:
     @staticmethod
     def commit_all(path: Path, message: str) -> str | None:
         """Controller-side commit of the builder's work. Returns the new sha or None if no change."""
-        git(path, "add", "-A")
-        if not git(path, "status", "--porcelain"):
+        git(path, "add", "-A", "--", ".", *GENERATED_EXCLUDES)
+        if not git(path, "diff", "--cached", "--name-only"):
             return None
         git(path, *AUTHOR, "commit", "--quiet", "--no-verify", "-m", message)
         return git(path, "rev-parse", "HEAD")
@@ -154,7 +159,7 @@ class WorkspaceManager:
         path = self.path_for(job_id)
         actions: list[str] = []
         if path.exists():
-            dirty = git(path, "status", "--porcelain", "--untracked-files=all")
+            dirty = git(path, "status", "--porcelain", "--untracked-files=all", "--", ".", *GENERATED_EXCLUDES)
             if dirty:
                 raise GitError(["cleanup"], 1, f"worktree has uncommitted work, preserved:\n{dirty[:500]}")
             actions.append(f"git worktree remove {path}")

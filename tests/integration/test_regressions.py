@@ -123,3 +123,44 @@ def test_agents_cannot_read_factory_golden_tests():
     from agent_factory.sandbox import default_denied_reads
     evals = Path(__file__).resolve().parents[1] / "evals"
     assert evals in [p.resolve() for p in default_denied_reads(Path("/nonexistent"))]
+
+
+def test_generated_bytecode_is_never_committed_or_counted(make_env):
+    """Live finding: a builder ran Python via Bash; .pyc files were committed, inflating the diff,
+    triggering a false reclassification and out-of-scope review/policy failures."""
+    from ..conftest import GREET_BANG, GREET_TEST
+
+    edits = {"app/greet.py": GREET_BANG, "tests/test_greet_bang.py": GREET_TEST,
+             **{f"app/__pycache__/m{i}.cpython-312.pyc": "bytecode" for i in range(6)}, ".pytest_cache/v/x": "c"}
+    env = make_env("trivial", responders={"factory-implement": FakeReply(envelope("implement", payload={}), edits=edits)})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert [a["source"] for a in env.store.all("SELECT source FROM complexity_assessments WHERE job_id = ?", (job,))] == ["intake"]
+    import subprocess
+    files = subprocess.run(["git", "ls-files"], cwd=env.store.job(job)["worktree"], capture_output=True, text=True).stdout
+    assert "__pycache__" not in files and ".pytest_cache" not in files
+
+
+def test_reviewer_downgrading_a_finding_to_non_blocking_unblocks_acceptance(make_env):
+    """Live finding: TA-1 was re-reported as non-blocking in a PASS run, but the stored row kept blocking=1."""
+    blocking = FakeReply(envelope("test-adequacy", "UNKNOWN", findings=[{"id": "TA-1", "severity": "medium", "blocking": True, "problem": "test plan missing"}]))
+    downgraded = FakeReply(envelope("test-adequacy", "PASS", findings=[{"id": "TA-1", "severity": "low", "blocking": False, "problem": "test plan missing"}]))
+    env = make_env("trivial", responders={"factory-test-adequacy": [blocking, downgraded]})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    row = env.store.one("SELECT blocking, severity FROM findings WHERE job_id = ? AND finding_id = 'TA-1'", (job,))
+    assert row["blocking"] == 0 and row["severity"] == "low"
+    assert env.calls("factory-implement") == 1
+
+
+def test_decision_passed_downstream_has_a_single_consistent_choice(make_env):
+    """Eval finding: planner saw selection=OPT-C next to the options reviewer's OPT-A and refused to plan."""
+    from ..conftest import options_reply, select_reply
+    ratings = {"OPT-A": {"goal_fit": 4, "correctness": 4, "maintainability": 4, "delivery_time": 4, "cost": 4},
+               "OPT-C": {"goal_fit": 5, "correctness": 5, "maintainability": 5, "delivery_time": 5, "cost": 5}}
+    env = make_env("standard", responders={"factory-options-review": options_reply(ratings, "OPT-A"),
+                                           "factory-select-option": select_reply("OPT-C", ratings)})
+    job = env.submit("Add exclamation greeting and farewell")
+    env.factory.run(job)
+    decision = env.store.job_context(job)["decision"]
+    assert decision["selected_option_id"] == decision["options"]["selected_option_id"] == decision["selection"]["selected_option_id"] == "OPT-C"

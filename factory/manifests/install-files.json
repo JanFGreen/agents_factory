@@ -5,6 +5,7 @@
   ".python-version",
   "AGENTS.md",
   "CLAUDE.md",
+  "docs/factory/acceptance-report.md",
   "docs/factory/adr-001-stack.md",
   "docs/factory/architecture.md",
   "docs/factory/environment-report.md",

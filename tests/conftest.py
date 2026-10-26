@@ -36,7 +36,7 @@ def repo(tmp_path: Path) -> Path:
     remote = tmp_path / "remote.git"
     sh(tmp_path, "git", "init", "-q", "--bare", "-b", "trunk", str(remote))
     work = tmp_path / "user-checkout"
-    shutil.copytree(FIXTURE_REPO, work)
+    shutil.copytree(FIXTURE_REPO, work, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     sh(work, "git", "init", "-q", "-b", "trunk")
     git_commit_all(work, "initial")
     sh(work, "git", "remote", "add", "origin", str(remote))

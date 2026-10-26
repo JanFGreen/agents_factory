@@ -36,7 +36,7 @@ from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
 from .scheduler import LeaseLost, acquire_lease, acquire_slot, check_fence, heartbeat, ready_tasks, release_allocation, release_lease, validate_dag
 from .schemas import ContractError, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, envelope_json_schema, parse_envelope
 from .state import Store, new_id, now
-from .workspaces import GitError, WorkspaceManager, default_branch, git, release_job_resources
+from .workspaces import GENERATED_EXCLUDES, GitError, WorkspaceManager, default_branch, git, release_job_resources
 
 SKILL_ROLE = {
     "factory-intake": "intake",
@@ -549,7 +549,10 @@ class Factory:
         if selection.selected_option_id is None:
             analysis.end_round(self.store, job_id, "BLOCKED", list(selection.rejected))
             raise StageBlocked(S.FAILED_NO_FEASIBLE_OPTION, f"no feasible option: {selection.rejected}")
-        decision = {"selection": selection.as_dict(), "options": ctx["options"], "policy_digest": self.cfg.policy_digest}
+        # The controller's computed choice is the only selection downstream roles see; reviewer recommendations are dropped.
+        options = dict(ctx["options"], selected_option_id=selection.selected_option_id)
+        decision = {"selection": selection.as_dict(), "selected_option_id": selection.selected_option_id, "options": options,
+                    "policy_digest": self.cfg.policy_digest}
         self._set_ctx(job_id, decision=decision, decision_digest=digest(decision), spike_question=None)
         self._record(job_id, ResultKind.OPTION_SELECTION, "PASS", decision, producer=self._agent_producer(res, "factory-select-option"))
         self.controller.transition(job_id, S.OPTION_SELECTED, f"selected {selection.selected_option_id}")
@@ -959,7 +962,7 @@ class Factory:
                 "gate_evidence": gate.payload if gate else None, "risk": self._job(job_id)["risk"],
                 "security_depth": ctx.get("security_depth"), "surfaces": ctx.get("surfaces"),
             }, task_id=task_id, purpose="review")
-            if WorkspaceManager.head(wt) != frozen_head or git(wt, "status", "--porcelain"):
+            if WorkspaceManager.head(wt) != frozen_head or git(wt, "status", "--porcelain", "--", ".", *GENERATED_EXCLUDES):
                 raise StageBlocked(S.NEEDS_HUMAN, "worktree changed while reviewers were running (reviewers are read-only)")
             payload = {"envelope": res.envelope.model_dump()}
             self._record(job_id, kind, res.envelope.verdict, payload, ident=ident,

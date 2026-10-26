@@ -40,7 +40,7 @@ def _fixture_repo(fixture: Path, root: Path) -> Path:
     remote = root / "remote.git"
     _sh(root, "git", "init", "-q", "--bare", "-b", "trunk", str(remote))
     work = root / "checkout"
-    shutil.copytree(fixture, work)
+    shutil.copytree(fixture, work, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"))
     _sh(work, "git", "init", "-q", "-b", "trunk")
     _sh(work, "git", "add", "-A")
     _sh(work, "git", "-c", "user.name=eval", "-c", "user.email=eval@localhost", "commit", "-q", "-m", "fixture")

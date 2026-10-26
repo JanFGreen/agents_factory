@@ -104,7 +104,8 @@ class ClaudeRuntime:
         log_path = self.log_dir / f"{run_id}.jsonl"
         err_path = self.log_dir / f"{run_id}.stderr"
         env = {k: os.environ[k] for k in _AGENT_ENV_KEYS if k in os.environ}
-        env["HOME"] = str(Path.home())  # CLI auth lives in the user's keychain/config, not in env
+        env["HOME"] = str(Path.home())
+        env["PYTHONDONTWRITEBYTECODE"] = "1"  # CLI auth lives in the user's keychain/config, not in env
         argv = self.sandbox.wrap(self._argv(request, resume=resume), self._policy(request))
         with open(log_path, "wb") as out, open(err_path, "wb") as err:
             proc = subprocess.Popen(

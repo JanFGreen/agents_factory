@@ -165,8 +165,9 @@ class EvidenceStore:
             for finding in findings or []:
                 c.execute(
                     "INSERT INTO findings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    " ON CONFLICT(finding_key) DO UPDATE SET status = excluded.status,"
-                    " updated_at = excluded.updated_at, result_id = excluded.result_id",
+                    " ON CONFLICT(finding_key) DO UPDATE SET status = excluded.status, severity = excluded.severity,"
+                    " blocking = excluded.blocking, problem = excluded.problem, expected_fix = excluded.expected_fix,"
+                    " location_json = excluded.location_json, updated_at = excluded.updated_at, result_id = excluded.result_id",
                     (
                         f"{job_id}:{task_id or '-'}:{kind}:{finding['id']}", finding["id"], job_id, task_id, result_id, str(kind),
                         finding["severity"], int(finding["blocking"]), finding.get("status", "open"),
