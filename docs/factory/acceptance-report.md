@@ -190,6 +190,26 @@ Błędy fabryki wykryte i poprawione (z testami regresji):
 - odrzucone żądanie API (CLI 2.1.74 vs Opus 5.5) było ponawiane po 10 min — teraz fail fast;
 - odmowa budżetu przed uruchomieniem buildera zużywała próbę taska — teraz zwracana.
 
+### Cała aplikacja LearnEnglish (F1–F3)
+
+| Feature | Taski | Wynik | Koszt | Czas |
+|---|---|---|---|---|
+| F1 domain core | 7 (5 zaakc.) | FAILED na TASK-06 (luka kontraktu), operator scalił 01–05 | $20.13 | ~85 min (~30 min stare CLI) |
+| F1b scheduler + kolejka | 3 | READY_TO_MERGE | $7.41 | 21 min |
+| F2 aplikacja (12 tasków, tory) | 12 (11 zaakc.) | FAILED na TASK-12 (polityka zabraniała usunąć martwy test), operator scalił 01–11 | $50.80 | ~80 min |
+| F2b nawigacja | 4 | READY_TO_MERGE | $11.33 | 27 min |
+| F3 konta, sync, uprawnienia (high) | 6 | READY_TO_MERGE | $25.78 | 63 min |
+| **Razem** | 32 | | **$115.45** | **~4 h 40 min** |
+
+Operator przed każdym scaleniem: `npm run check` (końcowo 631 testów), dla F2b smoke w headless
+Chrome (onboarding → home → check → learn), dla F3 ręczne scenariusze API (izolacja użytkowników,
+sfałszowane premium, tokeny, argon2id). Koszt to szacunek CLI z limitu planu claude.ai.
+
+Dodatkowe błędy fabryki wykryte na tym projekcie i poprawione: recenzent UI bez przeglądarki
+zwracał UNKNOWN (teraz ocena statyczna, render-only = NOT_RUN); polityka zabraniała usunięcia testu
+razem z usuwanym kodem; artefakty o identycznej treści ścigały się na pliku `.tmp` w torach.
+Najwięcej kosztują rundy poprawek (builder + 5 recenzentów na Opusie) — główna dźwignia kosztu.
+
 ## 6. Uprawnienia, limity i merge
 
 - Tryb `policy.mode: local`. Broker odmawia komentarzy, PR, merge GitHub i deployu (`authorize_side_effect`), a odmowa trafia do audytu (`broker.denied`).
