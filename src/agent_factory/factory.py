@@ -856,6 +856,21 @@ class Factory:
             row = conn.execute("SELECT version, build_attempts FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
             self.store.cas_update_job(conn, job_id, row["version"], build_attempts=row["build_attempts"] + 1)
         self._set_ctx(job_id, current_task=task_id, build_start_sha=start_sha)
+        try:
+            self._run_builder(job_id, task_id, task, ctx)
+        except budgets.BudgetExhausted:
+            # The builder never ran: the attempt is not used up (live finding, LearnEnglish F1).
+            with self.store.tx() as conn:
+                conn.execute("UPDATE tasks SET attempts = attempts - 1 WHERE job_id = ? AND task_id = ?", (job_id, task_id))
+                row = conn.execute("SELECT version, build_attempts FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+                self.store.cas_update_job(conn, job_id, row["version"], build_attempts=row["build_attempts"] - 1)
+            raise
+        sha = WorkspaceManager.commit_all(wt, f"factory: {task_id} attempt {task['attempts'] + 1}")
+        self._sync_head(job_id)
+        self.store.update_job_context(job_id, human_feedback=None)
+        self.controller.transition(job_id, S.CHECKS, f"build produced {sha or 'no changes'}")
+
+    def _run_builder(self, job_id: str, task_id: str, task, ctx: dict) -> None:
         root_cause = None
         fps = ctx.get("failure_fingerprints", {}).get(task_id, [])
         if len(fps) >= 2 and fps[-1] == fps[-2]:
@@ -874,10 +889,6 @@ class Factory:
             "spec_advisories": ctx.get("spec_advisories", []),
             "test_scope": "test files (tests/, test_*.py, *.test.ts(x), *.spec.ts(x)) are always in scope: add or extend the tests that prove this task's acceptance",
         }, task_id=task_id, writable=True, purpose="build")
-        sha = WorkspaceManager.commit_all(wt, f"factory: {task_id} attempt {task['attempts'] + 1}")
-        self._sync_head(job_id)
-        self.store.update_job_context(job_id, human_feedback=None)
-        self.controller.transition(job_id, S.CHECKS, f"build produced {sha or 'no changes'}")
 
     def _fail_build(self, job_id: str, task_id: str, verdict: str, reason: str, evidence_payload: dict) -> None:
         ctx = self._ctx(job_id)

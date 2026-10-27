@@ -323,3 +323,27 @@ def test_twice_inconclusive_acceptance_stops_for_a_human_without_rebuilding(make
     assert env.factory.run(job) == "NEEDS_HUMAN"
     assert env.calls("factory-implement") == 1
     assert "acceptance evaluation BLOCKED twice" in env.store.job(job)["blocked_reason"]
+
+
+def test_budget_refusal_before_the_builder_runs_does_not_use_an_attempt(make_env, monkeypatch):
+    """Live finding (LearnEnglish F1): a build refused for budget counted as an attempt, so after the
+    operator raised the budget the task had one attempt fewer and the feature FAILED."""
+    from agent_factory import budgets
+    env = make_env("trivial")
+    real_call = env.factory.call_agent
+    refused: list[str] = []
+
+    def call_agent(job_id, skill, inputs, **kw):
+        if skill == "factory-implement" and not refused:
+            refused.append(skill)
+            raise budgets.BudgetExhausted("reserving $1.50 for build would exceed the limit")
+        return real_call(job_id, skill, inputs, **kw)
+
+    monkeypatch.setattr(env.factory, "call_agent", call_agent)
+    job = env.submit()
+    assert env.factory.run(job) == "BUDGET_EXHAUSTED"
+    task = env.store.all("SELECT attempts FROM tasks WHERE job_id = ?", (job,))[0]
+    assert task["attempts"] == 0 and env.store.job(job)["build_attempts"] == 0
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert env.store.all("SELECT attempts FROM tasks WHERE job_id = ?", (job,))[0]["attempts"] == 1

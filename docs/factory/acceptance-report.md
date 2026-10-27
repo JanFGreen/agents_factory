@@ -174,6 +174,22 @@ Wnioski:
 
 Ablacji pojedynczego etapu nie przeprowadzono. Status: **NOT_RUN**. Współbieżność: zmierzony profil to 1 job. 2 i 3 joby nie były mierzone (**NOT_RUN**).
 
+## 6a. Pierwszy realny projekt: LearnEnglish (Node/Expo), F1
+
+Repo `LearnEnglish` (Expo + Fastify, TypeScript), manifest `node`, domyślne modele (Opus/Sonnet).
+F1 „domain core”: ścieżka complex, 3/3 rundy analizy (spec 2× CHANGES — słuszne: limit nie był
+egzekwowany przez kolejkę), plan 7 tasków, 5 zaakceptowanych (TASK-05 po 2 poprawkach,
+uzasadnionych), koszt $20.13, czas ~1 h 25 min (w tym ~30 min straconych na stare CLI).
+Job `FAILED` na TASK-06 (scheduler): recenzent słusznie wskazał, że typ karty z TASK-03 nie ma
+stanu ponownej nauki po pomyłce — luka kontraktu, nie buildera. Operator scalił zaakceptowane
+taski 01–05 i zgłosił resztę jako F1b z doprecyzowanym wymaganiem.
+
+Błędy fabryki wykryte i poprawione (z testami regresji):
+- per-repo manifest checków + linkowanie `node_modules` (wcześniej tylko pytest);
+- polityka nie rozpoznawała `*.test.tsx` jako testów (naruszenia zakresu, brak ochrony przed osłabieniem);
+- odrzucone żądanie API (CLI 2.1.74 vs Opus 5.5) było ponawiane po 10 min — teraz fail fast;
+- odmowa budżetu przed uruchomieniem buildera zużywała próbę taska — teraz zwracana.
+
 ## 6. Uprawnienia, limity i merge
 
 - Tryb `policy.mode: local`. Broker odmawia komentarzy, PR, merge GitHub i deployu (`authorize_side_effect`), a odmowa trafia do audytu (`broker.denied`).
