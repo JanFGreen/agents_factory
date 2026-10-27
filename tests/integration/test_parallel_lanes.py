@@ -206,3 +206,79 @@ def test_wave_takes_disjoint_tasks_in_plan_order_up_to_the_limit():
     tasks = [("T1", ["src/a.ts"]), ("T2", ["src/a.ts"]), ("T3", ["src/b.ts"]), ("T4", ["src/c.ts"])]
     assert pick_wave(tasks, 2) == ["T1", "T3"]
     assert pick_wave(tasks, 4) == ["T1", "T3", "T4"]
+
+
+SHOUT = 'def shout(text: str) -> str:\n    return text.upper()\n'
+SHOUT_TEST = 'from app.shout import shout\n\n\ndef test_shout():\n    assert shout("hi") == "HI"\n'
+THREE = [*INDEPENDENT, {"task_id": "TASK-03", "requirement_ids": ["REQ-1"], "depends_on": ["TASK-01"],
+                        "file_scope": ["app/shout.py", "tests"], "acceptance": "shout", "estimated_minutes": 20}]
+
+
+def _task3(request) -> str:
+    for t in ("TASK-03", "TASK-02"):
+        if f"task={t}" in request.prompt:
+            return t
+    return "TASK-01"
+
+
+def test_a_finished_lane_lands_and_its_slot_starts_the_next_task_while_a_slow_lane_runs(make_env):
+    task3_started = threading.Event()
+
+    def implement(request):
+        task = _task3(request)
+        if task == "TASK-03":
+            task3_started.set()
+            return _impl({"app/shout.py": SHOUT, "tests/test_shout.py": SHOUT_TEST})
+        if task == "TASK-02":
+            assert task3_started.wait(20), "TASK-03 did not start while TASK-02 was still building"
+        return _impl(EDITS[task])
+
+    env = make_env("standard", responders={"factory-plan": plan_reply(THREE), "factory-implement": implement},
+                   **{"execution.max_builders_per_job": 2})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert _run(env, job) == "READY_TO_MERGE"
+    accepted = [json.loads(e["payload_json"])["task_id"] for e in env.store.events_for(job) if e["kind"] == "task.accepted"]
+    assert accepted.index("TASK-01") < accepted.index("TASK-02")  # integrated without waiting for the slow lane
+    started = [json.loads(e["payload_json"]) for e in env.store.events_for(job) if e["kind"] == "lanes.started"]
+    t3 = next(s for s in started if s["task"] == "TASK-03")
+    assert t3["start_sha"] != next(s for s in started if s["task"] == "TASK-01")["start_sha"]  # built on the newer head
+
+
+def _inconclusive_until(n_unknown: int):
+    seen = {"n": 0}
+
+    def code_review(request):
+        if "task=TASK-02" in request.prompt:
+            seen["n"] += 1
+            if seen["n"] <= n_unknown:
+                return FakeReply(envelope("code-review", "UNKNOWN", payload={}, summary="tool failure"))
+        return review_pass("code-review")
+
+    return code_review
+
+
+def test_inconclusive_reviews_park_the_built_lane_and_rerun_only_the_reviews(make_env):
+    env = _env(make_env, {"factory-implement": lambda r: _impl(EDITS[_task(r)]), "factory-code-review": _inconclusive_until(3)})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert _run(env, job) == "READY_TO_MERGE"
+    builds = [c for c in env.runtime.calls if c.skill == "factory-implement" and "task=TASK-02" in c.prompt]
+    assert len(builds) == 1  # parked, re-reviewed, never rebuilt
+    assert _tasks(env, job)["TASK-02"]["attempts"] == 1
+    assert any(e["kind"] == "task.parked" for e in env.store.events_for(job))
+    assert not env.store.job_context(job).get("parked_lanes")
+    wt = Path(env.store.job(job)["worktree"])
+    assert "parked" not in sh(wt, "git", "for-each-ref", "refs/factory")
+
+
+def test_lanes_that_stay_inconclusive_stop_for_a_human_with_the_work_kept(make_env):
+    env = _env(make_env, {"factory-implement": lambda r: _impl(EDITS[_task(r)]), "factory-code-review": _inconclusive_until(99)})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert _run(env, job) == "NEEDS_HUMAN"
+    assert "stayed inconclusive" in env.store.job(job)["blocked_reason"]
+    assert _tasks(env, job)["TASK-01"]["state"] == "ACCEPTED"
+    wt = Path(env.store.job(job)["worktree"])
+    assert f"refs/factory/parked/{job}/TASK-02" in sh(wt, "git", "for-each-ref", "refs/factory")
+    env.runtime.responders["factory-code-review"] = review_pass("code-review")  # the reviewer works again
+    env.factory.resume(job)
+    assert _run(env, job) == "READY_TO_MERGE"
+    assert len([c for c in env.runtime.calls if c.skill == "factory-implement" and "task=TASK-02" in c.prompt]) == 1

@@ -135,28 +135,26 @@ flowchart TD
   SIDE -.->|cancel| CC([CANCELLED])
 ```
 
-## Równoległe taski w jobie (tory, `lanes.py`)
+## Równoległe taski w jobie (pula torów, `lanes.py`)
 
-`execution.max_builders_per_job > 1` włącza fale: gdy job jest w `BUILD_TASK` i gotowych jest ≥ 2
-tasków o rozłącznym zakresie plików (`lanes.scopes_overlap`; ścieżki testów się nie liczą, pusty
-zakres = konflikt), kontroler bierze ich do `max_builders_per_job` w kolejności planu. Każdy task
-dostaje tor: odłączony worktree `worktrees/<job>--<task>` z głowy joba (agenci toru nie widzą
-worktree joba ani innych torów — `default_denied_reads`), własnego buildera, zaufane checki i
-recenzentów; wyniki są podpisane z tożsamością głowy toru (`Controller.identity(..., worktree=)`).
-Tory działają w wątkach (`ThreadPoolExecutor`; `Store` serializuje jedno połączenie SQLite zamkiem).
+`execution.max_builders_per_job > 1` włącza pulę: gdy job jest w `BUILD_TASK` i są ≥ 2 gotowe taski
+o rozłącznym zakresie plików (`lanes.scopes_overlap`; ścieżki testów się nie liczą, pusty zakres =
+konflikt), kontroler uruchamia do `max_builders_per_job` torów. Każdy tor: odłączony worktree
+`worktrees/<job>--<task>` z bieżącej głowy joba (agenci toru nie widzą worktree joba ani innych torów),
+własny builder, zaufane checki i recenzenci; wyniki podpisane z tożsamością głowy toru.
 
-Po fali kontroler integruje tory po kolei, w kolejności planu, w worktree joba: tor jest
-akceptowany tylko gdy (1) jego podpisane wyniki gate i wszystkich wymaganych review są aktualne dla
-głowy toru i nie ma otwartych blokujących findings, (2) `git merge --no-ff` przechodzi bez konfliktu,
-(3) gdy drzewo po merge różni się od drzewa toru — checki przechodzą na drzewie połączonym.
-Konflikt lub porażka połączonych checków → `REWORK` bez zużycia próby (`task.requeued`), task jest
-przebudowany na nowej głowie. CHANGES/FAIL w torze → zwykłe `REWORK` z findings. Budżet albo
-blokada w torze → próba zwrócona, zaakceptowane tory zostają, job zatrzymuje się w odpowiednim
-stanie. Job przez całą falę jest w `BUILD_TASK`; po fali, która zaakceptowała ostatnie taski,
-przechodzi `BUILD_TASK → FEATURE_ACCEPTANCE` (guard: wszystkie taski `ACCEPTED`). Kontroler zabity
-w trakcie fali: następny krok (`_recover_wave`) zatrzymuje agentów torów, oznacza próby jako
-`abandoned`, przywraca taski do `REWORK` i usuwa tory. Akceptacja feature'a i integracja działają
-jak dotąd na całym kandydacie.
+Tor, który skończył, jest od razu integrowany w worktree joba (nie czeka na pozostałe): akceptacja
+tylko gdy (1) podpisane wyniki gate i wymaganych review są aktualne dla głowy toru i nie ma otwartych
+blokujących findings, (2) `git merge --no-ff` bez konfliktu, (3) przy innym drzewie niż w torze —
+checki przechodzą na drzewie połączonym. Zwolnione miejsce dostaje następny gotowy task (zakres
+rozłączny z działającymi torami), budowany już na nowszej głowie. Konflikt lub porażka połączonych
+checków → `REWORK` bez zużycia próby. CHANGES/FAIL → zwykłe `REWORK`. Niejednoznaczne recenzje
+(UNKNOWN/BLOCKED ×3) → tor **odłożony** (`refs/factory/parked/<job>/<task>`, `parked_lanes`):
+przy następnym starcie tylko recenzje są powtarzane, bez przebudowy i bez nowej próby; po
+`MAX_PARKS` odłożeniach job czeka w `NEEDS_HUMAN`, a `factory resume` daje recenzjom kolejną szansę.
+Budżet/blokada w torze → próba zwrócona, nowe tory nie startują, działające kończą się i są
+integrowane, potem job się zatrzymuje. Kontroler zabity w trakcie: `_recover_wave` zatrzymuje
+agentów torów, oznacza próby `abandoned`, przywraca taski i usuwa tory.
 
 ## Czego nie zaimplementowano (względem blueprintu)
 

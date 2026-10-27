@@ -1451,6 +1451,9 @@ class Factory(ParallelLanes):
 
     def resume(self, job_id: str) -> None:
         """Operator resume from a halted state back to the recorded state (guards still apply)."""
+        parked = self._ctx(job_id).get("parked_lanes")
+        if parked and S(self._job(job_id)["state"]) in HALTED:  # the operator looked: re-run parked reviews once more
+            self._set_ctx(job_id, parked_lanes={t: {**e, "count": 0} for t, e in parked.items()})
         job = self._job(job_id)
         ctx = self._ctx(job_id)
         state = S(job["state"])
