@@ -4,7 +4,7 @@ data_dir: "~/.local/share/agent-factory"   # stan runtime poza repo: SQLite, art
 execution:
   max_active_jobs: 1
   max_agent_processes: 4
-  max_builders_per_job: 1
+  max_builders_per_job: 3              # >1: niezależne gotowe taski budowane równolegle w torach (lanes.py)
   max_test_processes: 2
   max_integration_candidates: 1
   lease_ttl_seconds: 120
