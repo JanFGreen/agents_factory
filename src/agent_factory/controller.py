@@ -261,7 +261,27 @@ class Controller:
                 return dec
         if self.store.one("SELECT COUNT(*) FROM tasks WHERE job_id = ?", (job_id,))[0] == 0:
             return GuardResult(False, "no tasks")
-        return GuardResult(True, "ok")
+        return self.plan_approval(job_id)
+
+    def plan_approval(self, job_id: str) -> GuardResult:
+        """The operator approved the cost estimate of the current plan (or it is below the auto limit)."""
+        budget = self.cfg.factory.budget
+        if budget.plan_approval == "off":
+            return GuardResult(True, "plan approval off")
+        ctx = self._ctx(job_id)
+        estimate = ctx.get("plan_estimate")
+        if not estimate or estimate.get("plan_digest") != self.plan_key(job_id):
+            return GuardResult(False, "no cost estimate for the current plan")
+        if estimate["estimate_usd"] <= budget.auto_approve_below_usd:
+            return GuardResult(True, "estimate below the auto-approve limit")
+        approval = ctx.get("plan_approval") or {}
+        if approval.get("plan_digest") != self.plan_key(job_id):
+            return GuardResult(False, f"cost estimate ${estimate['estimate_usd']} is not approved for the current plan")
+        return GuardResult(True, "approved")
+
+    def plan_key(self, job_id: str) -> str | None:
+        ctx = self._ctx(job_id)
+        return ctx.get("plan_digest") or ctx.get("spec_digest")
 
     def _g_gate_pass(self, job_id: str) -> GuardResult:
         task_id = self._ctx(job_id).get("current_task")

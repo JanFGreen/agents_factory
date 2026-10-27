@@ -181,6 +181,9 @@ def _status_row(store: Store, job_id: str) -> dict:
         "budget": {"limit": bud.limit, "committed": round(bud.committed, 4), "spent": round(bud.spent, 4)},
         "tasks": [dict(r) for r in store.all("SELECT task_id, state, attempts FROM tasks WHERE job_id = ? ORDER BY order_idx", (job_id,))],
         "last_checkpoint": ctx.get("last_checkpoint"),
+        "plan_estimate": {k: ctx["plan_estimate"][k] for k in ("tasks", "estimate_usd", "suggested_limit_usd", "basis")}
+        if ctx.get("plan_estimate") else None,
+        "plan_approved": bool(ctx.get("plan_approval")),
         "next_step": _next_step(job["state"]),
         "criteria_digest": _criteria(store, job_id) if job["state"] == "AWAITING_HUMAN_MERGE" else None,
     }
@@ -361,6 +364,18 @@ def cmd_task(args) -> int:
     return EXIT_OK
 
 
+def cmd_plan(args) -> int:
+    cfg, store = _load(args)
+    factory = _make_factory(cfg, store)
+    try:
+        result = factory.approve_plan(args.id, args.budget, os.environ.get("USER", "operator"), args.reason)
+    except TransitionRefused as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_REFUSED
+    _out(args, {"job_id": args.id, **result, "next_step": f"factory resume {args.id}"})
+    return EXIT_OK
+
+
 def cmd_budget(args) -> int:
     cfg, store = _load(args)
     budgets.raise_budget(store, args.id, args.to, args.reason, actor=os.environ.get("USER", "operator"))
@@ -406,6 +421,13 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--analysis-rounds", type=int, required=True)
     f.add_argument("--reason", required=True)
     s.set_defaults(fn=cmd_feature)
+    s = sub.add_parser("plan")
+    psub = s.add_subparsers(dest="plan_cmd", required=True)
+    pa = psub.add_parser("approve", help="approve the cost estimate of the current plan (sets the job budget)")
+    pa.add_argument("id")
+    pa.add_argument("--budget", type=float, help="job budget limit in USD (default: the suggested limit)")
+    pa.add_argument("--reason", default="estimate accepted")
+    s.set_defaults(fn=cmd_plan)
     s = sub.add_parser("task")
     tsub = s.add_subparsers(dest="task_cmd", required=True)
     t = tsub.add_parser("retry", help="give a FAILED task more attempts while the job is halted")

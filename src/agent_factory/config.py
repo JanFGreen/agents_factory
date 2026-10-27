@@ -253,6 +253,10 @@ class Budget(Strict):
     reserve_for_verification_fraction: float = Field(ge=0, lt=1)
     unknown_price_policy: Literal["require_operator_limit", "block_paid_calls"]
     max_cost_per_agent_call: float = Field(gt=0)
+    # After the plan is accepted the job stops with a cost estimate until the operator approves it
+    # (`factory plan approve`); estimates up to `auto_approve_below_usd` go ahead on their own.
+    plan_approval: Literal["required", "off"] = "required"
+    auto_approve_below_usd: float = Field(default=5.0, ge=0)
 
 
 class Policy(Strict):
@@ -288,6 +292,28 @@ class Runtime(Strict):
     roles: dict[str, RoleBinding]
 
 
+_REVIEWS = Literal["code-review", "security-review", "product-verify", "test-adequacy", "ui-review"]
+
+
+class ReviewPolicy(Strict):
+    """Task review cost controls. Feature acceptance and integration always use the full role bindings."""
+
+    # Tiers run in order; a CHANGES in a tier skips the later tiers for this attempt (they run once it passes).
+    tiers: list[list[_REVIEWS]] = [["code-review", "test-adequacy", "ui-review"], ["product-verify", "security-review"]]
+    # Task reviews of jobs at these risk levels use `cheaper_models` for the listed roles.
+    cheaper_models_for_risk: list[Literal["low", "medium", "high"]] = ["low"]
+    cheaper_models: dict[str, str] = {}
+
+    @model_validator(mode="after")
+    def _every_review_once(self) -> "ReviewPolicy":
+        flat = [r for tier in self.tiers for r in tier]
+        if sorted(flat) != sorted(set(flat)) or set(flat) != set(_REVIEWS.__args__):
+            raise ValueError("review.tiers must list every task review exactly once")
+        if "high" in self.cheaper_models_for_risk:
+            raise ValueError("high-risk tasks always get the full reviewers")
+        return self
+
+
 class FactoryConfig(Strict):
     schema_version: Literal[1]
     data_dir: str
@@ -297,6 +323,7 @@ class FactoryConfig(Strict):
     policy: Policy
     merge: Merge
     runtime: Runtime
+    review: ReviewPolicy = ReviewPolicy()
 
 
 class LoadedConfig(BaseModel):

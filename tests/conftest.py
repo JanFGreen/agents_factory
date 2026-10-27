@@ -61,6 +61,7 @@ def make_factory_dir(tmp_path: Path, **overrides: Any) -> Path:
     shutil.copytree(ROOT / "factory", target, ignore=shutil.ignore_patterns("manifests"))
     cfg = yaml.safe_load((target / "config.yaml").read_text())
     cfg["data_dir"] = str(tmp_path / "data")
+    cfg["budget"]["plan_approval"] = "off"  # tests that exercise the approval stop turn it back on
     for dotted, value in overrides.items():
         node = cfg
         *path, last = dotted.split(".")

@@ -250,3 +250,38 @@ Skutki dla trwających jobów:
 - Gdy guard odrzuci przejście z powodu nieaktualnych dowodów, job przechodzi do `NEEDS_HUMAN` z
   `blocked_reason = "guard refused: …"`. Dla wyników analizy po zmianie polityki nie ma ścieżki
   ponownej ewaluacji (`resume` powtórzy odmowę) — obejście: `cancel` i ponowne `submit`.
+
+## Szacunek kosztu planu i akceptacja (`budget.plan_approval`)
+
+Po zaakceptowaniu planu (lub micro-spec) kontroler liczy szacunek (`estimate.py`): na task
+`rundy × (builder + recenzenci [+ ui-review dla plików UI])` plus weryfikacja feature'a, z historii
+fabryki (średni koszt wywołania na rolę, średnia liczba prób na zaakceptowany task; ≥ 5 próbek),
+inaczej z wartości domyślnych. Backtest na LearnEnglish: −20%…+25% względem faktycznego kosztu.
+Job zatrzymuje się w `NEEDS_HUMAN` z kwotą, podstawą i sugerowanym limitem (zapas 25% + rezerwa na
+weryfikację), chyba że szacunek ≤ `auto_approve_below_usd`. Guard `BUILD_TASK` wymaga akceptacji
+dla bieżącego `plan_digest` — nowy plan wymaga nowej akceptacji.
+
+```sh
+uv run factory --json status --job <id>            # pole plan_estimate
+uv run factory plan approve <id> [--budget 60]     # ustawia limit joba (domyślnie sugerowany)
+uv run factory resume <id>
+```
+
+## Task, który wyczerpał próby
+
+Task przechodzi w `FAILED` sam: jego odrzucone próby są cofane z gałęzi joba (łatka jako artefakt),
+niezależne taski budują się dalej. Gdy nic nie zostało do zbudowania, job czeka w `NEEDS_HUMAN`
+z listą nieudanych, zablokowanych i zaakceptowanych tasków.
+
+```sh
+uv run factory inspect <id>                                        # findings taska
+uv run factory task retry <id> TASK-04 --attempts 1 --reason "..."  # więcej prób (1-3)
+uv run factory resume <id>
+```
+
+## Koszt recenzji (`review`)
+
+Recenzje tasków idą poziomami (`review.tiers`): CHANGES w pierwszym poziomie (code, test adequacy,
+UI) pomija drogie product-verify i security-review w tej próbie; uruchomią się, gdy poziom przejdzie.
+Taski jobów o ryzyku z `cheaper_models_for_risk` (domyślnie `low`) mają tańszych recenzentów
+(`cheaper_models`); akceptacja feature'a i integracja zawsze używają pełnych powiązań ról.

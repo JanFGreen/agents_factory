@@ -26,6 +26,8 @@ budget:
   warning_fraction: 0.70
   reserve_for_verification_fraction: 0.25
   unknown_price_policy: require_operator_limit
+  plan_approval: required             # po planie: szacunek kosztu do akceptacji (`factory plan approve`)
+  auto_approve_below_usd: 5            # małe zmiany ruszają bez akceptacji
   max_cost_per_agent_call: 1.50        # konserwatywna rezerwacja i --max-budget-usd na wywołanie
 policy:
   mode: local                          # offline | local | pr | automerge | release
@@ -59,6 +61,15 @@ merge:
   require_current_head: true
   require_required_checks: true
   allow_admin_bypass: false
+review:
+  # Recenzje tasków w poziomach: CHANGES w poziomie pomija kolejne (uruchomią się po poprawce).
+  tiers:
+    - [code-review, test-adequacy, ui-review]
+    - [product-verify, security-review]
+  cheaper_models_for_risk: [low]       # taski niskiego ryzyka: tańsi recenzenci (akceptacja i integracja zawsze pełne)
+  cheaper_models:
+    code_reviewer: claude-sonnet-5-5
+    security_reviewer: claude-sonnet-5-5
 runtime:
   claude_binary: claude
   min_cli_version: "2.1.280"          # starsze CLI nie obsługują modeli 5.x (API odrzuca żądanie)

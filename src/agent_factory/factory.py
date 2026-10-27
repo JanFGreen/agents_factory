@@ -29,6 +29,7 @@ from .config import LoadedConfig, RoleBinding
 from .controller import ANALYSIS_STATES, HALTED, TERMINAL, Controller, S, TransitionRefused
 from .decisions import DecisionError, select, verify_ai_choice
 from .environment import node_bin_dir
+from .estimate import estimate_plan
 from .evidence import EvidenceStore, Producer
 from .features import NormalizedFeature, classify, load_feature, path_rank, record_classification, store_feature
 from .identities import InputIdentity, ResultKind, digest
@@ -290,8 +291,11 @@ class Factory(ParallelLanes):
         extra_note: str = "",
     ) -> AgentResult:
         kind = skill.removeprefix("factory-")
-        binding = self._binding(skill)
         role = SKILL_ROLE[skill]
+        binding = self._binding(skill)
+        review = self.cfg.factory.review
+        if purpose == "review" and role in review.cheaper_models and self._job(job_id)["risk"] in review.cheaper_models_for_risk:
+            binding = binding.model_copy(update={"model": review.cheaper_models[role]})
         repairs_left = self.cfg.factory.attempts.structured_output_repair
         transient_left = 2
         error_note = ""
@@ -833,6 +837,7 @@ class Factory(ParallelLanes):
 
     def _prepare_build(self, job_id: str) -> None:
         self._ensure_worktree(job_id)
+        self._require_plan_approval(job_id)
         ctx = self._ctx(job_id)
         if not ctx.get("baseline_ok"):
             wt = self._worktree(job_id)
@@ -844,6 +849,36 @@ class Factory(ParallelLanes):
         self._write_spec_files(job_id)
         self._sync_head(job_id)
         self.controller.transition(job_id, S.BUILD_TASK)
+
+    def _require_plan_approval(self, job_id: str) -> None:
+        """Stop with the cost estimate of the accepted plan until the operator approves it."""
+        key = self.controller.plan_key(job_id)
+        if (self._ctx(job_id).get("plan_estimate") or {}).get("plan_digest") != key:
+            tasks = [json.loads(r["spec_json"]) for r in self.store.all(
+                "SELECT spec_json FROM tasks WHERE job_id = ? ORDER BY order_idx", (job_id,))]
+            est = estimate_plan(self.store, job_id, tasks, self.cfg.factory.budget.reserve_for_verification_fraction)
+            self._set_ctx(job_id, plan_estimate={**est, "plan_digest": key})
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "plan.estimated", {k: est[k] for k in ("tasks", "estimate_usd", "suggested_limit_usd", "basis")})
+        approval = self.controller.plan_approval(job_id)
+        if not approval.ok:
+            est = self._ctx(job_id)["plan_estimate"]
+            raise StageBlocked(S.NEEDS_HUMAN, (
+                f"plan estimate ${est['estimate_usd']} for {est['tasks']} tasks (~{est['rounds_per_task']} rounds/task, "
+                f"basis: {est['basis']}; spent so far ${est['spent_usd']}); suggested budget ${est['suggested_limit_usd']:.0f}. "
+                f"Approve: `factory plan approve {job_id} [--budget USD]`, then `factory resume {job_id}`; or `factory cancel {job_id}`."))
+
+    def approve_plan(self, job_id: str, budget_usd: float | None, actor: str, reason: str) -> dict:
+        ctx = self._ctx(job_id)
+        est = ctx.get("plan_estimate")
+        if not est or est.get("plan_digest") != self.controller.plan_key(job_id):
+            raise TransitionRefused("no cost estimate for the current plan (the job has not reached it yet)")
+        limit = max(budget_usd or est["suggested_limit_usd"], self._job(job_id)["budget_limit_usd"])
+        if limit > self._job(job_id)["budget_limit_usd"]:
+            budgets.raise_budget(self.store, job_id, limit, f"plan approved: {reason}", actor=actor)
+        self._set_ctx(job_id, plan_approval={"plan_digest": est["plan_digest"], "estimate_usd": est["estimate_usd"],
+                                             "budget_usd": limit, "actor": actor, "reason": reason, "at": now()})
+        return {"estimate_usd": est["estimate_usd"], "budget_usd": limit}
 
     def _sync_head(self, job_id: str) -> str:
         head = WorkspaceManager.head(self._worktree(job_id))
@@ -1122,7 +1157,11 @@ class Factory(ParallelLanes):
         gate = self.evidence.latest(job_id, ResultKind.GATE, task_id)
         verdicts: dict[str, str] = {}
         error_class = None
-        for review in required:
+        for review in self._review_order(required):
+            if review is None:  # end of a tier: later tiers wait until this one passes
+                if any(v == "CHANGES" for v in verdicts.values()):
+                    break
+                continue
             kind = ResultKind(review)
             ok, _ = self.evidence.current_pass(job_id, kind, ident, task_id)
             if ok:
@@ -1143,6 +1182,13 @@ class Factory(ParallelLanes):
             verdicts[review] = res.envelope.verdict
             error_class = error_class or res.envelope.payload.get("error_class")
         return verdicts, error_class
+
+    def _review_order(self, required: list[str]) -> list[str | None]:
+        """Required reviews by tier, with None marking each tier boundary."""
+        order: list[str | None] = []
+        for tier in self.cfg.factory.review.tiers:
+            order += [r for r in tier if r in required] + [None]
+        return order + [r for r in required if r not in order]
 
     def _back_to_analysis(self, job_id: str, reason: str) -> None:
         rs = analysis.round_state(self.store, job_id)
