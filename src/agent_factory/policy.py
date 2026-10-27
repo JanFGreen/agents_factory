@@ -25,8 +25,9 @@ _CONTENT_RULES: list[tuple[str, re.Pattern[str], str]] = [
 ]
 
 _WEAKENING = [
-    re.compile(r"^\+.*(@pytest\.mark\.(skip|xfail)|pytest\.skip\(|unittest\.skip|\.skip\(|xit\(|it\.only|describe\.skip)"),
+    re.compile(r"^\+.*(@pytest\.mark\.(skip|xfail)|pytest\.skip\(|unittest\.skip|\.skip\(|\.skipIf\(|\.only\(|\.todo\(|xit\(|xdescribe\()"),
     re.compile(r"^\+\s*assert\s+True\b"),
+    re.compile(r"^\+\s*expect\(\s*(true|1)\s*\)\.(toBe|toEqual)\(\s*(true|1)\s*\)"),
 ]
 _REMOVED_TEST = re.compile(r"^-\s*(def|async def)\s+test_\w+|^-\s*(it|test)\(")
 _REMOVED_ASSERT = re.compile(r"^-\s*(assert\b|self\.assert|expect\()")
@@ -60,9 +61,12 @@ def _matches(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
+_JS_TEST = re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$")
+
+
 def is_test_file(path: str) -> bool:
     name = path.rsplit("/", 1)[-1]
-    return name.startswith("test_") or name.endswith(("_test.py", ".test.ts", ".test.js", ".spec.ts", ".spec.js")) or "/tests/" in f"/{path}"
+    return name.startswith("test_") or name.endswith("_test.py") or bool(_JS_TEST.search(name)) or "/tests/" in f"/{path}"
 
 
 def evaluate_diff(

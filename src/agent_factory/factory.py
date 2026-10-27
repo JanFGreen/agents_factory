@@ -872,7 +872,7 @@ class Factory:
             "open_findings": open_findings, "last_failure": ctx.get("last_failure", {}).get(task_id),
             "root_cause": root_cause, "human_feedback": ctx.get("human_feedback"),
             "spec_advisories": ctx.get("spec_advisories", []),
-            "test_scope": "tests/ is always in scope: add or extend the tests that prove this task's acceptance",
+            "test_scope": "test files (tests/, test_*.py, *.test.ts(x), *.spec.ts(x)) are always in scope: add or extend the tests that prove this task's acceptance",
         }, task_id=task_id, writable=True, purpose="build")
         sha = WorkspaceManager.commit_all(wt, f"factory: {task_id} attempt {task['attempts'] + 1}")
         self._sync_head(job_id)

@@ -280,7 +280,7 @@ def test_plan_task_without_files_is_sent_back_and_builder_knows_tests_are_in_sco
     replan = [e for e in env.events(job, "state.transition") if e["to_state"] == "DECOMPOSE" and "retry from" in e["payload_json"]]
     assert replan and "TASK-02 has an empty file_scope" in replan[0]["payload_json"]
     build = next(c for c in env.runtime.calls if c.skill == "factory-implement")
-    assert "tests/ is always in scope" in build.prompt
+    assert "are always in scope" in build.prompt and "*.test.ts(x)" in build.prompt
 
 
 def test_inconclusive_integration_review_is_retried_not_rebuilt(make_env):
