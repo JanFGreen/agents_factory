@@ -1,0 +1,29 @@
+# Trusted check manifest for Node/TypeScript repos (vitest + tsc + eslint).
+# Dependencies are installed by the operator in the repo checkout (`npm ci`) and linked
+# into each worktree (tools must not write into it, hence vitest's runner config loader); checks never reach the network, so a new dependency needs the operator.
+schema_version: 1
+link_from_checkout: ["node_modules"]
+checks:
+  - name: unit
+    argv: ["{worktree}/node_modules/.bin/vitest", "run", "--configLoader", "runner", "--reporter=default", "--reporter=junit", "--outputFile.junit={report}"]
+    timeout_seconds: 900
+    report: junit
+    min_tests: 1
+    required: true
+    network: localhost
+    stage: task
+  - name: typecheck
+    argv: ["{worktree}/node_modules/.bin/tsc", "--noEmit", "-p", "tsconfig.json"]
+    timeout_seconds: 600
+    required: true
+    stage: task
+  - name: lint
+    argv: ["{worktree}/node_modules/.bin/eslint", ".", "--max-warnings=0"]
+    timeout_seconds: 600
+    required: true
+    stage: task
+  - name: web-build
+    argv: ["{worktree}/node_modules/.bin/expo", "export", "--platform", "web", "--output-dir", "dist"]
+    timeout_seconds: 900
+    required: true
+    stage: task

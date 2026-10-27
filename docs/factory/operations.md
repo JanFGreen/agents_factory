@@ -30,13 +30,24 @@ Doctor nie wykonuje płatnego wywołania modelu — działanie auth potwierdza d
 ## Rejestracja repo
 
 ```sh
-uv run factory init --repo /path/to/repo --mode local [--repo-id app] [--base-branch main]
+uv run factory init --repo /path/to/repo --mode local [--repo-id app] [--base-branch main] [--checks node]
 ```
 
 Repo musi mieć `.git` i remote `origin` (worktree powstaje z `origin/<base>` po `git fetch`).
 `--mode` musi być równy `policy.mode` w `factory/config.yaml` — zmiana trybu to zmiana konfiguracji
 przez operatora. Bez `--base-branch` gałąź bazowa jest ustalana z `origin/HEAD` lub `ls-remote`.
 Rejestr: `data_dir/repos.json`.
+
+`--checks <name>` wybiera zaufany manifest `factory/checks/<name>.yaml` dla repo (domyślnie
+`default.yaml`, pytest). Nazwa jest zapisywana w kontekście joba przy `submit`, więc job nie zmienia
+manifestu w trakcie; digest katalogu `checks/` nadal unieważnia wyniki po edycji. `node.yaml`
+(vitest + `tsc` + `eslint --max-warnings=0` + `expo export --platform web`) ma
+`link_from_checkout: ["node_modules"]`: operator robi `npm ci` w checkoutcie repo, a każdy worktree
+dostaje symlink do tych zależności (checki nie mają sieci). Link musi być ignorowany przez git
+(`node_modules` bez końcowego `/`), inaczej job kończy się `BLOCKED_ENV`; brak katalogu w checkoutcie
+— też `BLOCKED_ENV`. Narzędzia nie mogą pisać do linkowanego katalogu (sandbox), więc cache trzymaj
+w repo (np. `cacheDir` vitest, `--configLoader runner`). Nowa zależność = operator aktualizuje
+checkout. Node musi być w `PATH` procesu fabryki (np. `nvm use 24`).
 
 ## Zgłoszenie i uruchomienie
 

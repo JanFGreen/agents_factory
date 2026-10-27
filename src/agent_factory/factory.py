@@ -31,7 +31,7 @@ from .evidence import EvidenceStore, Producer
 from .features import NormalizedFeature, classify, load_feature, path_rank, record_classification, store_feature
 from .identities import InputIdentity, ResultKind, digest
 from .policy import evaluate_diff, max_risk
-from .runner import ChecksManifest, GateVerdict, TrustedRunner, load_checks
+from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
 from .scheduler import LeaseLost, acquire_lease, acquire_slot, check_fence, heartbeat, ready_tasks, release_allocation, release_lease, validate_dag
 from .schemas import ContractError, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, envelope_json_schema, parse_envelope
@@ -113,7 +113,9 @@ class Factory:
 
     # ------------------------------------------------------------------ submission --
 
-    def submit(self, feature: NormalizedFeature, repo_path: Path) -> str:
+    def submit(self, feature: NormalizedFeature, repo_path: Path, checks: str | None = None) -> str:
+        if checks is not None:
+            load_checks(self._checks_file(checks))  # unknown or invalid manifest is refused at submit time
         revision = store_feature(self.store, feature)
         job_id = f"job-{uuid.uuid4().hex[:12]}"
         with self.store.tx() as conn:
@@ -124,6 +126,8 @@ class Factory:
             if existing:
                 return existing["job_id"]
             ctx = {"scope_digest": feature.scope_digest(), "change_id": f"{feature.feature_id.lower()}-r{revision}"}
+            if checks is not None:
+                ctx["checks_manifest"] = checks
             conn.execute(
                 "INSERT INTO jobs (job_id, feature_id, repo_id, source_id, scope_revision, state, repo_path,"
                 " analysis_rounds_limit, budget_limit_usd, context_json, created_at, updated_at)"
@@ -192,8 +196,15 @@ class Factory:
     def _worktree(self, job_id: str) -> Path:
         return Path(self._job(job_id)["worktree"])
 
-    def _checks(self) -> ChecksManifest:
-        return load_checks(self.checks_path)
+    def _checks_file(self, name: str) -> Path:
+        if not CHECKS_NAME.match(name):
+            raise ValueError(f"invalid checks manifest name {name!r}")
+        return self.cfg.factory_dir / "checks" / f"{name}.yaml"
+
+    def _checks(self, job_id: str) -> ChecksManifest:
+        """The operator's manifest for the job's repo (fixed at submit), else the factory default."""
+        name = self._ctx(job_id).get("checks_manifest")
+        return load_checks(self._checks_file(name) if name else self.checks_path)
 
     def _record(self, job_id: str, kind: ResultKind, verdict: str, payload: dict, *, ident: InputIdentity | None = None,
                 producer: Producer | None = None, task_id: str | None = None, findings: list[dict] | None = None) -> str:
@@ -440,6 +451,10 @@ class Factory:
             ws = self.workspaces.create(repo, job_id, base_branch)
         except GitError as exc:
             raise StageBlocked(S.BLOCKED_ENV, f"cannot prepare worktree: {exc}") from exc
+        try:
+            WorkspaceManager.link_from_checkout(repo, ws.path, self._checks(job_id).link_from_checkout)
+        except FileNotFoundError as exc:
+            raise StageBlocked(S.BLOCKED_ENV, f"cannot prepare worktree: {exc}") from exc
         with self.store.tx() as conn:
             row = conn.execute("SELECT version FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
             self.store.cas_update_job(conn, job_id, row["version"], worktree=str(ws.path), branch=ws.branch,
@@ -589,7 +604,7 @@ class Factory:
             raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
         spec = res.payload.model_dump()
         self._set_ctx(job_id, spec=spec, spec_digest=digest(spec))
-        self.store.update_job_context(job_id, acceptance_suite_digest=digest([spec["acceptance_criteria"], self._checks().digest()]))
+        self.store.update_job_context(job_id, acceptance_suite_digest=digest([spec["acceptance_criteria"], self._checks(job_id).digest()]))
 
     def _step_micro_spec(self, job_id: str) -> None:
         self._open_round(job_id)
@@ -797,7 +812,7 @@ class Factory:
         ctx = self._ctx(job_id)
         if not ctx.get("baseline_ok"):
             wt = self._worktree(job_id)
-            gate = self.runner.run_gate(self._checks().for_stage("task"), wt, job_id=job_id,
+            gate = self.runner.run_gate(self._checks(job_id).for_stage("task"), wt, job_id=job_id,
                                         head_sha=self._job(job_id)["base_sha"], tree_sha=None)
             self.evidence.put_json(gate.as_payload(), "baseline", Producer("trusted-runner", "baseline"), job_id)
             if gate.verdict is not GateVerdict.PASS:
@@ -917,7 +932,7 @@ class Factory:
             # an empty feature diff is not.
             self._record(job_id, ResultKind.GATE, str(GateVerdict.FAIL_CODE), {"reason": "feature has no change versus base"}, task_id=task_id)
             return self._fail_build(job_id, task_id, "FAIL_CODE", "feature has no change versus base", {})
-        gate = self.runner.run_gate(self._checks().for_stage("task"), wt, job_id=job_id, head_sha=head, tree_sha=WorkspaceManager.tree(wt))
+        gate = self.runner.run_gate(self._checks(job_id).for_stage("task"), wt, job_id=job_id, head_sha=head, tree_sha=WorkspaceManager.tree(wt))
         self._record(job_id, ResultKind.GATE, str(gate.verdict), gate.as_payload(), producer=Producer("trusted-runner", "gate"), task_id=task_id)
         if gate.verdict is GateVerdict.PASS:
             self._route_reviews(job_id, task_id, task_spec, surfaces, new_risk, builder_diff)
@@ -1047,7 +1062,7 @@ class Factory:
         wt = self._worktree(job_id)
         return {
             "acceptance_criteria": (ctx.get("spec") or {}).get("acceptance_criteria", []),
-            "required_checks": [c.name for c in self._checks().for_stage(stage) if c.required],
+            "required_checks": [c.name for c in self._checks(job_id).for_stage(stage) if c.required],
             "candidate_tree_sha": WorkspaceManager.tree(wt),
             "environment": {
                 "kind": "local-checkout",
@@ -1074,7 +1089,7 @@ class Factory:
         ctx = self._ctx(job_id)
         wt = self._worktree(job_id)
         head = self._sync_head(job_id)
-        gate = self.runner.run_gate(self._checks().for_stage("acceptance"), wt, job_id=job_id, head_sha=head, tree_sha=WorkspaceManager.tree(wt))
+        gate = self.runner.run_gate(self._checks(job_id).for_stage("acceptance"), wt, job_id=job_id, head_sha=head, tree_sha=WorkspaceManager.tree(wt))
         if gate.verdict is GateVerdict.ERROR_ENV:
             raise StageBlocked(S.BLOCKED_ENV, gate.reason)
         res = self.call_agent(job_id, "factory-product-verify", {
@@ -1115,7 +1130,7 @@ class Factory:
         self._set_ctx(job_id, candidate={"sha": candidate, "base_sha": base_sha})
         self._sync_head(job_id)
         ident = self.controller.identity(job_id)
-        gate = self.runner.run_gate(self._checks().for_stage("integration"), wt, job_id=job_id, head_sha=candidate,
+        gate = self.runner.run_gate(self._checks(job_id).for_stage("integration"), wt, job_id=job_id, head_sha=candidate,
                                     tree_sha=ident.candidate_tree_sha)
         if gate.verdict is GateVerdict.ERROR_ENV:
             raise StageBlocked(S.BLOCKED_ENV, gate.reason)

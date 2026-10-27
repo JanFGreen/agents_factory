@@ -111,7 +111,10 @@ def cmd_init(args) -> int:
         return EXIT_REFUSED
     repos = _repos(cfg)
     repo_id = args.repo_id or repo.name
-    repos[repo_id] = {"path": str(repo), "base_branch": args.base_branch, "mode": args.mode}
+    if args.checks and not (cfg.factory_dir / "checks" / f"{args.checks}.yaml").exists():
+        print(f"unknown checks manifest {args.checks!r} (expected factory/checks/{args.checks}.yaml)", file=sys.stderr)
+        return EXIT_USAGE
+    repos[repo_id] = {"path": str(repo), "base_branch": args.base_branch, "mode": args.mode, "checks": args.checks}
     _repos_file(cfg).parent.mkdir(parents=True, exist_ok=True)
     _repos_file(cfg).write_text(json.dumps(repos, indent=2))
     with store.tx() as conn:
@@ -147,7 +150,7 @@ def cmd_submit(args) -> int:
         print("--file or --text is required", file=sys.stderr)
         return EXIT_USAGE
     factory = _make_factory(cfg, store)
-    job_id = factory.submit(feature, Path(repo["path"]))
+    job_id = factory.submit(feature, Path(repo["path"]), checks=repo.get("checks"))
     if repo.get("base_branch"):
         store.update_job_context(job_id, base_branch=repo["base_branch"])
     _out(args, {"job_id": job_id, "feature_id": feature.feature_id}, job_id)
@@ -348,6 +351,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--mode", required=True, choices=["offline", "local", "pr", "automerge", "release"])
     s.add_argument("--repo-id")
     s.add_argument("--base-branch")
+    s.add_argument("--checks", help="checks manifest name in factory/checks/ (default: default)")
     s.set_defaults(fn=cmd_init)
     s = sub.add_parser("submit")
     s.add_argument("--file")

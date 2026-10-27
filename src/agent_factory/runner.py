@@ -9,6 +9,7 @@ missing tool or a timeout can never produce PASS.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -20,7 +21,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .config import load_yaml
 from .evidence import EvidenceStore, Producer
@@ -30,6 +31,7 @@ from .sandbox import Sandbox, SandboxPolicy, scrubbed_env
 MAX_LOG_BYTES = 2_000_000
 EXCERPT_BYTES = 4000
 _PLACEHOLDERS = {"{python}", "{report}", "{worktree}"}
+CHECKS_NAME = re.compile(r"^[a-z0-9_-]{1,40}$")
 
 
 class GateVerdict(StrEnum):
@@ -60,6 +62,18 @@ class ChecksManifest(BaseModel):
 
     schema_version: Literal[1]
     checks: list[CheckSpec]
+    # Dependency directories (e.g. node_modules) the operator installed in the repo checkout;
+    # linked read-only into each worktree because checks run without network.
+    link_from_checkout: list[str] = []
+
+    @field_validator("link_from_checkout")
+    @classmethod
+    def _plain_relative(cls, paths: list[str]) -> list[str]:
+        for path in paths:
+            parts = Path(path).parts
+            if not parts or Path(path).is_absolute() or ".." in parts or path.startswith("."):
+                raise ValueError(f"link_from_checkout entries must be plain relative paths: {path!r}")
+        return paths
 
     def digest(self) -> str:
         return digest(self.model_dump())

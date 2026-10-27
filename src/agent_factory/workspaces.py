@@ -21,7 +21,7 @@ BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,100}$")
 # Build/test by-products are never part of a candidate (they would pollute diffs, scope checks and reviews).
 GENERATED_EXCLUDES = [
     ":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/*.pyc", ":(exclude,glob)**/.pytest_cache/**",
-    ":(exclude,glob)**/node_modules/**", ":(exclude,glob)**/.DS_Store", ":(exclude,glob)**/.coverage",
+    ":(exclude,glob)**/node_modules/**", ":(exclude,glob)**/node_modules", ":(exclude,glob)**/.DS_Store", ":(exclude,glob)**/.coverage",
 ]
 AUTHOR = ["-c", "user.name=Agent Factory", "-c", "user.email=agent-factory@localhost", "-c", "commit.gpgsign=false"]
 
@@ -95,6 +95,25 @@ class WorkspaceManager:
         if git(path, "rev-parse", "HEAD") != base_sha or git(path, "status", "--porcelain"):
             raise GitError(["worktree-verify"], 1, "new worktree is not clean at base")
         return Workspace(path, branch, base_branch, base_sha)
+
+    @staticmethod
+    def link_from_checkout(repo: Path, worktree: Path, paths: list[str]) -> None:
+        """Symlink operator-installed dependency dirs from the checkout into the worktree.
+
+        The link must be gitignored in the worktree (a symlink is a file to git, so the
+        pattern needs no trailing slash); otherwise it would end up in the candidate.
+        """
+        for rel in paths:
+            source, target = repo / rel, worktree / rel
+            if not source.is_dir():
+                raise FileNotFoundError(f"{source} is missing in the checkout; install dependencies there first")
+            if target.is_symlink():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(source.resolve(), target_is_directory=True)
+            if git(worktree, "status", "--porcelain", "--", rel):
+                target.unlink()
+                raise FileNotFoundError(f"{rel} must be gitignored without a trailing slash to be linked")
 
     @staticmethod
     def head(path: Path) -> str:
