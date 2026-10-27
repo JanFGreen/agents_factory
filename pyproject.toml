@@ -3,7 +3,7 @@ name = "agent-factory"
 version = "0.1.0"
 description = "Agent Factory: autonomous, evidence-gated software factory controller (variant A, Claude adapter)"
 authors = [
-    { name = "Jan Zielinski", email = "jan.zielinski@soteranalytics.com" }
+    { name = "JanFGreen", email = "20524745+JanFGreen@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
