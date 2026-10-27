@@ -104,7 +104,8 @@ class ParallelLanes:
         for task_id in ready_tasks(self.store, job_id):
             task = self._task(job_id, task_id)
             if task["attempts"] >= max_attempts:
-                return []  # let the sequential path fail it visibly
+                self._fail_task(job_id, task_id, f"used all {max_attempts} attempts")  # independent tasks go on
+                continue
             candidates.append((task_id, TaskSpec.model_validate(json.loads(task["spec_json"])).file_scope))
         wave = pick_wave(candidates, limit)
         return wave if len(wave) >= 2 else []
@@ -205,7 +206,7 @@ class ParallelLanes:
             return self._lane_fail(job_id, task_id, "FAIL_POLICY", "; ".join(report.violations))
         if not lane_diff:
             return self._lane_fail(job_id, task_id, "FAIL_CODE", "feature has no change versus base")
-        gate = self.runner.run_gate(self._checks(job_id).for_stage("task"), lane, job_id=job_id, head_sha=head,
+        gate = self._gate(job_id, "task", lane, head_sha=head,
                                     tree_sha=WorkspaceManager.tree(lane))
         self._record(job_id, ResultKind.GATE, str(gate.verdict), gate.as_payload(), producer=Producer("trusted-runner", "gate"), task_id=task_id)
         if gate.verdict not in (GateVerdict.PASS, GateVerdict.FAIL_CODE, GateVerdict.FAIL_POLICY, GateVerdict.TIMEOUT):
@@ -271,8 +272,7 @@ class ParallelLanes:
                 continue
             if WorkspaceManager.tree(wt) != git(lanes[task_id], "rev-parse", f"{outcome.head}^{{tree}}"):
                 # Combined with earlier lanes of this wave: the trusted checks decide on the combined tree.
-                gate = self.runner.run_gate(self._checks(job_id).for_stage("task"), wt, job_id=job_id,
-                                            head_sha=WorkspaceManager.head(wt), tree_sha=WorkspaceManager.tree(wt))
+                gate = self._gate(job_id, "task", wt, head_sha=WorkspaceManager.head(wt), tree_sha=WorkspaceManager.tree(wt))
                 self._record(job_id, ResultKind.GATE, str(gate.verdict), gate.as_payload(),
                              ident=self.controller.identity(job_id, task_id), producer=Producer("trusted-runner", "gate"), task_id=task_id)
                 if gate.verdict is not GateVerdict.PASS:

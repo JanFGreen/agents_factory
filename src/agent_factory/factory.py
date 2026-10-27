@@ -28,6 +28,7 @@ from .adapters.protocol import AgentRequest, AgentRuntime, RunHandle
 from .config import LoadedConfig, RoleBinding
 from .controller import ANALYSIS_STATES, HALTED, TERMINAL, Controller, S, TransitionRefused
 from .decisions import DecisionError, select, verify_ai_choice
+from .environment import node_bin_dir
 from .evidence import EvidenceStore, Producer
 from .features import NormalizedFeature, classify, load_feature, path_rank, record_classification, store_feature
 from .identities import InputIdentity, ResultKind, digest
@@ -211,6 +212,18 @@ class Factory(ParallelLanes):
             raise ValueError(f"invalid checks manifest name {name!r}")
         return self.cfg.factory_dir / "checks" / f"{name}.yaml"
 
+    def _toolchain_env(self, job_id: str) -> dict[str, str]:
+        """PATH with the repo's pinned Node first (``.nvmrc``/engines), never the controller shell's."""
+        try:
+            node = node_bin_dir(Path(self._job(job_id)["repo_path"]))
+        except FileNotFoundError as exc:
+            raise StageBlocked(S.BLOCKED_ENV, str(exc)) from exc
+        return {"PATH": f"{node}{os.pathsep}{os.environ.get('PATH', '')}"} if node else {}
+
+    def _gate(self, job_id: str, stage: str, wt: Path, head_sha: str | None, tree_sha: str | None):
+        return self.runner.run_gate(self._checks(job_id).for_stage(stage), wt, job_id=job_id, head_sha=head_sha,
+                                    tree_sha=tree_sha, extra_env=self._toolchain_env(job_id))
+
     def _checks(self, job_id: str) -> ChecksManifest:
         """The operator's manifest for the job's repo (fixed at submit), else the factory default."""
         name = self._ctx(job_id).get("checks_manifest")
@@ -347,7 +360,7 @@ class Factory(ParallelLanes):
         attempt_id = new_id("att")
         own = lane or (Path(job["worktree"]) if job["worktree"] else None)
         denied = tuple(default_denied_reads(self.data_dir, own))
-        policy = SandboxPolicy(writable=(worktree,) if writable else (), denied_read=denied)
+        policy = SandboxPolicy(writable=(worktree,) if writable else (), denied_read=denied, env=self._toolchain_env(job_id))
         request = AgentRequest(
             job_id=job_id, attempt_id=attempt_id, role=role, skill=skill, prompt=prompt, system_append=system_append,
             cwd=worktree, model=binding.model, tools=binding.tools if writable else [t for t in binding.tools if t in READ_ONLY_TOOLS + ["Bash"]],
@@ -823,8 +836,7 @@ class Factory(ParallelLanes):
         ctx = self._ctx(job_id)
         if not ctx.get("baseline_ok"):
             wt = self._worktree(job_id)
-            gate = self.runner.run_gate(self._checks(job_id).for_stage("task"), wt, job_id=job_id,
-                                        head_sha=self._job(job_id)["base_sha"], tree_sha=None)
+            gate = self._gate(job_id, "task", wt, head_sha=self._job(job_id)["base_sha"], tree_sha=None)
             self.evidence.put_json(gate.as_payload(), "baseline", Producer("trusted-runner", "baseline"), job_id)
             if gate.verdict is not GateVerdict.PASS:
                 raise StageBlocked(S.BLOCKED_ENV, f"baseline does not pass on the untouched base: {gate.reason}")
@@ -857,18 +869,24 @@ class Factory(ParallelLanes):
         if idle:
             ready = ready_tasks(self.store, job_id)
             if not ready:
-                raise StageBlocked(S.NEEDS_HUMAN, "no task is ready to build (dependency deadlock)")
+                raise StageBlocked(S.NEEDS_HUMAN, self._stuck_reason(job_id))
             task_id = ready[0]
         task = self._task(job_id, task_id)
         impl = self.cfg.workflow.implementation
         if task["attempts"] >= impl.max_attempts_per_leaf_task:
-            with self.store.tx() as conn:
-                conn.execute("UPDATE tasks SET state = 'FAILED' WHERE job_id = ? AND task_id = ?", (job_id, task_id))
-            raise StageBlocked(S.FAILED, f"{task_id} used all {impl.max_attempts_per_leaf_task} attempts")
+            # Only this task (and what depends on it) stops; independent tasks keep going.
+            self._fail_task(job_id, task_id, f"used all {impl.max_attempts_per_leaf_task} attempts")
+            if ready_tasks(self.store, job_id):
+                return
+            raise StageBlocked(S.NEEDS_HUMAN, self._stuck_reason(job_id))
         if job["build_attempts"] >= impl.max_build_attempts_per_feature:
             raise StageBlocked(S.FAILED, f"feature used all {impl.max_build_attempts_per_feature} build attempts")
         wt = self._worktree(job_id)
         start_sha = WorkspaceManager.head(wt)
+        bases = self._ctx(job_id).get("task_base", {})
+        if task_id not in bases:  # where this task's (uninterrupted) series of attempts starts
+            bases[task_id] = start_sha
+            self._set_ctx(job_id, task_base=bases)
         with self.store.tx() as conn:
             conn.execute("UPDATE tasks SET state = 'BUILDING', attempts = attempts + 1 WHERE job_id = ? AND task_id = ?", (job_id, task_id))
             row = conn.execute("SELECT version, build_attempts FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
@@ -887,6 +905,56 @@ class Factory(ParallelLanes):
         self._sync_head(job_id)
         self.store.update_job_context(job_id, human_feedback=None)
         self.controller.transition(job_id, S.CHECKS, f"build produced {sha or 'no changes'}")
+
+    def _fail_task(self, job_id: str, task_id: str, reason: str) -> None:
+        bases = self._ctx(job_id).get("task_base", {})
+        base = bases.pop(task_id, None)
+        wt = self._worktree(job_id)
+        if base and WorkspaceManager.head(wt) != base and self._is_ancestor(wt, base, WorkspaceManager.head(wt)):
+            # Rejected attempts must not reach the tasks built after this one: keep them as evidence, then drop them.
+            patch = git(wt, "diff", f"{base}..HEAD", check=False)
+            self.evidence.put(patch.encode(), "rejected-attempt-patch", Producer("controller", "task-failed"), job_id)
+            git(wt, "reset", "--quiet", "--hard", base)
+            git(wt, "clean", "-fdq")
+            self._sync_head(job_id)
+        self._set_ctx(job_id, task_base=bases)
+        with self.store.tx() as conn:
+            conn.execute("UPDATE tasks SET state = 'FAILED' WHERE job_id = ? AND task_id = ?", (job_id, task_id))
+            self.store.event(conn, job_id, "task.failed", {"task_id": task_id, "reason": reason})
+        if self._ctx(job_id).get("current_task") == task_id:
+            self._set_ctx(job_id, current_task=None)
+
+    def _stuck_reason(self, job_id: str) -> str:
+        """Why no task can be built, with what was kept and how the operator continues."""
+        rows = {r["task_id"]: r for r in self.store.all("SELECT task_id, state, spec_json FROM tasks WHERE job_id = ?", (job_id,))}
+        failed = sorted(t for t, r in rows.items() if r["state"] == "FAILED")
+        deps = {t: set(json.loads(r["spec_json"]).get("depends_on", [])) for t, r in rows.items()}
+        blocked, frontier = set(), set(failed)
+        while frontier:
+            frontier = {t for t, d in deps.items() if d & (frontier | blocked) and t not in blocked and t not in failed}
+            blocked |= frontier
+        accepted = sum(1 for r in rows.values() if r["state"] == "ACCEPTED")
+        if not failed:
+            return "no task is ready to build (dependency deadlock)"
+        return (f"tasks {failed} used all their attempts; blocked by them: {sorted(blocked)}; accepted {accepted}/{len(rows)} "
+                f"(kept on the job branch). Read the findings, then `factory task retry {job_id} <task> --attempts N --reason ...` "
+                "and `factory resume`, or `factory cancel`.")
+
+    def retry_task(self, job_id: str, task_id: str, attempts: int, reason: str) -> None:
+        """Operator decision: give a FAILED task more attempts (the job must be halted)."""
+        task = self._task(job_id, task_id)
+        if task is None or task["state"] != "FAILED":
+            raise TransitionRefused(f"{task_id} is not FAILED")
+        if S(self._job(job_id)["state"]) not in HALTED:
+            raise TransitionRefused("retry a task only while the job is halted")
+        max_attempts = self.cfg.workflow.implementation.max_attempts_per_leaf_task
+        bases = self._ctx(job_id).get("task_base", {})
+        bases.pop(task_id, None)  # the retry starts from the head at that time
+        self._set_ctx(job_id, task_base=bases)
+        with self.store.tx() as conn:
+            conn.execute("UPDATE tasks SET state = 'REWORK', attempts = ? WHERE job_id = ? AND task_id = ?",
+                         (max(0, max_attempts - attempts), job_id, task_id))
+            self.store.event(conn, job_id, "task.retry", {"task_id": task_id, "attempts": attempts, "reason": reason})
 
     def _run_builder(self, job_id: str, task_id: str, task, ctx: dict) -> None:
         root_cause = None
@@ -961,7 +1029,7 @@ class Factory(ParallelLanes):
             # an empty feature diff is not.
             self._record(job_id, ResultKind.GATE, str(GateVerdict.FAIL_CODE), {"reason": "feature has no change versus base"}, task_id=task_id)
             return self._fail_build(job_id, task_id, "FAIL_CODE", "feature has no change versus base", {})
-        gate = self.runner.run_gate(self._checks(job_id).for_stage("task"), wt, job_id=job_id, head_sha=head, tree_sha=WorkspaceManager.tree(wt))
+        gate = self._gate(job_id, "task", wt, head_sha=head, tree_sha=WorkspaceManager.tree(wt))
         self._record(job_id, ResultKind.GATE, str(gate.verdict), gate.as_payload(), producer=Producer("trusted-runner", "gate"), task_id=task_id)
         if gate.verdict is GateVerdict.PASS:
             self._route_reviews(job_id, task_id, task_spec, surfaces, new_risk, builder_diff)
@@ -1091,10 +1159,14 @@ class Factory(ParallelLanes):
                 "UPDATE tasks SET state = 'ACCEPTED', accepted_head_sha = ? WHERE job_id = ? AND task_id = ?",
                 (self._job(job_id)["head_sha"], job_id, task_id),
             )
-        self._set_ctx(job_id, current_task=None, review_retries=0)
+        bases = ctx.get("task_base", {})
+        bases.pop(task_id, None)
+        self._set_ctx(job_id, current_task=None, review_retries=0, task_base=bases)
         self._checkpoint(job_id, f"{task_id} accepted")
         if ready_tasks(self.store, job_id):
             self.controller.transition(job_id, S.BUILD_TASK)
+        elif self.store.one("SELECT 1 FROM tasks WHERE job_id = ? AND state = 'FAILED'", (job_id,)):
+            raise StageBlocked(S.NEEDS_HUMAN, self._stuck_reason(job_id))
         else:
             self.controller.transition(job_id, S.FEATURE_ACCEPTANCE)
 
@@ -1133,7 +1205,7 @@ class Factory(ParallelLanes):
         ctx = self._ctx(job_id)
         wt = self._worktree(job_id)
         head = self._sync_head(job_id)
-        gate = self.runner.run_gate(self._checks(job_id).for_stage("acceptance"), wt, job_id=job_id, head_sha=head, tree_sha=WorkspaceManager.tree(wt))
+        gate = self._gate(job_id, "acceptance", wt, head_sha=head, tree_sha=WorkspaceManager.tree(wt))
         if gate.verdict is GateVerdict.ERROR_ENV:
             raise StageBlocked(S.BLOCKED_ENV, gate.reason)
         res = self.call_agent(job_id, "factory-product-verify", {
@@ -1174,7 +1246,7 @@ class Factory(ParallelLanes):
         self._set_ctx(job_id, candidate={"sha": candidate, "base_sha": base_sha})
         self._sync_head(job_id)
         ident = self.controller.identity(job_id)
-        gate = self.runner.run_gate(self._checks(job_id).for_stage("integration"), wt, job_id=job_id, head_sha=candidate,
+        gate = self._gate(job_id, "integration", wt, head_sha=candidate,
                                     tree_sha=ident.candidate_tree_sha)
         if gate.verdict is GateVerdict.ERROR_ENV:
             raise StageBlocked(S.BLOCKED_ENV, gate.reason)

@@ -230,7 +230,7 @@ def test_af27_repeated_identical_failure_triggers_root_cause_then_stops(make_env
 
     env = make_env("trivial", responders={"factory-implement": same_bug})
     job = env.submit()
-    assert env.factory.run(job) == "FAILED"
+    assert env.factory.run(job) == "NEEDS_HUMAN"  # the task stops; the job waits for an operator decision
     assert env.calls("factory-implement") == 3
     assert env.calls("factory-root-cause") == 1  # after the 2nd identical fingerprint, before the 3rd attempt
     assert env.store.one("SELECT state FROM tasks WHERE job_id = ?", (job,))["state"] == "FAILED"

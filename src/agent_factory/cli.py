@@ -19,6 +19,7 @@ from .adapters.claude import ClaudeRuntime
 from .adapters.github import LocalMergeHandler
 from .config import ConfigError, load_config
 from .controller import HALTED, TERMINAL, TransitionRefused
+from .environment import cli_too_old, node_bin_dir
 from .features import normalize
 from .sandbox import SandboxUnavailable, get_sandbox
 from .state import Store
@@ -83,8 +84,19 @@ def cmd_doctor(args) -> int:
         ok = False
         report["sandbox"] = {"ok": False, "error": str(exc), "effect": "code execution refused (fail closed)"}
     claude = shutil.which(cfg.factory.runtime.claude_binary)
-    report["claude_cli"] = {"path": claude, "version": subprocess.run([claude, "--version"], capture_output=True, text=True).stdout.strip() if claude else None}
-    ok &= bool(claude)
+    too_old = cli_too_old(claude, cfg.factory.runtime.min_cli_version) if claude else "claude CLI not found"
+    report["claude_cli"] = {"path": claude, "version": subprocess.run([claude, "--version"], capture_output=True, text=True).stdout.strip() if claude else None,
+                            "min_version": cfg.factory.runtime.min_cli_version, "ok": too_old is None, **({"error": too_old} if too_old else {})}
+    ok &= too_old is None
+    toolchains = {}
+    for repo_id, repo in _repos(cfg).items():
+        try:
+            node = node_bin_dir(Path(repo["path"]))
+            toolchains[repo_id] = {"node": str(node) if node else "not pinned (controller PATH)"}
+        except FileNotFoundError as exc:
+            ok = False
+            toolchains[repo_id] = {"error": str(exc)}
+    report["toolchains"] = toolchains
     lock = Path("factory.lock.json")
     report["lock"] = json.loads(lock.read_text()) if lock.exists() else None
     openspec_bin = Path("tools/openspec/node_modules/.bin/openspec")
@@ -213,8 +225,17 @@ def cmd_inspect(args) -> int:
     return EXIT_OK
 
 
+def _preflight(cfg) -> str | None:
+    """Refuse to start agents that would fail anyway (a too old CLI wastes every call)."""
+    binary = shutil.which(cfg.factory.runtime.claude_binary)
+    return cli_too_old(binary, cfg.factory.runtime.min_cli_version) if binary else "claude CLI not found"
+
+
 def cmd_run(args) -> int:
     cfg, store = _load(args)
+    if (problem := _preflight(cfg)) is not None:
+        print(problem, file=sys.stderr)
+        return EXIT_BLOCKED
     factory = _make_factory(cfg, store)
     jobs = [args.job] if args.job else [r["job_id"] for r in store.all("SELECT job_id FROM jobs WHERE active = 1 ORDER BY created_at LIMIT ?", (args.max_jobs,))]
     results = {job_id: factory.run(job_id) for job_id in jobs}
@@ -224,6 +245,9 @@ def cmd_run(args) -> int:
 
 def cmd_resume(args) -> int:
     cfg, store = _load(args)
+    if (problem := _preflight(cfg)) is not None:
+        print(problem, file=sys.stderr)
+        return EXIT_BLOCKED
     factory = _make_factory(cfg, store)
     factory.resume(args.id)
     _out(args, {"job_id": args.id, "state": factory.run(args.id)})
@@ -324,6 +348,19 @@ def cmd_feature(args) -> int:
     return EXIT_OK
 
 
+def cmd_task(args) -> int:
+    cfg, store = _load(args)
+    factory = _make_factory(cfg, store)
+    try:
+        factory.retry_task(args.job_id, args.task_id, args.attempts, args.reason)
+    except TransitionRefused as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_REFUSED
+    _out(args, {"job_id": args.job_id, "task_id": args.task_id, "attempts_granted": args.attempts,
+                "next_step": f"factory resume {args.job_id}"})
+    return EXIT_OK
+
+
 def cmd_budget(args) -> int:
     cfg, store = _load(args)
     budgets.raise_budget(store, args.id, args.to, args.reason, actor=os.environ.get("USER", "operator"))
@@ -369,6 +406,14 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--analysis-rounds", type=int, required=True)
     f.add_argument("--reason", required=True)
     s.set_defaults(fn=cmd_feature)
+    s = sub.add_parser("task")
+    tsub = s.add_subparsers(dest="task_cmd", required=True)
+    t = tsub.add_parser("retry", help="give a FAILED task more attempts while the job is halted")
+    t.add_argument("job_id")
+    t.add_argument("task_id")
+    t.add_argument("--attempts", type=int, default=1, choices=range(1, 4))
+    t.add_argument("--reason", required=True)
+    s.set_defaults(fn=cmd_task)
     s = sub.add_parser("run")
     s.add_argument("--job")
     s.add_argument("--queue", action="store_true")

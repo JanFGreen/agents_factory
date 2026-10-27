@@ -111,7 +111,8 @@ przejścia przez guard.
 | Spec/dekompozycja `CHANGES` (findings AI lub problemy kontrolera) | `_close_round_and_continue` | `MICRO_SPEC` (trivial) / `ANALYSIS_ROUND`; przy wyczerpanym limicie lub `max_consecutive_rounds_without_progress` → `ANALYSIS_LIMIT_REACHED` |
 | Spec/dekompozycja `BLOCKED`/`UNKNOWN` bez konkretnych problemów | j.w. | `NEEDS_HUMAN` |
 | Baseline nie przechodzi na nietkniętej bazie | `_prepare_build` | `BLOCKED_ENV` |
-| Limit prób zadania / feature'a | `_step_build_task` | `FAILED` |
+| Limit prób zadania | `_step_build_task` / `_parallel_wave` | task `FAILED`, jego próby cofnięte z gałęzi joba (łatka jako artefakt); niezależne taski budują się dalej; gdy nic nie zostało do zbudowania → `NEEDS_HUMAN` z listą zablokowanych; operator: `factory task retry <job> <task> --attempts N --reason …` + `factory resume` |
+| Limit prób feature'a (`total_feature_build_attempts`) | `_step_build_task` | `FAILED` |
 | Brak gotowego zadania (deadlock zależności) | `_step_build_task` | `NEEDS_HUMAN` |
 | Builder przepisał historię / naruszenie polityki | `_step_checks` | wynik `gate=FAIL_POLICY`, patch odrzucony jako artefakt, `git reset --hard` do `build_start_sha` → `BUILD_TASK` |
 | Cały diff feature'a względem bazy pusty (poza `openspec/`) | `_step_checks` | wynik `gate=FAIL_CODE` → `BUILD_TASK`. Próba bez zmian przy niepustym diffie feature'a nie jest porażką (wcześniejsza praca może już spełniać spec) — idzie do runnera |

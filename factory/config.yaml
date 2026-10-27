@@ -61,6 +61,7 @@ merge:
   allow_admin_bypass: false
 runtime:
   claude_binary: claude
+  min_cli_version: "2.1.280"          # starsze CLI nie obsługują modeli 5.x (API odrzuca żądanie)
   sandbox: required
   # Modele są wyborem operatora; patrz docs/factory/model-routing.md (wymagają benchmarku ról).
   roles:

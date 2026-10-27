@@ -283,6 +283,7 @@ class RoleBinding(Strict):
 
 class Runtime(Strict):
     claude_binary: str
+    min_cli_version: str = "2.1.280"  # the 5.x models are rejected by older CLIs
     sandbox: Literal["required"]
     roles: dict[str, RoleBinding]
 
