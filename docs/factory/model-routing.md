@@ -34,6 +34,10 @@ Szczegóły mapowania na CLI (`adapters/claude.py::_argv`): `--model <model>`, `
 wywoływany jako read-only mimo roli `builder`. Pole `max_turns` jest przyjmowane w konfiguracji i
 przekazywane w `AgentRequest`, ale adapter go **nie** przekazuje do CLI. Timeout każdego wywołania
 (także buildera) to `execution.reviewer_timeout_seconds` (900 s).
+Niezależnie od tego `execution.agent_stall_seconds` (300 s) przerywa wywołanie, którego strumień nie
+wysłał nowego zdarzenia; jeśli CLI zdążyło zatwierdzić wynik narzędziem StructuredOutput, wynik jest
+odzyskiwany (koszt nieznany, liczony jako pełna rezerwacja), inaczej kontroler ponawia wywołanie.
+Każde wywołanie dostaje schemat koperty z dokładnym schematem `payload` swojego skilla.
 
 Model faktycznie użyty jest odczytywany z eventu `system/init` strumienia i zapisywany w
 `attempts.model_id`, `usage.model_id` oraz `producer.model_id` wyniku. Live smoke

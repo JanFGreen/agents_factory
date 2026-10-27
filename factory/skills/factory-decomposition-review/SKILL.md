@@ -34,7 +34,10 @@ features this review is not run; the controller records
 2. Build `requirements_map` yourself from task `requirement_ids`. Every REQ needs at
    least one task and a verification; every task needs a REQ or a stated necessary dependency.
 3. Check the DAG: no cycles, no missing or dangling `depends_on`, shared contracts
-   before consumers, a clear critical path, a final feature-level acceptance task.
+   before consumers, a clear critical path. Feature-level end-to-end acceptance is the
+   controller's FEATURE_ACCEPTANCE stage; do not require a planned task for it.
+   Over-decomposition (test-only tasks, empty `file_scope`, several tasks a single
+   executor would finish within the target) is a blocking finding: merge them.
    Set `dag_ok` from this check only.
 4. Per leaf: one executor can finish it within budget; inputs/outputs explicit;
    acceptance observable; `verification` names real checks; estimate plausible
@@ -75,4 +78,5 @@ Envelope per contract, `kind: "decomposition-review"`. Payload:
 - Do not rewrite the plan; report findings with `expected_fix`.
 - Do not accept a decomposition that removes or weakens a requirement, and do not
   suggest building hypothetical features.
-- Green leaf tasks never imply the parent feature is done; require the end-to-end task.
+- Green leaf tasks never imply the parent feature is done; the controller's FEATURE_ACCEPTANCE
+  stage checks the whole feature against the original request.

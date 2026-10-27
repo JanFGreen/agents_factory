@@ -99,7 +99,9 @@ def run_suite(
         golden = _golden(factory.runner, Path(job["worktree"]), task, job_id) if job["worktree"] else {"verdict": "NOT_RUN"}
         results.append({
             "task_id": task["id"], "category": task["category"], "final_state": final, "golden": golden,
-            "accepted_by_factory": final in ("READY_TO_MERGE", "MERGED"), "success": golden["verdict"] == "PASS",
+            # the single-agent baseline has no acceptance step, so it cannot falsely accept or reject
+            "accepted_by_factory": final in ("READY_TO_MERGE", "MERGED") if profile == "full" else None,
+            "success": golden["verdict"] == "PASS",
             "cost_usd": round(spend, 4), "seconds": round(time.time() - started, 1), "build_attempts": job["build_attempts"],
             "analysis_rounds": store.one("SELECT COUNT(*) FROM analysis_rounds WHERE job_id = ?", (job_id,))[0],
         })
@@ -107,8 +109,8 @@ def run_suite(
     summary = {
         "suite": suite["name"], "profile": profile, "n": n,
         "success": sum(r["success"] for r in results),
-        "false_accepts": sum(r["accepted_by_factory"] and not r["success"] for r in results),
-        "false_rejects": sum(not r["accepted_by_factory"] and r["success"] for r in results),
+        "false_accepts": sum(r["accepted_by_factory"] is True and not r["success"] for r in results) if profile == "full" else None,
+        "false_rejects": sum(r["accepted_by_factory"] is False and r["success"] for r in results) if profile == "full" else None,
         "total_cost_usd": round(sum(r["cost_usd"] for r in results), 4),
         "median_seconds": sorted(r["seconds"] for r in results)[n // 2] if n else None,
         "note": "pilot: small n, not a statistical proof" if n < 30 else "",

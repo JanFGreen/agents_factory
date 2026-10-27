@@ -23,7 +23,8 @@ Source: blueprint §7.6, §7.0 `decomposition`.
 1. No cycles, no dangling references, explicit critical order.
 2. Shared contracts precede consumers.
 3. Vertical integration early; no big unconnected layers.
-4. Last task: feature-level end-to-end acceptance against the original request.
+4. Fewest tasks within `target_task_minutes`; each task owns its tests. Feature-level end-to-end
+   acceptance is the controller's FEATURE_ACCEPTANCE stage, not a planned task.
 5. Migrations include rollback; seed/test data and error paths are planned.
 6. `max_depth` 3, `max_leaf_tasks_per_feature` 20. Exceeding => staging proposal, analysis ends; scope is never silently reduced.
 

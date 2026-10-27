@@ -34,7 +34,12 @@ request; green leaf tasks never make the parent DONE automatically.
 ## Procedure
 
 1. Confirm the environment runs the candidate under review (version endpoint,
-   build tree hash, or deployed SHA). Mismatch => `UNKNOWN`.
+   build tree hash, or deployed SHA). Mismatch => `UNKNOWN`. When `inputs.environment.kind`
+   is `local-checkout` (libraries, CLIs, modules without a service) the working directory
+   at `head_sha` is the environment: perform each action by running the code read-only
+   (e.g. a python snippet importing it against temp files) and record the command and
+   its output as the evidence. A missing URL, account or runner evidence ID is then not
+   a reason for `BLOCKED` or `NOT_RUN`.
 2. Build the criteria list: every acceptance criterion `AC-n` with its
    `requirement_ids` and `scenario_ids`. For `pm`, also map every intent of the
    original request; an intent without a criterion is an `intent_gaps` entry and a
@@ -79,7 +84,8 @@ Envelope per contract, `kind: "product-verify"`. Payload:
 - `PASS`: every required criterion `PASS` with evidence IDs; no intent gaps; no open blocking finding.
 - `CHANGES`: at least one criterion `FAIL` or an intent gap; findings cite the evidence
   and the owning requirement so the controller routes to BUILD or OPTIONS_DRAFT.
-- `BLOCKED`: environment, synthetic accounts or required credential unavailable.
+- `BLOCKED`: the request needs a service, synthetic account or credential that is not provided
+  and cannot be replaced by running the code locally (never for `local-checkout` code you can run).
 - `UNKNOWN`: candidate identity cannot be confirmed or the runner produced no usable evidence.
 
 ## Limits

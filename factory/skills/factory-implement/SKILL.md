@@ -34,7 +34,9 @@ controller decides. You never approve, merge or close findings.
    (contracts from dependencies). Mismatch => `UNKNOWN`; do not build on another tree.
 2. State the next test and the hypothesis in one line each (decision record, not a transcript).
 3. RED: write or adapt the tests for the task's public scenarios first; run them with
-   the allowed local command and confirm they fail for the expected reason.
+   the allowed local command and confirm they fail for the expected reason. Test files
+   under `tests/` are always in scope even when `file_scope` lists only source files;
+   a task without tests proving its acceptance is rejected by test-adequacy review.
 4. GREEN: implement the minimum change within `file_scope`. Touching files outside it,
    lockfiles, public APIs or migrations not named in the task requires a finding,
    not a silent edit.

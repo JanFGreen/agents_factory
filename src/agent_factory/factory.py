@@ -725,6 +725,8 @@ class Factory:
                     problems.append(f"reviewer map has no task for {req.id}")
             if not res.payload.dag_ok:
                 problems.append("reviewer reports DAG problems")
+        problems += [f"{t.task_id} has an empty file_scope (nothing for a builder to change; merge it into a task that owns files)"
+                     for t in plan.tasks if not t.file_scope]
         for need in plan.future_needs:
             if need.status == "hypothetical" and any(need.description.lower() in t.acceptance.lower() for t in plan.tasks):
                 problems.append(f"hypothetical need is being built: {need.description}")
@@ -855,6 +857,7 @@ class Factory:
             "open_findings": open_findings, "last_failure": ctx.get("last_failure", {}).get(task_id),
             "root_cause": root_cause, "human_feedback": ctx.get("human_feedback"),
             "spec_advisories": ctx.get("spec_advisories", []),
+            "test_scope": "tests/ is always in scope: add or extend the tests that prove this task's acceptance",
         }, task_id=task_id, writable=True, purpose="build")
         sha = WorkspaceManager.commit_all(wt, f"factory: {task_id} attempt {task['attempts'] + 1}")
         self._sync_head(job_id)
@@ -989,7 +992,7 @@ class Factory:
                 "task": task, "spec": ctx.get("spec"), "diff": diff_text[:60000], "head_sha": frozen_head,
                 "gate_evidence": gate.payload if gate else None, "risk": self._job(job_id)["risk"],
                 "security_depth": ctx.get("security_depth"), "surfaces": ctx.get("surfaces"),
-                "spec_advisories": ctx.get("spec_advisories", []),
+                "spec_advisories": ctx.get("spec_advisories", []), **self._verification_context(job_id, "task"),
             }, task_id=task_id, purpose="review")
             if WorkspaceManager.head(wt) != frozen_head or git(wt, "status", "--porcelain", "--", ".", *GENERATED_EXCLUDES):
                 raise StageBlocked(S.NEEDS_HUMAN, "worktree changed while reviewers were running (reviewers are read-only)")
@@ -1038,6 +1041,35 @@ class Factory:
 
     # ------------------------------------------------------------------ feature acceptance & integration --
 
+    def _verification_context(self, job_id: str, stage: str) -> dict[str, Any]:
+        """What evaluators need to tie evidence to the candidate, stated explicitly instead of left for them to guess."""
+        ctx = self._ctx(job_id)
+        wt = self._worktree(job_id)
+        return {
+            "acceptance_criteria": (ctx.get("spec") or {}).get("acceptance_criteria", []),
+            "required_checks": [c.name for c in self._checks().for_stage(stage) if c.required],
+            "candidate_tree_sha": WorkspaceManager.tree(wt),
+            "environment": {
+                "kind": "local-checkout",
+                "how": "the candidate is the working directory at head_sha; verify by reading it and by running it read-only "
+                       "(e.g. a python snippet that imports the code against temp files). No deployed service, URL, "
+                       "accounts or credentials exist for this job; their absence is not a reason for BLOCKED.",
+            },
+        }
+
+    def _inconclusive(self, job_id: str, stage: str, verdict: str, summary: str) -> bool:
+        """BLOCKED/UNKNOWN from an evaluator is missing input, not a code defect: retry once, then stop for a human.
+
+        Returns True when the stage should simply run again (no rebuild, no task attempt spent).
+        """
+        key = f"{stage}_inconclusive"
+        tries = self._ctx(job_id).get(key, 0) + 1
+        self._set_ctx(job_id, **{key: tries, f"{stage}_note": f"previous {stage} evaluation was {verdict}: {summary[:500]}. "
+                                 "All inputs the controller has are in <inputs>; judge the candidate with them."})
+        if tries > 1:
+            raise StageBlocked(S.NEEDS_HUMAN, f"{stage} evaluation {verdict} twice: {summary[:300]}")
+        return True
+
     def _step_feature_acceptance(self, job_id: str) -> None:
         ctx = self._ctx(job_id)
         wt = self._worktree(job_id)
@@ -1049,8 +1081,11 @@ class Factory:
             "mode": "feature-acceptance", "original_request": self._feature(job_id)["original_request"],
             "feature": self._feature(job_id), "spec": ctx.get("spec"), "acceptance_gate": gate.as_payload(),
             "head_sha": head, "tasks": [dict(r) for r in self.store.all("SELECT task_id, state FROM tasks WHERE job_id = ?", (job_id,))],
+            **self._verification_context(job_id, "acceptance"), "controller_note": ctx.get("acceptance_note"),
         }, purpose="acceptance")
         verdict = res.envelope.verdict if gate.verdict is GateVerdict.PASS else "CHANGES"
+        if verdict in ("BLOCKED", "UNKNOWN") and self._inconclusive(job_id, "acceptance", verdict, res.envelope.summary):
+            return
         payload = {"gate": gate.as_payload(), "envelope": res.envelope.model_dump()}
         self._record(job_id, ResultKind.FEATURE_ACCEPTANCE, verdict, payload, producer=self._agent_producer(res, "factory-product-verify"),
                      findings=self._findings(res.envelope))
@@ -1088,8 +1123,11 @@ class Factory:
         res = self.call_agent(job_id, "factory-integration-review", {
             "feature": self._feature(job_id), "base_sha": base_sha, "candidate_sha": candidate, "diff_vs_base": diff_text[:60000],
             "gate": gate.as_payload(), "base_moved": base_sha != job["base_sha"],
+            **self._verification_context(job_id, "integration"), "controller_note": self._ctx(job_id).get("integration_note"),
         }, purpose="integration")
         verdict = res.envelope.verdict if gate.verdict is GateVerdict.PASS else "CHANGES"
+        if verdict in ("BLOCKED", "UNKNOWN") and self._inconclusive(job_id, "integration", verdict, res.envelope.summary):
+            return
         self._record(job_id, ResultKind.INTEGRATION, verdict, {"gate": gate.as_payload(), "envelope": res.envelope.model_dump()},
                      ident=ident, producer=self._agent_producer(res, "factory-integration-review"), findings=self._findings(res.envelope))
         if verdict == "PASS":

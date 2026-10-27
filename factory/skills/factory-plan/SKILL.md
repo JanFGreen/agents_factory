@@ -42,8 +42,13 @@ the micro-spec).
    `risk`, `estimated_minutes`, an observable `acceptance` and named `verification`.
 5. Include, within feature scope: migrations with rollback, seed/test data, error
    paths, observability and docs. Do not add speculative features.
-6. Add a final task that owns end-to-end acceptance of the whole feature against the
-   original request; green leaf tasks never mark the parent done.
+6. Use the fewest tasks that keep each leaf within `target_task_minutes`: every task
+   pays for a build and a full review round. A feature that one executor can finish
+   within the target is exactly one task. Each task owns the tests for its own
+   behavior (test files are always in scope for the builder); never plan test-only
+   tasks or tasks with an empty `file_scope`. End-to-end acceptance of the whole
+   feature against the original request is the controller's FEATURE_ACCEPTANCE stage;
+   do not add a separate end-to-end task for it. Green leaf tasks never mark the parent done.
 7. Mark `parallel_safe_with` only when file scopes and contracts are disjoint and no
    lockfile/API change is shared.
 8. Classify every future direction as `required_now`, `committed_next` or

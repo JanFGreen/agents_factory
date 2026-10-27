@@ -262,3 +262,48 @@ def test_planner_receives_the_current_spec_evaluation(make_env):
     plan_call = next(c for c in env.runtime.calls if c.skill == "factory-plan")
     spec_digest = env.store.job_context(job)["spec_digest"]
     assert '"spec_evaluation"' in plan_call.prompt and spec_digest in plan_call.prompt.split("<inputs>")[1]
+
+
+def test_plan_task_without_files_is_sent_back_and_builder_knows_tests_are_in_scope(make_env):
+    """Eval finding: a planned end-to-end task with an empty file_scope produced 'no changes' builds and repeated reviews;
+    a source-only file_scope made the builder skip the tests that test-adequacy then demanded."""
+    from ..conftest import decomposition_reply, plan_reply
+    padded = plan_reply([
+        {"task_id": "TASK-01", "requirement_ids": ["REQ-1", "REQ-2"], "file_scope": ["app/greet.py"], "acceptance": "greeting ends with !"},
+        {"task_id": "TASK-02", "requirement_ids": ["REQ-2"], "depends_on": ["TASK-01"], "file_scope": [], "acceptance": "end-to-end"},
+    ])
+    env = make_env("standard", responders={"factory-plan": [padded, plan_reply()],
+                                           "factory-decomposition-review": [decomposition_reply(), decomposition_reply()]})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert env.calls("factory-plan") == 2
+    replan = [e for e in env.events(job, "state.transition") if e["to_state"] == "DECOMPOSE" and "retry from" in e["payload_json"]]
+    assert replan and "TASK-02 has an empty file_scope" in replan[0]["payload_json"]
+    build = next(c for c in env.runtime.calls if c.skill == "factory-implement")
+    assert "tests/ is always in scope" in build.prompt
+
+
+def test_inconclusive_integration_review_is_retried_not_rebuilt(make_env):
+    """Eval finding: integration BLOCKED for 'inputs not supplied' sent a correct task back to the builder until attempts ran out."""
+    blocked = FakeReply(envelope("integration-review", "BLOCKED", payload={}))
+    env = make_env("trivial", responders={"factory-integration-review": [blocked, FakeReply(envelope("integration-review", payload={}))]})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert env.calls("factory-implement") == 1 and env.calls("factory-integration-review") == 2
+    retry = [c for c in env.runtime.calls if c.skill == "factory-integration-review"][1]
+    assert "previous integration evaluation was BLOCKED" in retry.prompt
+    assert '"candidate_tree_sha"' in retry.prompt and '"required_checks"' in retry.prompt and "local-checkout" in retry.prompt
+
+
+def test_twice_inconclusive_acceptance_stops_for_a_human_without_rebuilding(make_env):
+    blocked = FakeReply(envelope("product-verify", "BLOCKED", payload={}))
+    passing = FakeReply(envelope("product-verify", payload={}))
+
+    def product(request):
+        return blocked if "feature-acceptance" in request.prompt else passing
+
+    env = make_env("trivial", responders={"factory-product-verify": product})
+    job = env.submit()
+    assert env.factory.run(job) == "NEEDS_HUMAN"
+    assert env.calls("factory-implement") == 1
+    assert "acceptance evaluation BLOCKED twice" in env.store.job(job)["blocked_reason"]

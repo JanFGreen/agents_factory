@@ -47,6 +47,13 @@ a concrete attack input, or a test/run result.
    reviews and merge policy.
 8. Anything requiring a production action, real credentials or real recipients is out
    of scope: record it in `limitations` and, if decisive, return `BLOCKED`.
+9. Trust model fixed by the request or the accepted spec (e.g. "the caller-supplied
+   `user` key is the identity", no auth layer exists in the repo) is not a defect the
+   task can fix inside its `file_scope`. Verify the change enforces that model correctly;
+   record the model's residual risk as a non-blocking finding. Only if the spec's model
+   contradicts the original request, or the risk level forbids it, add a blocking
+   finding with `payload.error_class: "spec"` so the controller routes it to analysis
+   instead of rebuilding code that cannot change the outcome.
 
 ## Output
 

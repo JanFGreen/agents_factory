@@ -140,23 +140,37 @@ Jedna obserwacja z live ma wartość merytoryczną. W jednym z przebiegów ewalu
 
 ## 5. Eval i ablacja (gate B8)
 
-Zestaw: `tests/evals/dev.yaml` (20 zadań, 8 kategorii). Golden tests są ukryte przed builderem: kontroler dodaje je do kopii finalnego drzewa, a uruchamia zaufany runner w sandboxie. Pilotaż objął 2 zadania, wszystkie role `claude-haiku-5-5`, po 1 próbie na zadanie i profil, 2026-10-27.
+Zestaw: `tests/evals/dev.yaml` (20 zadań, 8 kategorii). Golden tests są ukryte przed builderem: kontroler dodaje je do kopii finalnego drzewa, a uruchamia zaufany runner w sandboxie. Pilotaż: zadania E05-notes-delete (crud) i E11-api-isolation (auth), wszystkie role `claude-haiku-5-5`, po 1 próbie na zadanie i profil, 2026-10-27. Pilotaż powtórzono 5 razy; między przebiegami poprawiano fabrykę na podstawie śladów z poprzedniego.
 
-| Profil | Sukces (golden) | Fałszywe akceptacje | Fałszywe odrzucenia | Koszt (szac.) | Czas / zadanie |
-|---|---|---|---|---|---|
-| `single-agent` (jeden builder, te same narzędzia i sandbox) | **2/2** | 0 | — | $0.52 | ~25 s |
-| `full` (pełna fabryka) | **0/2** | 0 | 0 | $9.00 | 413–495 s |
+| Przebieg | single-agent (golden) | full: golden | full: zaakceptowane przez fabrykę | full: fałszywe akceptacje | full: koszt (szac.) | full: czas / zadanie |
+|---|---|---|---|---|---|---|
+| 1 | 2/2, $0.52 | 0/2 | 0/2 | 0 | $9.00 | 413–495 s |
+| 2 | 2/2, $0.63 | 1/2 | 0/2 | 0 | $12.23 (limit $8/job) | 40–53 min* |
+| 3 | 2/2, $0.61 | 0/2 | 0/2 | 0 | $6.82 (limit $8/job) | 3–21 min* |
+| 4 | 2/2, $0.51 | **2/2** | 0/2 | 0 | $28.65 | 44–173 min* |
+| 5 | 2/2, $0.50 | **2/2** | 0/2 | 0 | $13.45 | **8–11 min** |
 
-| Zadanie | single-agent | full |
+\* Czasy z gwiazdką zawyża usypianie się Maca w nocy (log `pmset`): zamrożony proces CLI tracił połączenie i kończył się dopiero po limicie. Przebieg 5 uruchomiono pod `caffeinate -s` i nie miał zawieszeń.
+
+Co poprawiono między przebiegami (każda poprawka ma test regresji w `tests/integration/test_regressions.py` lub `tests/unit/test_claude_adapter_stall.py`):
+
+| Po przebiegu | Objaw w śladzie | Poprawka |
 |---|---|---|
-| E05-notes-delete (crud) | PASS | `NEEDS_INFO`: spec-author zwrócił BLOCKED, bo „nie mógł uruchomić walidatora OpenSpec” |
-| E11-api-isolation (auth) | PASS | `NEEDS_INFO`: planner odmówił planu, bo decyzja zawierała dwa różne `selected_option_id` (wybór kontrolera OPT-C obok rekomendacji reviewera OPT-A) |
+| 1 | spec-author BLOCKED („nie mogę uruchomić walidatora”); planner dostał dwa różne `selected_option_id` | reguły werdyktu spec-author; jedna spójna decyzja przekazywana dalej |
+| 1 | ~1/3 wywołań analitycznych powtarzanych, bo `payload` miał dodatkowe/źle typowane pola | CLI dostaje dokładny schemat `payload` danego skilla (`envelope_json_schema(kind)`); zero napraw formatu w przebiegach 2–5 |
+| 1 | każda runda CHANGES ze specyfikacji od nowa szkicowała i wybierała warianty; ewaluator dokładał nowe przypadki brzegowe, 3 rundy bez buildu | CHANGES przy wykonalnym podejściu poprawia tylko spec (`AI_SPEC_EVALUATION → OPTION_SELECTED`); blokują tylko braki względem jawnej prośby lub kontroli wymaganych ryzykiem, reszta idzie do buildera jako `spec_advisories`; od przebiegu 2 spec przechodzi w 1. rundzie |
+| 2 | CHANGES z przeglądu dekompozycji wracał do wariantów i specyfikacji; wywołania wisiały do limitu 900 s | nowy plan bez ruszania specyfikacji (`AI_DECOMPOSITION_REVIEW → DECOMPOSE`); watchdog bezczynności strumienia (`agent_stall_seconds`) i odzysk wyniku już zatwierdzonego przez CLI |
+| 3 | planner NEEDS_INFO, bo nie dostał wyniku oceny specyfikacji | `spec_evaluation` w wejściach plannera |
+| 4 | E11 rozbity na 7 tasków (taski samych testów, pusty task E2E); builder pomijał testy, bo `file_scope` nie obejmował `tests/` | najmniej tasków w limicie czasu; każdy task ma własne testy; pusty `file_scope` to problem planu; E2E robi etap FEATURE_ACCEPTANCE |
+| 5 | integracja i akceptacja zwracały BLOCKED „brak danych” (mapa akceptacji, `candidate_tree_sha`, lista checków, „środowisko”), a kontroler robił z tego rebuild aż do wyczerpania prób; security-review blokował na modelu zaufania zadanym przez samą prośbę | wspólny `_verification_context` (kryteria, wymagane checki, drzewo, środowisko `local-checkout`); BLOCKED/UNKNOWN ewaluatora: jedna powtórka, potem NEEDS_HUMAN, bez rebuildu; security-review kieruje spór o model zaufania do analizy (`error_class: spec`) |
+
+**Poprawek po przebiegu 5 nie zweryfikowano live.** Przebieg 6 nie był uruchomiony.
 
 Wnioski:
-- Na tym pilotażu pełna fabryka była gorsza od pojedynczego agenta. Kosztowała ~17× więcej i nie dostarczyła wyniku.
-- Oba zatrzymania to błędy integracji kontrolera ze skillami, nie ocena modelu. Fabryka jednak nie zaakceptowała niczego błędnego: 0 fałszywych akceptacji.
-- Oba błędy naprawiono po pilotażu i pokryto testem regresji (`test_decision_passed_downstream_has_a_single_consistent_choice`, poprawione reguły werdyktu w `factory-spec-author`). **Pilotażu nie powtórzono po poprawkach**, więc powyższe liczby opisują kod sprzed nich.
-- n=2, po jednej próbie. To pilotaż, nie statystyka. Nie wynika z niego ani przewaga, ani „optymalność” fabryki. Zgodnie z S9 (Google Research) dla małych, sekwencyjnych zadań koordynacja wielu ról może po prostu nie opłacać się względem silnego pojedynczego agenta. Uczciwe porównanie wymaga zadań, w których dekompozycja i niezależna ocena mają znaczenie, oraz kilku prób na zadanie.
+- W przebiegach 4 i 5 kod wytworzony przez fabrykę przechodzi ukryte golden tests w obu zadaniach (2/2), tak jak u pojedynczego agenta. Fabryka nadal nie akceptuje go sama: 2 fałszywe odrzucenia, 0 fałszywych akceptacji we wszystkich przebiegach.
+- Fabryka jest 25–30× droższa i ~25× wolniejsza od pojedynczego agenta na tych zadaniach (przebieg 5: $6–7.5 i 8–11 min na zadanie wobec $0.25 i 25 s).
+- Pozostałe odrzucenia w przebiegu 5 wynikały z braków w kontrakcie wejść ewaluatorów, nie z jakości kodu. Poprawiono je, ale nie zmierzono.
+- n=2, po jednej próbie. To pilotaż, nie statystyka. Te dwa zadania są małe i sekwencyjne, a w takich zadaniach koordynacja wielu ról nie musi się opłacać (S9). Uczciwe porównanie wymaga zadań, w których dekompozycja i niezależna ocena mają znaczenie, oraz kilku prób na zadanie.
 
 Ablacji pojedynczego etapu nie przeprowadzono. Status: **NOT_RUN**. Współbieżność: zmierzony profil to 1 job. 2 i 3 joby nie były mierzone (**NOT_RUN**).
 

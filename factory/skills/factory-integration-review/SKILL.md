@@ -26,6 +26,12 @@ opinion: missing or pending required checks are never success.
 - Critical scenario IDs from `acceptance-map.yaml` and their evidence on this candidate.
 - Integration rebuild counter (max 2 per feature).
 
+All of these arrive in `<inputs>`: `candidate_sha`/`candidate_tree_sha`, `gate` (the
+trusted runner's results for this candidate), `required_checks` (policy list),
+`acceptance_criteria` (the critical scenarios) and `diff_vs_base`. A criterion is
+evidenced by the gate's passing tests that exercise it; read them in the working
+directory. Do not return `BLOCKED`/`UNKNOWN` for an input that is present there.
+
 ## Procedure
 
 1. Confirm that every result you read refers to `candidate_tree_sha`; results from
