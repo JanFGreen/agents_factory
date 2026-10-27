@@ -42,6 +42,25 @@ behavior); you do not re-verify business logic.
    and the evidence ID in `problem`. Severity by user impact: a flow that cannot be
    completed by keyboard or on mobile is blocking.
 
+## Environment without a browser (`environment.kind: "local-checkout"`)
+
+The controller states the environment in `<inputs>`. When it is `local-checkout`, no browser,
+screenshot tool or served app exists for you; that is the environment, not a defect of the
+candidate, so it is never by itself a reason for `BLOCKED` or `UNKNOWN`.
+
+- Judge from the code and the component tests (rendered with Testing Library) in the checkout:
+  tokens vs. ad-hoc styles, roles and accessible labels, touch-target sizes in styles, every UI
+  state reachable in code (loading/empty/error/success), keyboard handlers, consistency with
+  existing components.
+- Entries that need a real render (viewport screenshots, measured contrast, visible focus,
+  layout shift) are `NOT_RUN` with the reason "local-checkout: not rendered". They do not block.
+- A defect you can show from code or tests is a finding as usual (blocking when a flow cannot be
+  completed, e.g. no keyboard path or a control without a label).
+- Risks you could only confirm by rendering are non-blocking findings (`severity: low|medium`),
+  so the builder still sees them.
+- Verdict: `PASS` when there is no `FAIL` from code/test evidence and no open blocking finding;
+  `CHANGES` when there is. Say in `summary` that the review was static.
+
 ## Output
 
 Envelope per contract, `kind: "ui-review"`. Payload:
@@ -59,16 +78,17 @@ Envelope per contract, `kind: "ui-review"`. Payload:
 ```
 
 - Values in `states` and `a11y`: `PASS | FAIL | NOT_APPLICABLE | NOT_RUN`.
-- `PASS`: no `FAIL` and no `NOT_RUN` in required entries; no open blocking finding.
+- `PASS`: no `FAIL` and no `NOT_RUN` in required entries (except render-only entries in a
+  `local-checkout` environment, see above); no open blocking finding.
 - `CHANGES`: at least one `FAIL` with a finding and evidence.
-- `BLOCKED`: browser tooling or environment unavailable to the reviewer.
+- `BLOCKED`: the environment the controller named (with a browser) is unavailable to the reviewer.
 - `UNKNOWN`: screenshots cannot be tied to the reviewed candidate.
 
 ## Limits
 
 - Review only; never edit code, styles, snapshots or baseline images.
-- Do not judge by the diff alone when the environment is available; do not
-  approve a screen you did not render.
+- Do not judge by the diff alone when a rendering environment is available. Without one
+  (`local-checkout`), judge the code and tests and mark render-only checks `NOT_RUN`.
 - Do not request redesigns beyond the scope of the change; pre-existing problems
   outside the touched screens are `low`, non-blocking notes.
 - Do not change the viewport set or a11y requirements; they come from policy.
