@@ -169,6 +169,12 @@ class ClaudeRuntime:
         if result is None:
             if self._alive(handle):
                 return RunSnapshot("running", model_id=model_id, events_seen=len(events))
+            delivered = _delivered_structured_output(events)
+            if delivered is not None:
+                # The CLI accepted the schema-validated output but the stream stalled before its result
+                # event. The controller re-validates it; the cost is unknown (settled at the reservation).
+                return RunSnapshot("succeeded", output_text=f"```json\n{json.dumps(delivered)}\n```", structured=delivered,
+                                   model_id=model_id, events_seen=len(events))
             stderr = Path(handle.meta.get("stderr", "")).read_text(errors="replace")[-2000:] if handle.meta.get("stderr") else ""
             return RunSnapshot("failed", model_id=model_id, events_seen=len(events), error=f"exited without result event: {stderr}")
         usage = result.get("usage") or {}
@@ -213,3 +219,24 @@ class ClaudeRuntime:
                 pass
         stopped = not self._alive(handle)
         return CancelResult(stopped, "process group terminated" if stopped else "process still alive")
+
+
+def _delivered_structured_output(events: list[dict]) -> dict | None:
+    """The StructuredOutput tool input, but only once the CLI confirmed it ("provided successfully")."""
+    calls: dict[str, dict] = {}
+    for event in events:
+        content = (event.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if event.get("type") == "assistant" and block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
+                if isinstance(block.get("input"), dict):
+                    calls[block.get("id")] = block["input"]
+            elif event.get("type") == "user" and block.get("type") == "tool_result" and block.get("tool_use_id") in calls:
+                text = block.get("content")
+                text = text if isinstance(text, str) else json.dumps(text)
+                if not block.get("is_error") and "provided successfully" in text:
+                    return calls[block["tool_use_id"]]
+    return None

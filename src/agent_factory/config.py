@@ -227,6 +227,7 @@ class Execution(Strict):
     heartbeat_seconds: int
     command_timeout_seconds: int
     reviewer_timeout_seconds: int
+    agent_stall_seconds: int = Field(default=300, ge=30)  # no new runtime event for this long => stalled run
     job_deadline_minutes: int
 
 

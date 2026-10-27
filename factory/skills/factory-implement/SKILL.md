@@ -25,6 +25,8 @@ controller decides. You never approve, merge or close findings.
 - Open findings addressed to this task from previous attempts (by ID), and the
   attempt counter (`attempt_id`, attempts used for this task and for the feature).
 - Repository instructions (`AGENTS.md`, `CLAUDE.md`) and repo-map commands.
+- `spec_advisories`: non-blocking spec findings (unrequested edge cases). Handle them
+  when it is cheap and inside `file_scope`; never widen scope or change requested behavior for them.
 
 ## Procedure
 

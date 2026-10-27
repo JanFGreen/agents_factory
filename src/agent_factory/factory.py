@@ -330,7 +330,7 @@ class Factory:
             job_id=job_id, attempt_id=attempt_id, role=role, skill=skill, prompt=prompt, system_append=system_append,
             cwd=worktree, model=binding.model, tools=binding.tools if writable else [t for t in binding.tools if t in READ_ONLY_TOOLS + ["Bash"]],
             timeout_seconds=self.cfg.factory.execution.reviewer_timeout_seconds, session_id=str(uuid.uuid4()),
-            effort=binding.effort, max_turns=binding.max_turns, json_schema=envelope_json_schema(),
+            effort=binding.effort, max_turns=binding.max_turns, json_schema=envelope_json_schema(skill.removeprefix("factory-")),
             max_budget_usd=max_budget, sandbox_policy=policy, lease_epoch=lease.epoch,
         )
         with self.store.tx() as conn:
@@ -394,14 +394,25 @@ class Factory:
             )
         deadline = time.time() + request.timeout_seconds
         last_beat = time.time()
+        stall_after = self.cfg.factory.execution.agent_stall_seconds
+        seen, last_progress = -1, time.time()
         while True:
             snapshot = await self.runtime.poll(handle)
             if snapshot.state not in ("queued", "running", "waiting"):
                 return snapshot, handle
-            if time.time() > deadline:
+            if snapshot.events_seen != seen:
+                seen, last_progress = snapshot.events_seen, time.time()
+            stalled = time.time() - last_progress > stall_after
+            if time.time() > deadline or stalled:
+                # A stalled CLI stream never sends its result event; stop it, then let the runtime
+                # salvage an already-delivered structured output or report a retryable failure.
                 result = await self.runtime.cancel(handle)
+                final = await self.runtime.poll(handle)
+                if final.state == "succeeded":
+                    return final, handle
                 snapshot.state = "failed"
-                snapshot.error = f"timeout after {request.timeout_seconds}s; cancel: {result.detail}"
+                why = f"stalled: no runtime event for {stall_after}s" if stalled else f"timeout after {request.timeout_seconds}s"
+                snapshot.error = f"{why}; cancel: {result.detail}"
                 return snapshot, handle
             if time.time() - last_beat > self.cfg.factory.execution.heartbeat_seconds:
                 lease = heartbeat(self.store, lease, self.cfg.factory.execution.lease_ttl_seconds)
@@ -473,8 +484,14 @@ class Factory:
     def _open_round(self, job_id: str) -> analysis.RoundState:
         return analysis.start_round(self.store, job_id)
 
-    def _close_round_and_continue(self, job_id: str, outcome: str, findings: list[str]) -> None:
-        """End the round. PASS proceeds; otherwise use the next round or stop at the limit."""
+    def _close_round_and_continue(self, job_id: str, outcome: str, findings: list[str], *, retry_from: S | None = None) -> None:
+        """End the round. PASS proceeds; otherwise use the next round or stop at the limit.
+
+        ``retry_from``: the next round restarts at the stage that was actually rejected and keeps
+        the still-valid earlier results: OPTION_SELECTED re-authors the spec against the same
+        decision, DECOMPOSE re-plans against the same accepted spec. Without it the round
+        restarts from options. The round still counts against the shared limit.
+        """
         progress = analysis.end_round(self.store, job_id, outcome, findings)
         if outcome == "PASS":
             return
@@ -485,6 +502,10 @@ class Factory:
         if not progress and no_progress >= self.cfg.workflow.analysis.max_consecutive_rounds_without_progress:
             raise analysis.AnalysisLimitReached(f"{no_progress} consecutive rounds without progress; open findings: {findings}")
         path = self._job(job_id)["path"]
+        if retry_from is not None and path != "trivial" and self._ctx(job_id).get("decision_digest"):
+            self._open_round(job_id)
+            self.controller.transition(job_id, retry_from, f"round {outcome} (retry from {retry_from}): {findings[:3]}")
+            return
         self.controller.transition(job_id, S.MICRO_SPEC if path == "trivial" else S.ANALYSIS_ROUND, f"round {outcome}: {findings[:3]}")
 
     def _step_analysis_round(self, job_id: str) -> None:
@@ -613,6 +634,7 @@ class Factory:
         })
         problems = self.spec_structure_problems(spec, feature)
         verdict = res.envelope.verdict
+        dims: dict[str, str] = {}
         if res.payload is not None:
             dims = res.payload.dimensions
             missing = [d for d in self.cfg.workflow.spec_evaluation.mandatory_dimensions if dims.get(d) != "PASS"]
@@ -630,6 +652,8 @@ class Factory:
                      producer=self._agent_producer(res, "factory-spec-evaluate"), findings=findings)
         self._export_analysis(job_id, "spec-evaluation.json", {"verdict": verdict, **payload})
         if verdict == "PASS":
+            # Non-blocking findings are not lost: they travel to the builder and reviewers as advisories.
+            self._set_ctx(job_id, spec_advisories=[f["problem"] for f in findings if not f["blocking"] and f["status"] == "open"])
             if self._job(job_id)["path"] == "trivial":
                 analysis.end_round(self.store, job_id, "PASS", [])
                 self._create_single_task(job_id, spec)
@@ -640,7 +664,7 @@ class Factory:
         if verdict in ("BLOCKED", "UNKNOWN") and not open_items:
             raise StageBlocked(S.NEEDS_HUMAN, f"spec evaluation {verdict}: {res.envelope.summary}")
         self._set_ctx(job_id, analysis_findings=open_items)
-        self._close_round_and_continue(job_id, "CHANGES", open_items)
+        self._close_round_and_continue(job_id, "CHANGES", open_items, retry_from=S.OPTION_SELECTED if dims.get("feasibility") == "PASS" else None)
 
     def _create_single_task(self, job_id: str, spec: SpecPayload) -> None:
         task = TaskSpec(
@@ -673,7 +697,10 @@ class Factory:
         ctx = self._ctx(job_id)
         res = self.call_agent(job_id, "factory-plan", {
             "feature": self._feature(job_id), "spec": ctx["spec"], "decision": ctx.get("decision"),
-            "previous_findings": ctx.get("analysis_findings", []), "limits": self.cfg.workflow.decomposition.model_dump(),
+            # the guard into DECOMPOSE already required a current spec PASS; state it so the planner need not guess
+            "spec_evaluation": {"verdict": "PASS", "spec_digest": ctx.get("spec_digest"), "advisories": ctx.get("spec_advisories", [])},
+            "previous_plan": ctx.get("plan"), "previous_findings": ctx.get("analysis_findings", []),
+            "limits": self.cfg.workflow.decomposition.model_dump(),
             "repo_map": self._repo_map(job_id),
         })
         if res.payload is None:
@@ -718,7 +745,7 @@ class Factory:
         if not open_items:
             raise StageBlocked(S.NEEDS_HUMAN, f"decomposition review {verdict}: {res.envelope.summary}")
         self._set_ctx(job_id, analysis_findings=open_items)
-        self._close_round_and_continue(job_id, "CHANGES", open_items)
+        self._close_round_and_continue(job_id, "CHANGES", open_items, retry_from=S.DECOMPOSE)
 
     def _export_analysis(self, job_id: str, name: str, content: dict) -> None:
         """Write a read-only export into the change dir. Exports are never read back as evidence."""
@@ -827,6 +854,7 @@ class Factory:
             "task": json.loads(task["spec_json"]), "spec": ctx.get("spec"), "feature_goal": self._feature(job_id)["goal"],
             "open_findings": open_findings, "last_failure": ctx.get("last_failure", {}).get(task_id),
             "root_cause": root_cause, "human_feedback": ctx.get("human_feedback"),
+            "spec_advisories": ctx.get("spec_advisories", []),
         }, task_id=task_id, writable=True, purpose="build")
         sha = WorkspaceManager.commit_all(wt, f"factory: {task_id} attempt {task['attempts'] + 1}")
         self._sync_head(job_id)
@@ -961,6 +989,7 @@ class Factory:
                 "task": task, "spec": ctx.get("spec"), "diff": diff_text[:60000], "head_sha": frozen_head,
                 "gate_evidence": gate.payload if gate else None, "risk": self._job(job_id)["risk"],
                 "security_depth": ctx.get("security_depth"), "surfaces": ctx.get("surfaces"),
+                "spec_advisories": ctx.get("spec_advisories", []),
             }, task_id=task_id, purpose="review")
             if WorkspaceManager.head(wt) != frozen_head or git(wt, "status", "--porcelain", "--", ".", *GENERATED_EXCLUDES):
                 raise StageBlocked(S.NEEDS_HUMAN, "worktree changed while reviewers were running (reviewers are read-only)")

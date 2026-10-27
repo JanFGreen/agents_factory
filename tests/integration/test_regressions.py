@@ -164,3 +164,101 @@ def test_decision_passed_downstream_has_a_single_consistent_choice(make_env):
     env.factory.run(job)
     decision = env.store.job_context(job)["decision"]
     assert decision["selected_option_id"] == decision["options"]["selected_option_id"] == decision["selection"]["selected_option_id"] == "OPT-C"
+
+
+def test_spec_changes_revise_the_spec_without_redrafting_options(make_env):
+    """Eval finding: every spec CHANGES re-ran options draft and selection, burning the 3 analysis rounds before any build."""
+    from ..conftest import spec_eval_reply
+    advisory = FakeReply(envelope("spec-evaluate", "PASS", payload={
+        "dimensions": {d: "PASS" for d in ("intent_coverage", "consistency", "testability", "feasibility", "risk_controls")},
+        "counterexample": "remaining gap (legacy duplicate ids) is outside the request", "uncovered_requirements": [],
+    }, findings=[{"id": "SE-2", "severity": "low", "blocking": False, "problem": "legacy duplicate ids are not handled"}]))
+    gap = spec_eval_reply("CHANGES")
+    gap.envelope["payload"]["dimensions"]["feasibility"] = "PASS"
+    env = make_env("standard", responders={"factory-spec-evaluate": [gap, advisory],
+                                           "factory-spec-author": [spec_reply(2), spec_reply(2)]})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert env.calls("factory-options-review") == 1 and env.calls("factory-select-option") == 1
+    assert env.calls("factory-spec-author") == 2
+    transitions = [(e["from_state"], e["to_state"]) for e in env.events(job, "state.transition")]
+    assert ("AI_SPEC_EVALUATION", "OPTION_SELECTED") in transitions
+    assert env.store.one("SELECT COUNT(*) FROM analysis_rounds WHERE job_id = ?", (job,))[0] == 2
+    builds = [c for c in env.runtime.calls if c.skill == "factory-implement"]
+    assert all("legacy duplicate ids are not handled" in c.prompt for c in builds)
+
+
+def test_infeasible_spec_goes_back_to_options(make_env):
+    from ..conftest import spec_eval_reply
+    infeasible = spec_eval_reply("CHANGES")
+    infeasible.envelope["payload"]["dimensions"]["feasibility"] = "CHANGES"
+    env = make_env("standard", responders={"factory-spec-evaluate": [infeasible, spec_eval_reply()],
+                                           "factory-spec-author": [spec_reply(2), spec_reply(2)]})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert env.calls("factory-options-review") == 2
+
+
+def test_runtime_gets_the_exact_payload_schema_for_each_skill(make_env):
+    """Eval finding: with only the envelope schema, a third of analysis calls were re-run for extra/mistyped payload fields."""
+    from agent_factory.schemas import envelope_json_schema
+    schema = envelope_json_schema("spec-author")
+    assert schema["properties"]["kind"]["const"] == "spec-author"
+    spec_def = schema["$defs"]["SpecPayload"]
+    assert spec_def["additionalProperties"] is False and "change_id" not in spec_def["properties"]
+    env = make_env("trivial")
+    job = env.submit()
+    env.factory.run(job)
+    for call in env.runtime.calls:
+        assert call.json_schema["properties"]["kind"]["const"] == call.skill.removeprefix("factory-")
+
+
+def test_decomposition_changes_replan_without_redoing_spec_or_options(make_env):
+    """Eval finding: a plan defect (tests scheduled in a later task) restarted options, selection and spec."""
+    from ..conftest import decomposition_reply
+    env = make_env("standard", responders={"factory-decomposition-review": [decomposition_reply("CHANGES"), decomposition_reply()]})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert env.calls("factory-plan") == 2
+    assert env.calls("factory-options-review") == env.calls("factory-spec-author") == env.calls("factory-spec-evaluate") == 1
+    transitions = [(e["from_state"], e["to_state"]) for e in env.events(job, "state.transition")]
+    assert ("AI_DECOMPOSITION_REVIEW", "DECOMPOSE") in transitions
+    replan = [c for c in env.runtime.calls if c.skill == "factory-plan"][1]
+    assert "previous_plan" in replan.prompt and "cycle" in replan.prompt
+
+
+def test_stalled_agent_stream_is_stopped_and_retried(make_env, monkeypatch):
+    """Eval finding: CLI streams stalled with no result event and were only stopped by the 900 s timeout."""
+    from agent_factory.adapters.protocol import CancelResult, RunSnapshot
+    env = make_env("trivial")
+    env.cfg.factory.execution.__dict__["agent_stall_seconds"] = 0
+    real_poll = env.runtime.poll
+    stalled: set[str] = set()
+
+    async def poll(handle):
+        if handle.attempt_id in stalled:
+            return RunSnapshot("failed", events_seen=1, error="killed")  # stopped, nothing salvageable
+        if not stalled:
+            return RunSnapshot("running", events_seen=1)  # first run: stream never advances
+        return await real_poll(handle)
+
+    async def cancel(handle):
+        stalled.add(handle.attempt_id)
+        return CancelResult(True, "stopped")
+
+    monkeypatch.setattr(env.runtime, "poll", poll)
+    monkeypatch.setattr(env.runtime, "cancel", cancel)
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert len(stalled) == 1
+    assert env.calls("factory-intake") == 2
+
+
+def test_planner_receives_the_current_spec_evaluation(make_env):
+    """Eval finding: the planner returned NEEDS_INFO because the spec-evaluation PASS was not in its inputs."""
+    env = make_env("standard")
+    job = env.submit("Add exclamation greeting and farewell")
+    env.factory.run(job)
+    plan_call = next(c for c in env.runtime.calls if c.skill == "factory-plan")
+    spec_digest = env.store.job_context(job)["spec_digest"]
+    assert '"spec_evaluation"' in plan_call.prompt and spec_digest in plan_call.prompt.split("<inputs>")[1]

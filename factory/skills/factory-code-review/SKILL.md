@@ -23,6 +23,7 @@ complexity than the classification assumed.
   spec scenarios for those requirements; `design.md` contracts when present.
 - Classification of the feature (`complexity_path`, `risk`) and repo-map conventions.
 - Builder handoff (claims to check) and open finding IDs from earlier attempts.
+- `spec_advisories`: non-blocking spec findings. Not handling one is never blocking by itself.
 
 ## Procedure
 

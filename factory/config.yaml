@@ -11,6 +11,7 @@ execution:
   heartbeat_seconds: 20
   command_timeout_seconds: 600
   reviewer_timeout_seconds: 900
+  agent_stall_seconds: 300            # brak nowych zdarzeń strumienia CLI => przerwij i ponów
   job_deadline_minutes: 120
 attempts:
   intake: 2

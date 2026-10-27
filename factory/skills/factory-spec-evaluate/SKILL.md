@@ -36,13 +36,31 @@ current acceptance criteria. If it reveals a material gap, the verdict is CHANGE
    Every `CHANGES` dimension has at least one finding with location and evidence.
 4. Write the counterexample: one concrete wrong implementation (e.g. "filter applied
    client-side to the first page only") and state whether current criteria reject it.
-   If they do not and the gap matters, add a blocking finding.
+   If they do not and it violates an explicit intent or constraint of the original
+   request (or a control the risk level mandates), add a blocking finding. A gap that
+   only concerns behavior the request does not ask for is non-blocking (see "What blocks").
 5. List `uncovered_requirements`: intents or requirements without an observable criterion.
 6. Check hidden scope reduction: an intent moved to `future-needs.md` as
    `hypothetical`/`committed_next`, or a criterion weaker than the request, is a blocking finding.
 7. Rounds 2-3: verify each previous finding is resolved (set `status: "fixed"` with
-   evidence) or still `open`. A reworded but unchanged problem is not progress.
+   evidence) or still `open`. A reworded but unchanged problem is not progress. A new
+   blocking finding in a later round is allowed only for a regression the revision
+   introduced or an explicit intent that is still missing; new edge cases are non-blocking.
 8. Trivial path: short mode (rubric section "Trivial"), still all five dimensions.
+
+## What blocks
+
+The spec is a contract for *this request*, not a catalogue of every possible hardening.
+
+- Blocking (`blocking: true`, dimension `CHANGES`): an explicit intent, constraint or
+  user criterion of the original request is missing, contradicted, weakened or not
+  observable; the approach is infeasible in this repo; or the risk level mandates a
+  control that is absent (e.g. per-user data without an isolation criterion).
+- Non-blocking (`blocking: false`, dimension stays `PASS`): edge cases and hardening the
+  request does not mention (legacy/corrupt data, concurrency, extra validation, nicer
+  errors), style and wording. The controller forwards them to the builder and the
+  reviewers as advisories, so they are not lost; they just do not stop the build.
+- A dimension is `CHANGES` only when it has at least one blocking finding.
 
 ## Output
 

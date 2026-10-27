@@ -27,8 +27,11 @@ the micro-spec).
 
 ## Procedure
 
-1. Verify inputs are current: `decision.json` and `spec-evaluation.json` reference the
-   spec digest you read. Mismatch => `UNKNOWN`, do not plan on stale input.
+1. Verify inputs are current: `inputs.spec_evaluation.spec_digest` equals the snapshot
+   `spec_digest`. Mismatch => `UNKNOWN`, do not plan on stale input. The decision and the
+   spec-evaluation PASS arrive in `<inputs>` (`decision`, `spec_evaluation`), not as files.
+   If the spec itself looks wrong (e.g. a requirement that makes the tests impossible),
+   still plan the closest faithful DAG and add a non-blocking finding; do not stop.
 2. Design for the selected option only. If it proves unworkable, return `CHANGES`
    with a finding routed to option selection; never switch option silently.
 3. Identify shared contracts (API shape, schema, events, config keys) and make each

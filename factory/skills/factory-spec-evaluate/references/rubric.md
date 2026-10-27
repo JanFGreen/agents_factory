@@ -20,12 +20,20 @@ Write the **simplest wrong implementation that would pass the current criteria**
 - Not acceptable: "None found" without trying; a counterexample that violates an
   explicit criterion (it would not pass, so it proves nothing).
 
-If the counterexample passes the criteria and the gap matters, verdict is CHANGES.
+If the counterexample passes the criteria and violates an explicit intent or constraint
+of the request (or a risk-mandated control), verdict is CHANGES. If it only exploits
+behavior the request does not specify, record a non-blocking finding and say in
+`counterexample` that the remaining gap is outside the request.
 
 ## Verdict rules
 
-- PASS = 5 × PASS, counterexample rejected, no uncovered requirements, no open blocking finding.
+- PASS = 5 × PASS, counterexample rejected (or only outside the request), no uncovered
+  requirements, no open blocking finding.
 - Style issues are non-blocking (`severity: low`, `blocking: false`).
+- Unrequested edge cases and hardening are non-blocking (`severity: low|medium`); they
+  reach the builder as advisories. A dimension is CHANGES only with a blocking finding.
+- Later rounds: new blocking findings only for regressions introduced by the revision or
+  explicit intents still missing. Do not move the goalposts between rounds.
 - Findings keep IDs across rounds; resolved ones get `status: "fixed"` with the evidence in `problem`.
 - Two rounds without new evidence or closed blocking findings is a no-progress signal
   for the controller; say so in `summary`.

@@ -105,6 +105,8 @@ class OptionRatings(Model):
 class Option(Model):
     option_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,40}$")
     title: str = ""
+    description: str = ""
+    risks: list[str] = []
     feasible: bool
     infeasible_reasons: list[str] = []
     ratings: OptionRatings | None = None
@@ -241,5 +243,25 @@ def parse_envelope(raw: dict[str, Any] | str, expected_kind: str) -> tuple[Agent
     return envelope, payload
 
 
-def envelope_json_schema() -> dict[str, Any]:
-    return AgentEnvelope.model_json_schema()
+def envelope_json_schema(kind: str | None = None) -> dict[str, Any]:
+    """Envelope schema; with ``kind``, ``kind`` is pinned and ``payload`` carries that skill's exact schema.
+
+    Handing the runtime the full payload schema lets it constrain the output up front instead
+    of the controller rejecting extra or mistyped fields after the fact (a repair round-trip).
+    BLOCKED/UNKNOWN envelopes may still carry an empty payload.
+    """
+    schema = AgentEnvelope.model_json_schema()
+    if kind is None:
+        return schema
+    schema["properties"]["kind"] = {"const": kind, "type": "string"}
+    payload_model = PAYLOADS.get(kind)
+    if payload_model is not None:
+        payload_schema = payload_model.model_json_schema(ref_template="#/$defs/{model}")
+        defs = schema.setdefault("$defs", {})
+        defs.update(payload_schema.pop("$defs", {}))
+        defs[payload_model.__name__] = payload_schema
+        schema["properties"]["payload"] = {"anyOf": [
+            {"$ref": f"#/$defs/{payload_model.__name__}"},
+            {"type": "object", "maxProperties": 0},
+        ]}
+    return schema
