@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -166,6 +167,14 @@ class ClaudeRuntime:
             if event.get("type") == "system" and event.get("subtype") == "init":
                 model_id = event.get("model")
         result = next((e for e in reversed(events) if e.get("type") == "result"), None)
+        fatal = _fatal_api_error(events)
+        if fatal is not None:
+            # The CLI keeps re-prompting itself after a rejected request (old CLI for the model,
+            # auth, bad request) until its own timeout; stop it now, a retry would fail the same way.
+            if result is None and self._alive(handle):
+                await self.cancel(handle)
+            return RunSnapshot("failed", model_id=model_id, events_seen=len(events), error=f"API rejected the request: {fatal}",
+                               retryable=False)
         if result is None:
             if self._alive(handle):
                 return RunSnapshot("running", model_id=model_id, events_seen=len(events))
@@ -219,6 +228,22 @@ class ClaudeRuntime:
                 pass
         stopped = not self._alive(handle)
         return CancelResult(stopped, "process group terminated" if stopped else "process still alive")
+
+
+_FATAL_API_ERROR = re.compile(r"^API Error: (400|401|403|404)\b")
+
+
+def _fatal_api_error(events: list[dict]) -> str | None:
+    """A non-retryable API error the CLI reported as a synthetic assistant message."""
+    for event in events:
+        message = event.get("message") or {}
+        if event.get("type") != "assistant" or message.get("model") != "<synthetic>":
+            continue
+        for block in message.get("content") or []:
+            text = block.get("text", "") if isinstance(block, dict) else ""
+            if _FATAL_API_ERROR.match(text):
+                return text[:500]
+    return None
 
 
 def _delivered_structured_output(events: list[dict]) -> dict | None:

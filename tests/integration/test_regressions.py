@@ -254,6 +254,22 @@ def test_stalled_agent_stream_is_stopped_and_retried(make_env, monkeypatch):
     assert env.calls("factory-intake") == 2
 
 
+def test_non_retryable_runtime_failure_blocks_without_retrying(make_env, monkeypatch):
+    """Live finding: an API rejection (outdated CLI for the model) was retried; each try took 10 minutes."""
+    from agent_factory.adapters.protocol import RunSnapshot
+    env = make_env("trivial")
+
+    async def poll(handle):
+        return RunSnapshot("failed", events_seen=3, error="API rejected the request: version 2.1.280 or newer is required",
+                           retryable=False)
+
+    monkeypatch.setattr(env.runtime, "poll", poll)
+    job = env.submit()
+    assert env.factory.run(job) == "BLOCKED_ENV"
+    assert env.calls("factory-intake") == 1
+    assert "2.1.280 or newer" in env.store.job(job)["blocked_reason"]
+
+
 def test_planner_receives_the_current_spec_evaluation(make_env):
     """Eval finding: the planner returned NEEDS_INFO because the spec-evaluation PASS was not in its inputs."""
     env = make_env("standard")

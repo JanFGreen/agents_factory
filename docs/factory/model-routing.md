@@ -74,3 +74,13 @@ Skutki dla trwających jobów:
 - Ponieważ `policy_digest` obejmuje całą treść `config.yaml`, zmiana modelu unieważnia wszystkie
   wyniki zależne od `policy_digest` w trwających jobach — oceny muszą powstać ponownie (patrz znany
   problem w `state-machine.md`). Sam `model_id` nie jest polem tożsamości wyniku.
+
+## Odrzucone żądania API (fail fast)
+
+Gdy CLI dostaje od API trwały błąd (`API Error: 400/401/403/404`, np. „Claude Code 2.1.74 does not
+support this model; version 2.1.280 or newer is required”), raportuje go jako syntetyczną wiadomość
+asystenta i potrafi kręcić się w pętli hooka StructuredOutput aż do własnego limitu (live: 1756 tur,
+10 min, na końcu mylące „Prompt is too long”). `ClaudeRuntime.poll` wykrywa taki błąd w strumieniu,
+przerywa proces i zwraca `failed` z `retryable=False`; kontroler nie ponawia wywołania i od razu
+przechodzi do `BLOCKED_ENV` z treścią błędu. 429/5xx pozostają błędami przejściowymi. Modele 5.5
+wymagają Claude CLI ≥ 2.1.280 (`claude --version` w `factory doctor`).

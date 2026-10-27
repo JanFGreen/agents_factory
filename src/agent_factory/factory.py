@@ -288,7 +288,7 @@ class Factory:
                 attempt_id=attempt_id, source=f"runtime:{binding.runtime}",
             )
             if snapshot.state != "succeeded":
-                if transient_left > 0 and snapshot.state in ("failed", "unknown"):
+                if transient_left > 0 and snapshot.state in ("failed", "unknown") and snapshot.retryable:
                     transient_left -= 1
                     time.sleep(min(30.0, (2 ** (2 - transient_left)) * random.uniform(0.05, 0.2)))
                     continue

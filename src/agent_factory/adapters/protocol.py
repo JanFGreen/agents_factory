@@ -73,6 +73,8 @@ class RunSnapshot:
     model_id: str | None = None
     events_seen: int = 0
     error: str | None = None
+    # False when retrying the same call cannot help (e.g. the API rejected the request itself).
+    retryable: bool = True
 
 
 @dataclass
