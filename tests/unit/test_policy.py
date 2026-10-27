@@ -55,6 +55,33 @@ def test_js_and_python_test_files_are_always_in_scope(policy, path):
     assert evaluate_diff([FileDiff(path, "A", "+x")], policy, task_file_scope=["src/domain/"]).ok
 
 
+DEAD = [FileDiff("src/ui/WelcomeScreen.tsx", "D", "-export const W = 1;\n"),
+        FileDiff("src/ui/WelcomeScreen.test.tsx", "D", "-it('renders', () => {\n-  expect(render()).toBeTruthy();\n")]
+
+
+def test_dead_code_may_be_removed_with_its_test_when_the_task_names_it(policy):
+    """Live finding (LearnEnglish F2): the plan said 'remove the placeholder screen and its test', the policy
+    forbade any test deletion, and the task FAILED after 3 attempts."""
+    scope = ["src/ui/WelcomeScreen.tsx", "src/ui/WelcomeScreen.test.tsx", "src/app/index.tsx"]
+    assert evaluate_diff(DEAD, policy, task_file_scope=scope).ok
+
+
+@pytest.mark.parametrize("files,scope", [
+    (DEAD[1:], ["src/ui/WelcomeScreen.tsx", "src/ui/WelcomeScreen.test.tsx"]),  # subject still exists
+    (DEAD, ["src/ui/WelcomeScreen.tsx"]),  # the task does not name the test
+    (DEAD, None),  # no task scope at all
+    ([FileDiff("src/ui/Other.tsx", "D", "-x\n"), DEAD[1]], ["src/ui/"]),  # a different module was removed
+])
+def test_test_deletion_without_its_subject_or_scope_is_still_refused(policy, files, scope):
+    report = evaluate_diff(files, policy, task_file_scope=scope)
+    assert any("test file deleted" in v for v in report.violations)
+
+
+def test_python_test_goes_with_its_module(policy):
+    files = [FileDiff("app/legacy.py", "D", "-x = 1\n"), FileDiff("tests/test_legacy.py", "D", "-def test_x():\n-    assert x\n")]
+    assert evaluate_diff(files, policy, task_file_scope=["app/legacy.py", "tests/test_legacy.py"]).ok
+
+
 def test_af40_local_mode_broker_denies_comments_and_deploy(policy):
     for op in ("github.comment", "github.create_pr", "github.merge", "deploy"):
         with pytest.raises(BrokerDenied):

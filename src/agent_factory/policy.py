@@ -69,6 +69,34 @@ def is_test_file(path: str) -> bool:
     return name.startswith("test_") or name.endswith("_test.py") or bool(_JS_TEST.search(name)) or "/tests/" in f"/{path}"
 
 
+def _test_subject(path: str) -> tuple[str, str] | None:
+    """(directory, stem) of the module a test file covers: ``ui/Card.test.tsx`` -> ("ui", "Card")."""
+    folder, _, name = path.rpartition("/")
+    match = _JS_TEST.search(name)
+    if match:
+        return folder, name[: match.start()]
+    if name.startswith("test_") and name.endswith(".py"):
+        return "", name[len("test_"):-3]
+    return None
+
+
+def _removed_with_its_subject(diff: "FileDiff", files: list["FileDiff"], task_file_scope: list[str] | None) -> bool:
+    """A test may go only together with the code it tests, and only when the task names it in its scope."""
+    if diff.status != "D" or not task_file_scope or not _matches(diff.path, [*task_file_scope, *[f"{s.rstrip('/')}/*" for s in task_file_scope]]):
+        return False
+    subject = _test_subject(diff.path)
+    if subject is None:
+        return False
+    folder, stem = subject
+    for other in files:
+        if other.status != "D" or is_test_file(other.path):
+            continue
+        other_folder, _, other_name = other.path.rpartition("/")
+        if other_name.rsplit(".", 1)[0] == stem and (not folder or other_folder == folder):
+            return True
+    return False
+
+
 def evaluate_diff(
     files: list[FileDiff],
     policy: Policy,
@@ -83,7 +111,9 @@ def evaluate_diff(
         if task_file_scope and not _matches(diff.path, [*task_file_scope, *[f"{s.rstrip('/')}/*" for s in task_file_scope]]):
             if not is_test_file(diff.path):
                 report.violations.append(f"change outside task file_scope: {diff.path}")
-        if is_test_file(diff.path):
+        if is_test_file(diff.path) and _removed_with_its_subject(diff, files, task_file_scope):
+            pass  # dead code removed together with its test (the task's scope names the test)
+        elif is_test_file(diff.path):
             if diff.status == "D":
                 report.violations.append(f"test file deleted: {diff.path}")
             lines = diff.patch.splitlines()
