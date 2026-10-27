@@ -182,8 +182,8 @@ def test_controller_crash_mid_wave_is_recovered_on_the_next_step(make_env):
     assert all(t["attempts"] == 1 for t in _tasks(env, job).values())
 
 
-def test_sequential_by_default(make_env):
-    env = make_env("standard", responders={"factory-plan": plan_reply(INDEPENDENT)})
+def test_one_builder_per_job_builds_sequentially(make_env):
+    env = make_env("standard", responders={"factory-plan": plan_reply(INDEPENDENT)}, **{"execution.max_builders_per_job": 1})
     job = env.submit("Add exclamation greeting and farewell")
     assert _run(env, job) == "READY_TO_MERGE"
     assert not any(e["kind"] == "lanes.started" for e in env.store.events_for(job))
