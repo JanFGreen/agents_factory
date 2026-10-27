@@ -103,6 +103,7 @@ _MAIN: set[tuple[S, S]] = {
     (S.FEATURE_ACCEPTANCE, S.MICRO_SPEC),
     (S.TASK_ACCEPTED, S.BUILD_TASK),
     (S.TASK_ACCEPTED, S.FEATURE_ACCEPTANCE),
+    (S.BUILD_TASK, S.FEATURE_ACCEPTANCE),  # a parallel wave accepted the last tasks
     (S.FEATURE_ACCEPTANCE, S.INTEGRATION),
     (S.FEATURE_ACCEPTANCE, S.BUILD_TASK),
     (S.FEATURE_ACCEPTANCE, S.ANALYSIS_ROUND),
@@ -171,11 +172,14 @@ class Controller:
 
     # --- identity ---------------------------------------------------------------------
 
-    def identity(self, job_id: str, task_id: str | None = None) -> InputIdentity:
+    def identity(self, job_id: str, task_id: str | None = None, worktree: Path | None = None) -> InputIdentity:
+        """Inputs of a result. ``worktree`` is a parallel task lane: its head, never a candidate tree."""
         job = self.store.job(job_id)
         ctx = json.loads(job["context_json"])
         head = base = tree = None
-        if job["worktree"] and Path(job["worktree"]).exists():
+        if worktree is not None:
+            head, base = WorkspaceManager.head(worktree), job["base_sha"]
+        elif job["worktree"] and Path(job["worktree"]).exists():
             head = WorkspaceManager.head(Path(job["worktree"]))
             base = job["base_sha"]
             if ctx.get("candidate") and ctx["candidate"]["sha"] == head:

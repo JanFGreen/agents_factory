@@ -13,6 +13,7 @@ import hmac
 import json
 import os
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -81,7 +82,7 @@ class EvidenceStore:
         path = self.root / rel
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
+            tmp = path.with_name(f"{sha}.{uuid.uuid4().hex}.tmp")  # unique: parallel lanes may write the same content
             tmp.write_bytes(content)
             os.replace(tmp, path)
         artifact_id = new_id("art")

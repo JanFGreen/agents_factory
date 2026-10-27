@@ -34,7 +34,7 @@ Odmowa to wyjątek `TransitionRefused` (CLI: exit 3).
 | `DECOMPOSE` | `AI_DECOMPOSITION_REVIEW` |
 | `AI_DECOMPOSITION_REVIEW` | `TASK_GRAPH_READY`, `ANALYSIS_ROUND` |
 | `SINGLE_TASK_READY`, `TASK_GRAPH_READY` | `BUILD_TASK` |
-| `BUILD_TASK` | `CHECKS` |
+| `BUILD_TASK` | `CHECKS`, `FEATURE_ACCEPTANCE` (fala torów zaakceptowała ostatnie taski) |
 | `CHECKS` | `BUILD_TASK`, `REVIEW`, `ANALYSIS_ROUND` (reklasyfikacja) |
 | `REVIEW` | `BUILD_TASK`, `TASK_ACCEPTED`, `ANALYSIS_ROUND`, `OPTIONS_DRAFT`, `MICRO_SPEC` (trivial), `CHECKS` (nieaktualny gate) |
 | `TASK_ACCEPTED` | `BUILD_TASK`, `FEATURE_ACCEPTANCE` |

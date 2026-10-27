@@ -135,6 +135,29 @@ flowchart TD
   SIDE -.->|cancel| CC([CANCELLED])
 ```
 
+## Równoległe taski w jobie (tory, `lanes.py`)
+
+`execution.max_builders_per_job > 1` włącza fale: gdy job jest w `BUILD_TASK` i gotowych jest ≥ 2
+tasków o rozłącznym zakresie plików (`lanes.scopes_overlap`; ścieżki testów się nie liczą, pusty
+zakres = konflikt), kontroler bierze ich do `max_builders_per_job` w kolejności planu. Każdy task
+dostaje tor: odłączony worktree `worktrees/<job>--<task>` z głowy joba (agenci toru nie widzą
+worktree joba ani innych torów — `default_denied_reads`), własnego buildera, zaufane checki i
+recenzentów; wyniki są podpisane z tożsamością głowy toru (`Controller.identity(..., worktree=)`).
+Tory działają w wątkach (`ThreadPoolExecutor`; `Store` serializuje jedno połączenie SQLite zamkiem).
+
+Po fali kontroler integruje tory po kolei, w kolejności planu, w worktree joba: tor jest
+akceptowany tylko gdy (1) jego podpisane wyniki gate i wszystkich wymaganych review są aktualne dla
+głowy toru i nie ma otwartych blokujących findings, (2) `git merge --no-ff` przechodzi bez konfliktu,
+(3) gdy drzewo po merge różni się od drzewa toru — checki przechodzą na drzewie połączonym.
+Konflikt lub porażka połączonych checków → `REWORK` bez zużycia próby (`task.requeued`), task jest
+przebudowany na nowej głowie. CHANGES/FAIL w torze → zwykłe `REWORK` z findings. Budżet albo
+blokada w torze → próba zwrócona, zaakceptowane tory zostają, job zatrzymuje się w odpowiednim
+stanie. Job przez całą falę jest w `BUILD_TASK`; po fali, która zaakceptowała ostatnie taski,
+przechodzi `BUILD_TASK → FEATURE_ACCEPTANCE` (guard: wszystkie taski `ACCEPTED`). Kontroler zabity
+w trakcie fali: następny krok (`_recover_wave`) zatrzymuje agentów torów, oznacza próby jako
+`abandoned`, przywraca taski do `REWORK` i usuwa tory. Akceptacja feature'a i integracja działają
+jak dotąd na całym kandydacie.
+
 ## Czego nie zaimplementowano (względem blueprintu)
 
 - **Archiwizacja OpenSpec (§6.4, AF-36)**: brak. Kontroler nie wywołuje CLI `openspec` w ogóle
@@ -148,10 +171,11 @@ flowchart TD
 - **Merge queue po stronie serwera**: nieużywana. W trybie `local` atomową kontrolą bazy jest
   `git push --force-with-lease=<base>:<expected>` w `WorkspaceManager.push_to_base`.
 - **Release/deploy**: brak bytu release; `deploy` istnieje tylko w brokerze (`policy.SIDE_EFFECTS`).
-- **Równoległość**: zadania w jobie wykonywane są sekwencyjnie w jednym worktree; `factory run` bez
-  `--job` przetwarza joby po kolei. `max_active_jobs`, `max_test_processes`,
-  `max_integration_candidates`, `command_timeout_seconds`, `job_deadline_minutes` są walidowane, ale
-  nieużywane. Egzekwowany jest tylko slot `agent_process` (`max_agent_processes`).
+- **Równoległość między jobami**: `factory run` bez `--job` przetwarza joby po kolei; `max_active_jobs`,
+  `max_test_processes`, `max_integration_candidates`, `command_timeout_seconds`, `job_deadline_minutes`
+  są walidowane, ale nieużywane. Egzekwowane są slot `agent_process` (`max_agent_processes`) i
+  `max_builders_per_job` (tory poniżej).
+
 - **Skille bez wywołania w orkiestracji**: `factory-repo-map` (kontroler robi `git ls-files`),
   `factory-test-design`, `factory-evidence-audit`, `factory-recover`, `factory-retrospective`,
   `factory-release-verify`. `factory/prompts/*.md` nie są ładowane przez kod — system prompt to

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -259,6 +260,8 @@ class Store:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(path), isolation_level=None, timeout=30, check_same_thread=False)
+        # One connection is shared by the controller's threads (parallel task lanes): every use is serialized.
+        self.lock = threading.RLock()
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=30000")
@@ -273,14 +276,15 @@ class Store:
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
         """Short write transaction (BEGIN IMMEDIATE takes the write lock up front)."""
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield self.conn
-        except BaseException:
-            self.conn.execute("ROLLBACK")
-            raise
-        else:
-            self.conn.execute("COMMIT")
+        with self.lock:
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self.conn
+            except BaseException:
+                self.conn.execute("ROLLBACK")
+                raise
+            else:
+                self.conn.execute("COMMIT")
 
     def migrate(self) -> None:
         self.conn.execute(
@@ -303,10 +307,12 @@ class Store:
     # --- generic helpers ---------------------------------------------------------
 
     def one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
-        return self.conn.execute(sql, params).fetchone()
+        with self.lock:
+            return self.conn.execute(sql, params).fetchone()
 
     def all(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
-        return list(self.conn.execute(sql, params).fetchall())
+        with self.lock:
+            return list(self.conn.execute(sql, params).fetchall())
 
     def event(
         self,

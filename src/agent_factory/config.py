@@ -220,7 +220,7 @@ class SelectionConfig(Strict):
 class Execution(Strict):
     max_active_jobs: int = Field(ge=1)
     max_agent_processes: int = Field(ge=1)
-    max_builders_per_job: Literal[1]
+    max_builders_per_job: int = Field(ge=1, le=8)  # >1: independent ready tasks build in parallel lanes
     max_test_processes: int = Field(ge=1)
     max_integration_candidates: int = Field(ge=1)
     lease_ttl_seconds: int
@@ -229,6 +229,12 @@ class Execution(Strict):
     reviewer_timeout_seconds: int
     agent_stall_seconds: int = Field(default=300, ge=30)  # no new runtime event for this long => stalled run
     job_deadline_minutes: int
+
+    @model_validator(mode="after")
+    def _lanes_fit_agent_slots(self) -> "Execution":
+        if self.max_builders_per_job > self.max_agent_processes:
+            raise ValueError("max_builders_per_job cannot exceed max_agent_processes (each lane runs one agent at a time)")
+        return self
 
 
 class Attempts(Strict):
