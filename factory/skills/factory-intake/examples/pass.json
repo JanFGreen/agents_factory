@@ -26,8 +26,24 @@
       "Do not expose data of other users"
     ],
     "open_questions": [],
+    "decisions": [
+      {
+        "id": "Q-1",
+        "question": "How many operations per history page?",
+        "why": "Sets the page size, the pagination controls and the paging tests.",
+        "options": [
+          "20",
+          "50",
+          "100"
+        ],
+        "proposed": "20, the page size of the existing lists in src/web/lists"
+      }
+    ],
     "future_directions": [
-      {"description": "History export may appear later.", "status": "hypothetical"}
+      {
+        "description": "History export may appear later.",
+        "status": "hypothetical"
+      }
     ]
   }
 }

@@ -41,7 +41,11 @@ features this review is not run; the controller records
    Set `dag_ok` from this check only.
 4. Per leaf: one executor can finish it within budget; inputs/outputs explicit;
    acceptance observable; `verification` names real checks; estimate plausible
-   (45 minutes is a heuristic, not proof of atomicity).
+   (45 minutes is a heuristic, not proof of atomicity). Check the atomicity criteria and the
+   `difficulty` label against `controller_difficulty` (the controller's assessment, which
+   may only raise it): an `easy` leaf without its contract written out (signatures in
+   `outputs`, test cases in `verification`) is a blocking finding; a `hard` leaf must be split
+   unless `difficulty_reasons` says `indivisible:` with a convincing reason.
 5. Conflicts: overlapping `file_scope` between tasks marked `parallel_safe_with`,
    uncontrolled lockfile/API changes, duplicated work.
 6. Vertical integration: API/UI/data joined incrementally, not separate big layers at the end.

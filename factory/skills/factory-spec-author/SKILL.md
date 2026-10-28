@@ -20,7 +20,9 @@ context; nobody approves it manually.
 
 ## Required inputs
 
-- Original request, normalized feature (`factory-intake`) and its revision.
+- Original request, normalized feature (`factory-intake`) and its revision, with
+  `feature.decisions`: settled product decisions (`source`: `human` or `accepted` = the
+  operator's answer, `assumed` = the intake's default in auto mode).
 - Classification facts (path computed by the controller, risk, dimension evidence).
 - `factory-repo-map` result and relevant baseline specs under `openspec/specs/`
   (`openspec list --specs`, `openspec show <spec> --type spec`).
@@ -33,7 +35,12 @@ context; nobody approves it manually.
 1. Confirm digests of the feature revision and previous findings.
 2. Split the request into intents; give each requirement a stable ID (`REQ-1`, ...)
    and keep IDs from earlier rounds. `source` is `original_request`, `constraint`, or
-   `derived_necessary_dependency` (only when another requirement cannot be correct without it).
+   `derived_necessary_dependency` (only when another requirement cannot be correct without it),
+   or `decision:Q-n` for a requirement that implements an answered product decision.
+   Every decision answered by the operator (`human`, `accepted`) is binding like the
+   original request: it maps to a requirement or a constraint and is never contradicted.
+   An `assumed` decision is the default to follow unless the repository shows it is wrong
+   (then say so in a non-blocking finding).
 3. Map every intent to requirement IDs in `intent_map`. An intent without a
    requirement is a defect you must fix before returning.
 4. Write acceptance criteria as observable results with requirement links, including

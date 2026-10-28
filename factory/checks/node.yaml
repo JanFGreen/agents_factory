@@ -22,6 +22,11 @@ checks:
     timeout_seconds: 600
     required: true
     stage: task
+  - name: duplicates                    # EP-4: no new copied block; known clones live in the protected baseline
+    argv: ["{worktree}/node_modules/.bin/jscpd", "--config", ".jscpd.json", "--baseline", ".jscpd-baseline.json", "--fail-on-new-clones"]
+    timeout_seconds: 300
+    required: true
+    stage: task
   - name: web-build
     argv: ["{worktree}/node_modules/.bin/expo", "export", "--platform", "web", "--output-dir", "dist"]
     timeout_seconds: 900

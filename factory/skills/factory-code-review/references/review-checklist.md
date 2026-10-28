@@ -23,11 +23,22 @@ Source: blueprint §7.8, §10.1 (Code reviewer), §11.1, §11.4.
 - [ ] no unplanned lockfile, public API or schema changes
 - [ ] consumers of changed contracts updated or untouched by design
 
-## Maintainability
+## Maintainability (engineering principles, review rules only)
 
 - [ ] follows existing module patterns (repo-map); no parallel mechanism
-- [ ] names reflect domain; dead code removed
+- [ ] EP-2 each touched module still has one responsibility; exports only what callers use
+- [ ] EP-4 no business rule, constant or schema now implemented twice (also when worded differently)
+- [ ] EP-5 no abstraction, option or hook without a current second use
+- [ ] EP-6 no new hidden global/mutable state; time, random and I/O injected
+- [ ] EP-7/EP-8 input parsed at the boundary; errors typed, none swallowed
+- [ ] EP-10 a new variant did not require editing the same switch in several places
+- [ ] EP-11 implementations honour the whole port contract; callers depend on the port
+- [ ] EP-13 no N+1, unbounded query/list or repeated expensive work on a user path
+- [ ] names reflect domain (EP-9); dead code removed
 - [ ] tests live next to the change and implement plan scenarios
+
+Gate-enforced (do not re-report): complexity, function/file size, parameters, nesting,
+copied blocks, layer imports, deprecated APIs, formatting.
 
 ## Reclassification triggers (signal upward only)
 

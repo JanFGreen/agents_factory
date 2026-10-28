@@ -6,6 +6,7 @@ description: Use in controller state REVIEW after the trusted checks for the cur
 # factory-code-review
 
 Follow ../_shared/contract.md
+Follow ../_shared/engineering-principles.md
 
 ## Purpose
 
@@ -33,8 +34,11 @@ complexity than the classification assumed.
    surrounding code needed to understand each change (callers, contracts).
 3. For each requirement: trace the code path for happy, error and boundary cases;
    record the requirement in `requirements_checked` only if you traced it.
-4. Apply `references/review-checklist.md`. Each finding needs `location`, the concrete
-   failing input or scenario in `problem`, and an `expected_fix` (direction, not a patch).
+4. Apply `references/review-checklist.md` and the *review* rules of the engineering
+   principles. Each finding needs `location`, the concrete failing input or scenario in
+   `problem` (for a principle: its ID and the cost it causes), and an `expected_fix`
+   (direction, not a patch). Do not report what the trusted gate enforces (complexity,
+   sizes, copied blocks, layer imports, deprecated APIs, formatting): it already passed.
 5. Scope: changes outside `file_scope`, unrequested features, lockfile/API changes not
    in the task => `scope_creep` entries and findings.
 6. Re-check earlier finding IDs: if fixed with evidence, report them with status

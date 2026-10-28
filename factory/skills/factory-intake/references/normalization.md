@@ -19,6 +19,23 @@ Blueprint §7.1. The controller writes `feature.json`; intake fills the semantic
 `required_fields` (`feature_id`, `goal`, `original_request`, `repo_id`) apply to the
 normalized record, not to what the user had to type.
 
+## Decisions
+
+A decision is a product choice the request leaves open whose answer changes the build.
+The operator answers them in `guided` mode; in `auto` mode the `proposed` answer is assumed.
+
+| Good decision | Not a decision |
+|---|---|
+| "Daily limit of new words: 10 or configurable?" (changes data, UI and rules) | "Which state library?" (technical: the analysis decides from the repo) |
+| "Wrong answer in check mode: move the word to the learn pool or only mark it?" | "Should errors be handled?" (always yes; derive a criterion) |
+| "Who may raise the limits: everyone, or paying users only?" | "Export later?" (future direction, `hypothetical`) |
+
+- Ask in the language of the request; keep the question answerable in one line.
+- `why` names what is built differently; `options` are mutually exclusive when given.
+- `proposed` is a full answer, not "it depends"; prefer the existing product's behaviour,
+  then the safest and simplest choice.
+- Fewer is better: 0 decisions is correct for a fully specified request.
+
 ## Future direction statuses
 
 - `required_now` — needed for the current request to be correct; it is built now.

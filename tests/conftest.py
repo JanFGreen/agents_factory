@@ -62,6 +62,7 @@ def make_factory_dir(tmp_path: Path, **overrides: Any) -> Path:
     cfg = yaml.safe_load((target / "config.yaml").read_text())
     cfg["data_dir"] = str(tmp_path / "data")
     cfg["budget"]["plan_approval"] = "off"  # tests that exercise the approval stop turn it back on
+    cfg["decision_model"]["provider"] = "none"  # tests never call an external decision model
     for dotted, value in overrides.items():
         node = cfg
         *path, last = dotted.split(".")
@@ -211,9 +212,9 @@ class Env:
         self.factory = Factory(self.cfg, self.store, self.runtime, get_sandbox(),
                                merge_handler=LocalMergeHandler(self.cfg.factory.policy), poll_interval=0.01)
 
-    def submit(self, text: str = "Make the greeting end with an exclamation mark.") -> str:
+    def submit(self, text: str = "Make the greeting end with an exclamation mark.", mode: str | None = None) -> str:
         feature = normalize({"original_request": text, "acceptance_criteria": []}, source_kind="cli", repo_id="greeter")
-        return self.factory.submit(feature, self.repo)
+        return self.factory.submit(feature, self.repo, mode=mode)
 
     def state(self, job_id: str) -> str:
         return self.store.job(job_id)["state"]

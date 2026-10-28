@@ -52,7 +52,7 @@ checkout. Node musi być w `PATH` procesu fabryki (np. `nvm use 24`).
 ## Zgłoszenie i uruchomienie
 
 ```sh
-uv run factory submit --file feature.yaml [--repo-id app]   # albo --text "opis"
+uv run factory submit --file feature.yaml [--repo-id app] [--mode guided|auto]   # albo --text "opis"
 uv run factory run --job job-0123456789ab
 uv run factory run [--max-jobs N]                            # aktywne joby po kolei; --queue nic nie zmienia
 ```
@@ -63,6 +63,28 @@ Plik YAML (`features.FeatureFile`, nieznane pola odrzucane): wymagane jest tylko
 hasha treści>`. (`workflow.yaml: feature_input.required_fields` jest walidowane, ale kod go nie
 egzekwuje.) Ponowne `submit` identycznej treści zwraca istniejący aktywny job; zmieniona treść tego
 samego `feature_id` tworzy nową rewizję i nowy job. `--issue` nie jest obsługiwane.
+
+### Tryb specyfikacji: `guided` albo `auto` (`spec`)
+
+Przy `submit` wybierasz, kto rozstrzyga decyzje produktowe, których zgłoszenie nie przesądza
+(limity, domyślne zachowanie, kto co może, co przy błędzie, kierunek wizualny). Bez `--mode` CLI
+pyta w terminalu; bez terminala bierze `spec.default_mode` (domyślnie `guided`).
+
+- `guided`: intake zwraca do `spec.max_decisions` (7) decyzji, każdą z opcjami i proponowaną
+  odpowiedzią. Job staje w `NEEDS_INFO` przed klasyfikacją i analizą (koszt: tylko intake).
+- `auto`: proponowane odpowiedzi są przyjmowane jako założenia (`source: assumed`) i job nie staje.
+
+```sh
+uv run factory status --job <id>                    # decisions: id, pytanie, propozycja, odpowiedź
+uv run factory decide <id>                          # w terminalu: pytanie po pytaniu (Enter = propozycja, numer = opcja)
+uv run factory decide <id> --answer Q-1="tekst" --answer Q-3="..." [--accept-proposed]
+```
+
+Po ostatniej odpowiedzi `decide` wznawia job (`factory run --job <id>`). Odpowiedzi trafiają do
+`feature.decisions` wszystkich kolejnych etapów: odpowiedź człowieka (`human`, `accepted`) jest
+wiążąca jak treść zgłoszenia — spec mapuje ją na wymaganie (`source: decision:Q-n`), a ewaluator
+spec blokuje, gdy jej brakuje lub jest sprzeczna. Założenie z trybu `auto` jest tylko domyślne.
+Guard `COMPLEXITY_ASSESSMENT` odmawia przejścia, dopóki jakaś decyzja czeka na odpowiedź.
 
 `factory run` kończy się na stanie terminalnym, zatrzymanym albo na `READY_TO_MERGE`, gdy
 `merge.enabled: false` (wynik zaakceptowany lokalnie na gałęzi `factory/<job-id>`, bez merge).
@@ -285,3 +307,28 @@ Recenzje tasków idą poziomami (`review.tiers`): CHANGES w pierwszym poziomie (
 UI) pomija drogie product-verify i security-review w tej próbie; uruchomią się, gdy poziom przejdzie.
 Taski jobów o ryzyku z `cheaper_models_for_risk` (domyślnie `low`) mają tańszych recenzentów
 (`cheaper_models`); akceptacja feature'a i integracja zawsze używają pełnych powiązań ról.
+
+## Zasady inżynierskie i kontrole jakości (`_shared/engineering-principles.md`)
+
+Konkretne reguły zamiast haseł SOLID/DRY/KISS: każda ma ID (`EP-1`…`EP-14`) i jest oznaczona
+jako *gate* (sprawdza narzędzie) albo *review* (ocenia code reviewer). Builder, code reviewer i
+planer mają je w prompcie (`Follow ../_shared/engineering-principles.md` w `SKILL.md`). Kontroler
+dołącza do promptu każdy plik `_shared`, który skill wskazuje, oraz własne `references/*.md`
+skilla: agent nie czyta `factory/`, więc inaczej checklisty by do niego nie dotarły.
+
+- **Gate (profil Node, `checks/node.yaml`)**: lint z limitami (złożoność ≤ 10, zagnieżdżenie ≤ 3,
+  ≤ 4 parametry, funkcja ≤ 60 linii, plik ≤ 300 linii), granice warstw (`no-restricted-imports`),
+  `@typescript-eslint/no-deprecated` oraz `duplicates`: jscpd z baseline, nowy klon ≥ 50 tokenów
+  oblewa gate. Konfiguracja leży w repo aplikacji (`eslint.config.*`, `.jscpd.json`,
+  `.jscpd-baseline.json`) i jest chroniona (`policy.protected_paths`): builder jej nie zmieni.
+- **Baseline**: kod sprzed limitów jest na jawnej liście (blok „Legacy baseline” w ESLint, klony w
+  `.jscpd-baseline.json`). Baseline tylko maleje; po refaktorze operator zawęża go ręcznie
+  (`npx jscpd --config .jscpd.json --baseline .jscpd-baseline.json --update-baseline`).
+- **Policy**: wyłączenie kontroli komentarzem (`eslint-disable` całego bloku lub reguły limitu
+  czy warstw, `@ts-ignore`, `@ts-nocheck`, `jscpd:ignore`, `noqa: C901`, gołe `noqa`,
+  `#[allow(clippy::too_many_lines)]`, `CHECKSTYLE:OFF`) w pliku kodu to naruszenie polityki.
+  Celowane wyjątki (`eslint-disable-next-line react-hooks/exhaustive-deps`, `@ts-expect-error`)
+  są dozwolone.
+- **Review**: code reviewer zgłasza tylko reguły *review* z ID i kosztem; nie powtarza tego, co
+  sprawdził gate. Profile Python, Rust i Java (narzędzia dla każdej reguły *gate*) są opisane w
+  dokumencie zasad; manifest checków dla nich trzeba dodać przy pierwszym takim repo.

@@ -18,7 +18,8 @@ current acceptance criteria. If it reveals a material gap, the verdict is CHANGE
 
 ## Required inputs
 
-- Original request (verbatim) and normalized feature revision, constraints, criteria.
+- Original request (verbatim) and normalized feature revision, constraints, criteria, and
+  `feature.decisions` (product decisions; `human`/`accepted` answers come from the operator).
 - Path (`trivial | standard | complex`) and risk from the controller.
 - Spec package: micro-spec, or `proposal.md`, `specs/**/spec.md`, `intent-map.yaml`,
   `acceptance-map.yaml`, `future-needs.md`; plus `decision.json` (standard/complex).
@@ -30,7 +31,9 @@ current acceptance criteria. If it reveals a material gap, the verdict is CHANGE
 
 1. Confirm digests. Evaluating a spec other than the one named in the request => `UNKNOWN`.
 2. Re-derive intents from the original request yourself before reading the intent map;
-   then compare. Do not trust the author's mapping.
+   then compare. Do not trust the author's mapping. An operator's decision (`human`,
+   `accepted`) counts as an explicit intent: missing or contradicted => blocking. An
+   `assumed` decision is a default; deviating from it is non-blocking.
 3. Score each dimension `PASS` or `CHANGES` using `references/rubric.md`:
    `intent_coverage`, `consistency`, `testability`, `feasibility`, `risk_controls`.
    Every `CHANGES` dimension has at least one finding with location and evidence.

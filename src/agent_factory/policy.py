@@ -29,6 +29,18 @@ _WEAKENING = [
     re.compile(r"^\+\s*assert\s+True\b"),
     re.compile(r"^\+\s*expect\(\s*(true|1)\s*\)\.(toBe|toEqual)\(\s*(true|1)\s*\)"),
 ]
+# Silencing a quality check instead of restructuring the code (engineering principles EP-1/3/4/12).
+_LIMIT_RULES = r"complexity|max-[a-z-]+|no-restricted-imports|no-restricted-paths|@typescript-eslint/no-deprecated|import/no-cycle"
+_SUPPRESSION = [
+    re.compile(r"eslint-disable(?!-next-line|-line)(?:\s|\*/|$)"),  # block or whole-file disable
+    re.compile(rf"eslint-disable(?:-next-line|-line)?\b.*(?<![\w/-])({_LIMIT_RULES})(?![\w-])"),
+    re.compile(r"@ts-(ignore|nocheck)\b"),
+    re.compile(r"jscpd:ignore"),
+    re.compile(r"#\s*noqa\s*$|#\s*noqa:.*\b(C901|PLR09\d\d)\b"),  # bare noqa silences every rule
+    re.compile(r"#\[allow\(clippy::(cognitive_complexity|too_many_arguments|too_many_lines)"),
+    re.compile(r"CHECKSTYLE:OFF|@SuppressWarnings\(\s*\"(PMD|checkstyle)"),
+]
+_DOCS = re.compile(r"\.(md|mdx|rst|txt|adoc)$")  # prose may name a suppression without using one
 _REMOVED_TEST = re.compile(r"^-\s*(def|async def)\s+test_\w+|^-\s*(it|test)\(")
 _REMOVED_ASSERT = re.compile(r"^-\s*(assert\b|self\.assert|expect\()")
 _ADDED_ASSERT = re.compile(r"^\+\s*(assert\b|self\.assert|expect\()")
@@ -135,6 +147,9 @@ def evaluate_diff(
                 report.risk = max_risk(report.risk, level)
                 report.risk_reasons.append(f"path rule {level}: {diff.path}")
         added = "\n".join(line[1:] for line in diff.patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
+        for line in ([] if _DOCS.search(diff.path) else added.splitlines()):
+            if any(p.search(line) for p in _SUPPRESSION):
+                report.violations.append(f"quality check suppressed in {diff.path}: {line.strip()[:120]}")
         for level, pattern, label in _CONTENT_RULES:
             if pattern.search(added):
                 report.risk = max_risk(report.risk, level)

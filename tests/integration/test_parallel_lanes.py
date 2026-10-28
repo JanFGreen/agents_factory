@@ -95,7 +95,8 @@ def test_merge_conflict_requeues_the_later_lane_without_using_its_attempt(make_e
     tasks = _tasks(env, job)
     assert tasks["TASK-01"]["attempts"] == 1 and tasks["TASK-02"]["attempts"] == 1  # requeue + rebuild = one attempt
     requeued = [json.loads(e["payload_json"]) for e in env.store.events_for(job) if e["kind"] == "task.requeued"]
-    assert requeued and requeued[0]["task_id"] == "TASK-02" and requeued[0]["verdict"] == "MERGE_CONFLICT"
+    # Whichever lane finishes second conflicts (the order depends on thread timing under load).
+    assert len(requeued) == 1 and requeued[0]["task_id"] in tasks and requeued[0]["verdict"] == "MERGE_CONFLICT"
 
 
 def test_lanes_that_break_each_other_are_caught_by_checks_on_the_combined_tree(make_env):

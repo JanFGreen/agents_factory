@@ -157,6 +157,7 @@ class Controller:
         self.store = store
         self.evidence = evidence
         self.guards: dict[S, Callable[[str], GuardResult]] = {
+            S.COMPLEXITY_ASSESSMENT: self._g_decisions_answered,
             S.SINGLE_TASK_READY: self._g_spec_pass,
             S.DECOMPOSE: self._g_spec_pass,
             S.TASK_GRAPH_READY: self._g_decomposition_pass,
@@ -239,6 +240,11 @@ class Controller:
 
     def _ctx(self, job_id: str) -> dict:
         return self.store.job_context(job_id)
+
+    def _g_decisions_answered(self, job_id: str) -> GuardResult:
+        """Guided mode: no analysis starts on a product decision the operator has not answered."""
+        pending = [d["id"] for d in self._ctx(job_id).get("decisions", []) if d.get("answer") is None]
+        return GuardResult(not pending, f"unanswered decisions: {pending}" if pending else "decisions answered")
 
     def _g_spec_pass(self, job_id: str) -> GuardResult:
         ok, why = self.evidence.current_pass(job_id, ResultKind.SPEC_EVALUATION, self.identity(job_id))

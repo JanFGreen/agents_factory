@@ -104,6 +104,13 @@ def cmd_doctor(args) -> int:
     skills = sorted(p.name for p in (_factory_dir(args) / "skills").iterdir() if p.is_dir() and not p.name.startswith("_"))
     report["skills"] = {"count": len(skills), "names": skills}
     report["repos"] = _repos(cfg)
+    dm = cfg.factory.decision_model
+    report["decision_model"] = {
+        "provider": dm.provider, "model": dm.model,
+        "active": dm.provider != "none" and bool(os.environ.get(dm.api_key_env)),
+        "note": "skipped (optional)" if dm.provider == "none" or not os.environ.get(dm.api_key_env) else f"task difficulty second opinion via {dm.url}",
+    }
+    report["routing"] = {"builder_models": cfg.factory.routing.builder_models, "escalate_on_retry": cfg.factory.routing.escalate_on_retry}
     report["credentials"] = {
         "claude": "CLI auth (keychain/config); checked by a live call, not by env",
         "github": "gh auth (needed only for mode pr/automerge)" if shutil.which("gh") else "gh not installed",
@@ -162,11 +169,28 @@ def cmd_submit(args) -> int:
         print("--file or --text is required", file=sys.stderr)
         return EXIT_USAGE
     factory = _make_factory(cfg, store)
-    job_id = factory.submit(feature, Path(repo["path"]), checks=repo.get("checks"))
+    job_id = factory.submit(feature, Path(repo["path"]), checks=repo.get("checks"), mode=_spec_mode(args, cfg))
     if repo.get("base_branch"):
         store.update_job_context(job_id, base_branch=repo["base_branch"])
     _out(args, {"job_id": job_id, "feature_id": feature.feature_id}, job_id)
     return EXIT_OK
+
+
+def _spec_mode(args, cfg) -> str:
+    """--mode, else ask at a terminal, else the configured default."""
+    default = cfg.factory.spec.default_mode
+    if args.mode or args.json or not sys.stdin.isatty():
+        return args.mode or default
+    print("Specification mode:\n  guided - you answer a few product questions after intake, then it runs on its own\n"
+          "  auto   - the factory assumes the proposed answers and does not stop")
+    while True:
+        answer = input(f"Mode [guided/auto] ({default}): ").strip().lower() or default
+        if answer in ("guided", "auto", "g", "a"):
+            return {"g": "guided", "a": "auto"}.get(answer, answer)
+
+
+def _pending_decisions(ctx: dict) -> list[dict]:
+    return [d for d in ctx.get("decisions", []) if d.get("answer") is None]
 
 
 def _status_row(store: Store, job_id: str) -> dict:
@@ -179,12 +203,15 @@ def _status_row(store: Store, job_id: str) -> dict:
         "blocked_reason": job["blocked_reason"], "head_sha": job["head_sha"], "base_sha": job["base_sha"],
         "analysis_rounds": f"{rs.used}/{rs.limit}", "build_attempts": job["build_attempts"],
         "budget": {"limit": bud.limit, "committed": round(bud.committed, 4), "spent": round(bud.spent, 4)},
-        "tasks": [dict(r) for r in store.all("SELECT task_id, state, attempts FROM tasks WHERE job_id = ? ORDER BY order_idx", (job_id,))],
+        "tasks": [{**dict(r), "difficulty": ((ctx.get("task_difficulty") or {}).get("tasks", {}).get(r["task_id"]) or {}).get("difficulty")}
+                  for r in store.all("SELECT task_id, state, attempts FROM tasks WHERE job_id = ? ORDER BY order_idx", (job_id,))],
         "last_checkpoint": ctx.get("last_checkpoint"),
         "plan_estimate": {k: ctx["plan_estimate"][k] for k in ("tasks", "estimate_usd", "suggested_limit_usd", "basis")}
         if ctx.get("plan_estimate") else None,
         "plan_approved": bool(ctx.get("plan_approval")),
-        "next_step": _next_step(job["state"]),
+        "spec_mode": ctx.get("spec_mode"),
+        "decisions": [{k: d.get(k) for k in ("id", "question", "proposed", "answer", "source")} for d in ctx.get("decisions", [])],
+        "next_step": f"answer the product decisions: `factory decide {job_id}`" if _pending_decisions(ctx) else _next_step(job["state"]),
         "criteria_digest": _criteria(store, job_id) if job["state"] == "AWAITING_HUMAN_MERGE" else None,
     }
 
@@ -376,6 +403,55 @@ def cmd_plan(args) -> int:
     return EXIT_OK
 
 
+def _ask_decisions(pending: list[dict]) -> dict[str, str]:
+    """One question at a time; Enter accepts the proposal, a number picks an option, anything else is the answer."""
+    answers = {}
+    for d in pending:
+        print(f"\n{d['id']}: {d['question']}\n  why it matters: {d['why']}")
+        for i, option in enumerate(d.get("options") or [], 1):
+            print(f"  {i}. {option}")
+        print(f"  proposed: {d['proposed']}")
+        raw = input("Answer (Enter = proposed, number = option): ").strip()
+        options = d.get("options") or []
+        if not raw:
+            answers[d["id"]] = d["proposed"]
+        elif raw.isdigit() and 1 <= int(raw) <= len(options):
+            answers[d["id"]] = options[int(raw) - 1]
+        else:
+            answers[d["id"]] = raw
+    return answers
+
+
+def cmd_decide(args) -> int:
+    cfg, store = _load(args)
+    factory = _make_factory(cfg, store)
+    answers = {}
+    for item in args.answer:
+        qid, sep, text = item.partition("=")
+        if not sep:
+            print(f"--answer expects ID=text, got {item!r}", file=sys.stderr)
+            return EXIT_USAGE
+        answers[qid.strip()] = text
+    pending = _pending_decisions(store.job_context(args.id))
+    if not answers and not args.accept_proposed:
+        if args.json or not sys.stdin.isatty():
+            _out(args, {"job_id": args.id, "open_decisions": pending,
+                        "next_step": f"factory decide {args.id} --answer Q-1=... [--accept-proposed]"})
+            return EXIT_BLOCKED if pending else EXIT_OK
+        answers = _ask_decisions(pending)
+    try:
+        still_open = factory.answer_decisions(args.id, answers, args.accept_proposed, os.environ.get("USER", "operator"))
+    except TransitionRefused as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_REFUSED
+    if still_open:
+        _out(args, {"job_id": args.id, "open_decisions": [d["id"] for d in still_open]})
+        return EXIT_BLOCKED
+    factory.resume(args.id)
+    _out(args, {"job_id": args.id, "decisions": "answered", "next_step": f"factory run --job {args.id}"})
+    return EXIT_OK
+
+
 def cmd_budget(args) -> int:
     cfg, store = _load(args)
     budgets.raise_budget(store, args.id, args.to, args.reason, actor=os.environ.get("USER", "operator"))
@@ -410,7 +486,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--text")
     s.add_argument("--issue", type=int)
     s.add_argument("--repo-id")
+    s.add_argument("--mode", choices=["guided", "auto"],
+                   help="guided: answer the product decisions after intake; auto: assume the proposals (default: config spec.default_mode)")
     s.set_defaults(fn=cmd_submit)
+
+    s = sub.add_parser("decide", help="answer the product decisions of a guided job (then it resumes)")
+    s.add_argument("id")
+    s.add_argument("--answer", action="append", default=[], metavar="Q-N=TEXT")
+    s.add_argument("--accept-proposed", action="store_true", help="accept the proposed answer for every decision not answered")
+    s.set_defaults(fn=cmd_decide)
     s = sub.add_parser("feature")
     fsub = s.add_subparsers(dest="feature_cmd", required=True)
     for name in ("classify", "inspect-analysis"):

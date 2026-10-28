@@ -47,6 +47,15 @@ policy:
     - "package-lock.json"
     - "tsconfig*.json"
     - "eslint.config.*"
+    - ".jscpd.json"                    # kontrole jakości i ich baseline (engineering-principles)
+    - ".jscpd-baseline.json"
+    - ".dependency-cruiser.*"
+    - "ruff.toml"
+    - ".importlinter"
+    - "clippy.toml"
+    - "deny.toml"
+    - "checkstyle*.xml"
+    - "pmd*.xml"
     - "jest.config.*"
     - "vitest.config.*"
     - "Makefile"
@@ -61,6 +70,27 @@ merge:
   require_current_head: true
   require_required_checks: true
   allow_admin_bypass: false
+spec:
+  # guided: po intake job czeka na odpowiedzi na decyzje produktowe (`factory decide`);
+  # auto: przyjmowane są proponowane odpowiedzi. Tryb wybiera się per job przy `factory submit --mode`.
+  default_mode: guided
+  max_decisions: 7
+routing:
+  # Model buildera wg trudności taska (planer + dolna granica z kontrolera + opcjonalnie Jev).
+  builder_models:
+    easy: claude-sonnet-5-5
+    medium: claude-sonnet-5-5
+    hard: claude-opus-5-5
+  escalate_on_retry: true              # każda kolejna próba taska: model o poziom wyżej
+  trivial_path_model: claude-haiku-5-5 # tylko bardzo małe zmiany (ścieżka trivial), 1. próba; potem jak easy
+decision_model:
+  # Druga opinia o trudności tasków z modelu decyzyjnego Jev (TypeSafe AI). Używany tylko, gdy
+  # zmienna TYPESAFE_API_KEY jest ustawiona; bez niej krok jest pomijany. Wysyła rekord taska
+  # (ścieżki, kryteria akceptacji) do api.typesafe.ai — ustaw provider: none, jeśli to niedozwolone.
+  provider: jev
+  model: jev-latest
+  min_confidence: 0.6
+  timeout_seconds: 10
 review:
   # Recenzje tasków w poziomach: CHANGES w poziomie pomija kolejne (uruchomią się po poprawce).
   tiers:

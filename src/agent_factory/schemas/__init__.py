@@ -86,12 +86,30 @@ class FutureNeed(Model):
     status: FutureStatus
 
 
+class DecisionQuestion(Model):
+    """A product decision the request leaves open; the operator answers it in guided mode."""
+
+    id: str = Field(pattern=r"^Q-\d{1,2}$")
+    question: str = Field(min_length=1, max_length=500)
+    why: str = Field(min_length=1, max_length=500)  # what is built differently depending on the answer
+    options: list[str] = Field(default=[], max_length=5)
+    proposed: str = Field(min_length=1, max_length=500)  # the default when the operator accepts or in auto mode
+
+
 class IntakePayload(Model):
     goal: str
     acceptance_criteria: list[str] = []
     constraints: list[str] = []
     open_questions: list[str] = []
+    decisions: list[DecisionQuestion] = []
     future_directions: list[FutureNeed] = []
+
+    @model_validator(mode="after")
+    def _unique_decisions(self) -> "IntakePayload":
+        ids = [d.id for d in self.decisions]
+        if len(ids) != len(set(ids)):
+            raise ValueError("decision ids must be unique")
+        return self
 
 
 class OptionRatings(Model):
@@ -165,6 +183,8 @@ class TaskSpec(Model):
     parallel_safe_with: list[str] = []
     future_constraints: list[str] = []
     parent: str | None = None
+    difficulty: Literal["easy", "medium", "hard"] | None = None  # the planner's label; the controller may raise it
+    difficulty_reasons: list[str] = []
 
 
 class PlanPayload(Model):

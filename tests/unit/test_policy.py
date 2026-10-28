@@ -87,3 +87,41 @@ def test_af40_local_mode_broker_denies_comments_and_deploy(policy):
         with pytest.raises(BrokerDenied):
             authorize_side_effect(policy, op)
     authorize_side_effect(policy, "local.merge")
+
+
+@pytest.mark.parametrize("path,line", [
+    ("src/ui/Big.tsx", "/* eslint-disable */"),
+    ("src/ui/Big.tsx", "/* eslint-disable react-hooks/rules-of-hooks */"),
+    ("src/domain/rules.ts", "// eslint-disable-next-line complexity"),
+    ("src/domain/rules.ts", "  // eslint-disable-next-line max-lines-per-function, max-params"),
+    ("src/domain/rules.ts", "// eslint-disable-line no-restricted-imports"),
+    ("src/domain/rules.ts", "// eslint-disable-next-line @typescript-eslint/no-deprecated"),
+    ("src/domain/rules.ts", "// @ts-ignore"),
+    ("src/domain/rules.ts", "// @ts-nocheck"),
+    ("src/ui/Copy.tsx", "// jscpd:ignore-start"),
+    ("app/rules.py", "def route(a, b, c, d, e, f):  # noqa: C901"),
+    ("app/rules.py", "def route(a, b, c, d, e, f):  # noqa: PLR0913"),
+    ("app/rules.py", "import thing  # noqa"),
+    ("src/lib.rs", "#[allow(clippy::too_many_lines)]"),
+    ("src/Main.java", "// CHECKSTYLE:OFF"),
+    ("src/Main.java", '@SuppressWarnings("PMD.CyclomaticComplexity")'),
+])
+def test_suppressing_a_quality_check_is_a_violation(policy, path, line):
+    report = evaluate_diff([FileDiff(path, "M", f"+{line}\n")], policy)
+    assert any("quality check suppressed" in v for v in report.violations), report.violations
+
+
+@pytest.mark.parametrize("path,line", [
+    ("src/ui/Screen.tsx", "  // eslint-disable-next-line react-hooks/exhaustive-deps"),
+    ("src/ui/Screen.test.tsx", "  // @ts-expect-error the prop is required"),
+    ("app/rules.py", "LONG = 'x'  # noqa: E501"),
+    ("docs/ENGINEERING.md", "- No `@ts-ignore`/`eslint-disable` to silence a real issue."),
+])
+def test_targeted_suppressions_and_prose_are_allowed(policy, path, line):
+    report = evaluate_diff([FileDiff(path, "M", f"+{line}\n")], policy)
+    assert not any("quality check suppressed" in v for v in report.violations), report.violations
+
+
+@pytest.mark.parametrize("path", [".jscpd.json", ".jscpd-baseline.json", ".dependency-cruiser.cjs", "ruff.toml"])
+def test_quality_check_configs_and_baselines_are_protected(policy, path):
+    assert any("protected" in v for v in evaluate_diff([FileDiff(path, "M", "+x\n")], policy).violations)

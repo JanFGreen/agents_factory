@@ -74,6 +74,7 @@ od bieżącej tożsamości (`Controller.identity`). Patrz `evidence-contract.md`
 
 | Stan docelowy | Guard | Wymagane dowody |
 |---|---|---|
+| `COMPLEXITY_ASSESSMENT` | `_g_decisions_answered` | brak decyzji produktowych bez odpowiedzi (tryb `guided`) |
 | `SINGLE_TASK_READY`, `DECOMPOSE` | `_g_spec_pass` | aktualny PASS `spec-evaluation` |
 | `TASK_GRAPH_READY` | `_g_decomposition_pass` | aktualny PASS `decomposition-review` + spec PASS |
 | `BUILD_TASK` | `_g_build_allowed` | spec PASS; dla ścieżki innej niż `trivial` także decomposition PASS; co najmniej jeden wiersz w `tasks` |
@@ -104,6 +105,7 @@ przejścia przez guard.
 | Sytuacja | Gdzie | Dokąd |
 |---|---|---|
 | Intake `BLOCKED` | `_step_intake` | `NEEDS_INFO` |
+| Tryb `guided`: decyzje produktowe bez odpowiedzi | `_step_intake` | `NEEDS_INFO` (`factory decide` zapisuje odpowiedzi i wznawia do `INTAKE` bez ponownego intake) |
 | Brak payloadu klasyfikacji / opcji / spec / planu | `_step_*` | `NEEDS_INFO` |
 | Brak payloadu wyboru opcji | `_step_ai_option_review` | `NEEDS_HUMAN` |
 | Decyzja AI sprzeczna z deterministycznym wyborem | `_step_ai_option_review` | jedna naprawa w tej samej rundzie; potem koniec rundy `CHANGES` → `ANALYSIS_ROUND` (lub limit) |

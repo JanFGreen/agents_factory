@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import shutil
@@ -25,9 +26,11 @@ import yaml
 
 from . import analysis, budgets, outbox
 from .adapters.protocol import AgentRequest, AgentRuntime, RunHandle
+from .adapters.typesafe import PRICE_PER_INPUT_TOKEN_USD, make_decider
 from .config import LoadedConfig, RoleBinding
 from .controller import ANALYSIS_STATES, HALTED, TERMINAL, Controller, S, TransitionRefused
 from .decisions import DecisionError, select, verify_ai_choice
+from .difficulty import Decider, assess, builder_level, indivisible
 from .environment import node_bin_dir
 from .estimate import estimate_plan
 from .evidence import EvidenceStore, Producer
@@ -69,6 +72,7 @@ REVIEW_SKILLS = {
     "test-adequacy": "factory-test-adequacy",
 }
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep"]
+_FOLLOW = re.compile(r"^Follow \.\./_shared/([\w.-]+\.md)\s*$", re.M)  # shared documents a skill names
 
 
 class StageBlocked(RuntimeError):
@@ -100,8 +104,11 @@ class Factory(ParallelLanes):
         checks_path: Path | None = None,
         owner_id: str | None = None,
         poll_interval: float = 0.5,
+        decider: Decider | None = None,
     ):
         self.cfg = cfg
+        # Optional second opinion on task difficulty; None when not configured or its key is absent.
+        self.decider = decider if decider is not None else make_decider(cfg.factory.decision_model)
         self.store = store
         self.data_dir = cfg.data_dir()
         self.evidence = EvidenceStore(store, self.data_dir)
@@ -119,7 +126,10 @@ class Factory(ParallelLanes):
 
     # ------------------------------------------------------------------ submission --
 
-    def submit(self, feature: NormalizedFeature, repo_path: Path, checks: str | None = None) -> str:
+    def submit(self, feature: NormalizedFeature, repo_path: Path, checks: str | None = None, mode: str | None = None) -> str:
+        mode = mode or self.cfg.factory.spec.default_mode
+        if mode not in ("guided", "auto"):
+            raise ValueError(f"unknown spec mode {mode!r} (guided | auto)")
         if checks is not None:
             load_checks(self._checks_file(checks))  # unknown or invalid manifest is refused at submit time
         revision = store_feature(self.store, feature)
@@ -131,7 +141,7 @@ class Factory(ParallelLanes):
             ).fetchone()
             if existing:
                 return existing["job_id"]
-            ctx = {"scope_digest": feature.scope_digest(), "change_id": f"{feature.feature_id.lower()}-r{revision}"}
+            ctx = {"scope_digest": feature.scope_digest(), "change_id": f"{feature.feature_id.lower()}-r{revision}", "spec_mode": mode}
             if checks is not None:
                 ctx["checks_manifest"] = checks
             conn.execute(
@@ -196,8 +206,14 @@ class Factory(ParallelLanes):
         self.store.update_job_context(job_id, **updates)
 
     def _feature(self, job_id: str) -> dict[str, Any]:
+        """The stored request plus the settled product decisions every later stage must honour."""
         job = self._job(job_id)
-        return load_feature(self.store, job["feature_id"], job["scope_revision"])
+        feature = load_feature(self.store, job["feature_id"], job["scope_revision"])
+        decided = [{k: d[k] for k in ("id", "question", "answer", "source")}
+                   for d in self._ctx(job_id).get("decisions", []) if d.get("answer") is not None]
+        if decided:
+            feature["decisions"] = decided
+        return feature
 
     def _worktree(self, job_id: str) -> Path:
         return Path(self._job(job_id)["worktree"])
@@ -240,12 +256,28 @@ class Factory(ParallelLanes):
         )
 
     def _skill_text(self, skill: str) -> str:
+        """The contract, the shared documents the skill follows, the skill and its references.
+
+        Agents cannot read ``factory/``, so every file a skill points to travels in the prompt.
+        """
         root = self.cfg.factory_dir / "skills"
-        shared = (root / "_shared" / "contract.md")
         body = root / skill / "SKILL.md"
         if not body.exists():
             raise StageBlocked(S.BLOCKED_ENV, f"skill {skill} is not installed at {body}")
-        return (shared.read_text() if shared.exists() else "") + "\n\n" + body.read_text()
+        text = body.read_text()
+        shared = root / "_shared" / "contract.md"
+        parts = [shared.read_text()] if shared.exists() else []
+        for name in _FOLLOW.findall(text):
+            if name == "contract.md":
+                continue
+            doc = root / "_shared" / name
+            if not doc.exists():
+                raise StageBlocked(S.BLOCKED_ENV, f"skill {skill} follows ../_shared/{name}, which is not installed")
+            parts.append(doc.read_text())
+        parts.append(text)
+        for ref in sorted((root / skill / "references").glob("*.md")):
+            parts.append(f"# Reference: references/{ref.name}\n\n{ref.read_text()}")
+        return "\n\n".join(parts)
 
     def _binding(self, skill: str) -> RoleBinding:
         role = SKILL_ROLE[skill]
@@ -289,10 +321,13 @@ class Factory(ParallelLanes):
         writable: bool = False,
         purpose: str = "analysis",
         extra_note: str = "",
+        model: str | None = None,
     ) -> AgentResult:
         kind = skill.removeprefix("factory-")
         role = SKILL_ROLE[skill]
         binding = self._binding(skill)
+        if model is not None:
+            binding = binding.model_copy(update={"model": model})
         review = self.cfg.factory.review
         if purpose == "review" and role in review.cheaper_models and self._job(job_id)["risk"] in review.cheaper_models_for_risk:
             binding = binding.model_copy(update={"model": review.cheaper_models[role]})
@@ -496,13 +531,61 @@ class Factory(ParallelLanes):
 
     def _step_intake(self, job_id: str) -> None:
         self._ensure_worktree(job_id)
-        feature = self._feature(job_id)
-        res = self.call_agent(job_id, "factory-intake", {"feature": feature, "repo_map": self._repo_map(job_id)})
-        if res.envelope.verdict == "BLOCKED":
-            raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
-        intake = res.payload.model_dump() if res.payload else {}
-        self._set_ctx(job_id, intake=intake, environment_digest=digest({"python": sys.version, "sandbox": self.sandbox.name}))
+        if self._ctx(job_id).get("intake") is None:  # answering decisions resumes here without a second intake run
+            mode = self._ctx(job_id).get("spec_mode", "auto")
+            res = self.call_agent(job_id, "factory-intake", {
+                "feature": self._feature(job_id), "repo_map": self._repo_map(job_id),
+                "spec_mode": mode, "max_decisions": self.cfg.factory.spec.max_decisions,
+            })
+            if res.envelope.verdict == "BLOCKED":
+                raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
+            intake = res.payload.model_dump() if res.payload else {}
+            self._set_ctx(job_id, intake=intake, decisions=self._open_decisions(job_id, intake.pop("decisions", []), mode),
+                          environment_digest=digest({"python": sys.version, "sandbox": self.sandbox.name}))
+        pending = [d for d in self._ctx(job_id).get("decisions", []) if d["answer"] is None]
+        if pending:
+            raise StageBlocked(S.NEEDS_INFO, (
+                f"{len(pending)} product decision(s) to answer before analysis: "
+                + "; ".join(f"{d['id']}: {d['question']} (proposed: {d['proposed']})" for d in pending)
+                + f". Answer: `factory decide {job_id}`."))
         self.controller.transition(job_id, S.COMPLEXITY_ASSESSMENT)
+
+    def _open_decisions(self, job_id: str, questions: list[dict], mode: str) -> list[dict]:
+        """Guided: the first ``max_decisions`` wait for the operator. Auto, and any beyond the limit: proposals are assumed."""
+        limit = self.cfg.factory.spec.max_decisions
+        decisions = []
+        for i, q in enumerate(questions):
+            asked = mode == "guided" and i < limit
+            decisions.append({**q, "answer": None if asked else q["proposed"], "source": None if asked else "assumed"})
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "decisions.opened", {
+                "mode": mode, "asked": [d["id"] for d in decisions if d["answer"] is None],
+                "assumed": [d["id"] for d in decisions if d["source"] == "assumed"]})
+        return decisions
+
+    def answer_decisions(self, job_id: str, answers: dict[str, str], accept_proposed: bool, actor: str) -> list[dict]:
+        """Record the operator's answers; ``accept_proposed`` settles the rest with the proposed answers."""
+        if S(self._job(job_id)["state"]) is not S.NEEDS_INFO:
+            raise TransitionRefused("the job is not waiting for decisions")
+        decisions = self._ctx(job_id).get("decisions", [])
+        pending = {d["id"] for d in decisions if d["answer"] is None}
+        if not pending:
+            raise TransitionRefused("no open decisions")
+        unknown = set(answers) - pending
+        if unknown:
+            raise TransitionRefused(f"not an open decision: {sorted(unknown)} (open: {sorted(pending)})")
+        if any(not a.strip() for a in answers.values()):
+            raise TransitionRefused("an answer must not be empty")
+        for d in decisions:
+            if d["id"] in answers:
+                d.update(answer=answers[d["id"]].strip(), source="human", actor=actor, at=now())
+            elif d["id"] in pending and accept_proposed:
+                d.update(answer=d["proposed"], source="accepted", actor=actor, at=now())
+        self._set_ctx(job_id, decisions=decisions)
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "decisions.answered", {
+                "actor": actor, "answered": sorted(answers), "accepted": sorted(pending - set(answers)) if accept_proposed else []})
+        return [d for d in decisions if d["answer"] is None]
 
     def _step_complexity_assessment(self, job_id: str) -> None:
         feature = self._feature(job_id)
@@ -715,13 +798,48 @@ class Factory(ParallelLanes):
             acceptance="; ".join(ac.observable for ac in spec.acceptance_criteria),
             verification=[ac.id for ac in spec.acceptance_criteria],
             risk=self._job(job_id)["risk"] or "low",
+            difficulty="easy", difficulty_reasons=["trivial path: atomic, low risk, known pattern (classification)"],
         )
         plan = {"tasks": [task.model_dump()], "future_needs": [], "decomposition": "not-applicable: single atomic task"}
         self._set_ctx(job_id, plan=plan, plan_digest=digest(plan))
         self._insert_tasks(job_id, [task])
         self._record(job_id, ResultKind.DECOMPOSITION_REVIEW, "PASS", {"not_applicable": "single atomic task (trivial path)"})
 
+    def _task_difficulty(self, job_id: str, tasks: list[TaskSpec]) -> dict[str, dict]:
+        """Assessed once per plan revision (the decision model is asked at most once per task)."""
+        ctx = self._ctx(job_id)
+        known = ctx.get("task_difficulty") or {}
+        if known.get("plan_digest") == ctx["plan_digest"] and all(t.task_id in known["tasks"] for t in tasks):
+            return known["tasks"]
+        cfg = self.cfg.factory.decision_model
+        result = {t.task_id: assess(t, self.decider, cfg.min_confidence) for t in tasks}
+        tokens = sum((a["decider"] or {}).get("input_tokens", 0) for a in result.values())
+        self._set_ctx(job_id, task_difficulty={"plan_digest": ctx["plan_digest"], "tasks": result})
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "plan.difficulty", {
+                "tasks": {tid: a["difficulty"] for tid, a in result.items()},
+                "decider": getattr(self.decider, "name", None),
+                "decider_error": getattr(self.decider, "last_error", None),
+                "decider_usd": round(tokens * PRICE_PER_INPUT_TOKEN_USD, 6)})
+        return result
+
+    def _builder_model(self, job_id: str, task_id: str, attempt: int) -> str | None:
+        """Model for this build attempt from the task's difficulty; None keeps the builder binding."""
+        routing = self.cfg.factory.routing
+        assessed = (self._ctx(job_id).get("task_difficulty") or {}).get("tasks", {}).get(task_id)
+        if not routing.builder_models or assessed is None:
+            return None
+        level = builder_level(assessed["difficulty"], attempt, routing.escalate_on_retry)
+        model = routing.builder_models.get(level)
+        if routing.trivial_path_model and self._job(job_id)["path"] == "trivial" and attempt <= 1:
+            level, model = "trivial", routing.trivial_path_model
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "task.routed", {"task_id": task_id, "attempt": attempt, "difficulty": assessed["difficulty"],
+                                                           "level": level, "model": model})
+        return model
+
     def _insert_tasks(self, job_id: str, tasks: list[TaskSpec]) -> None:
+        self._task_difficulty(job_id, tasks)
         plan_digest = self._ctx(job_id)["plan_digest"]
         with self.store.tx() as conn:
             accepted = {r["task_id"]: r for r in conn.execute("SELECT * FROM tasks WHERE job_id = ?", (job_id,)).fetchall()}
@@ -759,6 +877,7 @@ class Factory(ParallelLanes):
         dag = validate_dag(plan.tasks, [r.id for r in spec.requirements], self.cfg.workflow.decomposition)
         res = self.call_agent(job_id, "factory-decomposition-review", {
             "feature": self._feature(job_id), "spec": ctx["spec"], "plan": ctx["plan"], "controller_dag_problems": dag.problems,
+            "controller_difficulty": self._task_difficulty(job_id, plan.tasks),
         })
         verdict = res.envelope.verdict
         problems = list(dag.problems)
@@ -770,6 +889,10 @@ class Factory(ParallelLanes):
                 problems.append("reviewer reports DAG problems")
         problems += [f"{t.task_id} has an empty file_scope (nothing for a builder to change; merge it into a task that owns files)"
                      for t in plan.tasks if not t.file_scope]
+        difficulty = self._task_difficulty(job_id, plan.tasks)
+        problems += [f"{t.task_id} is hard ({'; '.join(difficulty[t.task_id]['reasons']) or 'planner label'}): split it into "
+                     "smaller tasks, or give the reason it cannot be split as difficulty_reasons ['indivisible: ...']"
+                     for t in plan.tasks if difficulty[t.task_id]["difficulty"] == "hard" and not indivisible(t)]
         for need in plan.future_needs:
             if need.status == "hypothetical" and any(need.description.lower() in t.acceptance.lower() for t in plan.tasks):
                 problems.append(f"hypothetical need is being built: {need.description}")
@@ -1009,7 +1132,7 @@ class Factory(ParallelLanes):
             "root_cause": root_cause, "human_feedback": ctx.get("human_feedback"),
             "spec_advisories": ctx.get("spec_advisories", []),
             "test_scope": "test files (tests/, test_*.py, *.test.ts(x), *.spec.ts(x)) are always in scope: add or extend the tests that prove this task's acceptance",
-        }, task_id=task_id, writable=True, purpose="build")
+        }, task_id=task_id, writable=True, purpose="build", model=self._builder_model(job_id, task_id, self._task(job_id, task_id)["attempts"]))
 
     def _fail_build(self, job_id: str, task_id: str, verdict: str, reason: str, evidence_payload: dict) -> None:
         ctx = self._ctx(job_id)

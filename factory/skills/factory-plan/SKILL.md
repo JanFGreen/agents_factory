@@ -6,6 +6,7 @@ description: Use in controller state DECOMPOSE, after the selected option and a 
 # factory-plan
 
 Follow ../_shared/contract.md
+Follow ../_shared/engineering-principles.md
 
 ## Purpose
 
@@ -35,28 +36,37 @@ the micro-spec).
 2. Design for the selected option only. If it proves unworkable, return `CHANGES`
    with a finding routed to option selection; never switch option silently.
 3. Identify shared contracts (API shape, schema, events, config keys) and make each
-   a task that precedes all its consumers.
+   a task that precedes all its consumers. In `design.md`, place each new unit in a layer
+   (EP-1) and name the pattern for each extension point the request needs (engineering
+   principles, "Design patterns"); plan a pattern only for a problem the feature has.
 4. Build vertical increments early: connect API, data and UI incrementally rather
    than finishing isolated layers. Each leaf task has: one or more `requirement_ids`
    (or a necessary dependency it serves), `inputs`, `outputs`, disjoint `file_scope`,
    `risk`, `estimated_minutes`, an observable `acceptance` and named `verification`.
 5. Include, within feature scope: migrations with rollback, seed/test data, error
    paths, observability and docs. Do not add speculative features.
-6. Use the fewest tasks that keep each leaf within `target_task_minutes`: every task
+6. Label each leaf with `difficulty` (`easy | medium | hard`, rubric in
+   `references/task-schema.md`) and `difficulty_reasons`. The label picks the builder model:
+   easy runs on a small model, so an easy task must be atomic (see the reference) and carry
+   its contract in the record: exact files, function or component signatures in `outputs`,
+   the test cases in `verification`. Split a hard leaf along its contracts; keep it hard only
+   with `"indivisible: <why>"` in `difficulty_reasons`. The controller may raise a label
+   (structural floor, decision model), never lower it.
+7. Use the fewest tasks that keep each leaf within `target_task_minutes`: every task
    pays for a build and a full review round. A feature that one executor can finish
    within the target is exactly one task. Each task owns the tests for its own
    behavior (test files are always in scope for the builder); never plan test-only
    tasks or tasks with an empty `file_scope`. End-to-end acceptance of the whole
    feature against the original request is the controller's FEATURE_ACCEPTANCE stage;
    do not add a separate end-to-end task for it. Green leaf tasks never mark the parent done.
-7. Mark `parallel_safe_with` only when file scopes and contracts are disjoint and no
+8. Mark `parallel_safe_with` only when file scopes and contracts are disjoint and no
    lockfile/API change is shared.
-8. Classify every future direction as `required_now`, `committed_next` or
+9. Classify every future direction as `required_now`, `committed_next` or
    `hypothetical`. Build only `required_now`; record `committed_next` as
    `future_constraints` on affected tasks; `hypothetical` is a note only.
-9. Check limits: depth <= 3, leaves <= 20. If the feature cannot fit, return
+10. Check limits: depth <= 3, leaves <= 20. If the feature cannot fit, return
    `BLOCKED` with a staging proposal (epics) in findings; never drop requirements.
-10. Self-check before output: acyclic `depends_on`, every requirement covered, every
+11. Self-check before output: acyclic `depends_on`, every requirement covered, every
     referenced task ID exists (see `references/task-schema.md`).
 
 ## Output
@@ -76,6 +86,8 @@ Envelope per contract, `kind: "plan"`. Payload:
       "risk": "low",
       "estimated_minutes": 30,
       "acceptance": "Contract schema validates sample responses",
+      "difficulty": "easy",
+      "difficulty_reasons": ["one file, schema follows src/operations/contract.py"],
       "verification": ["history-contract-test"],
       "parallel_safe_with": [],
       "future_constraints": []

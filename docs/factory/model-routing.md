@@ -84,3 +84,31 @@ asystenta i potrafi kręcić się w pętli hooka StructuredOutput aż do własne
 przerywa proces i zwraca `failed` z `retryable=False`; kontroler nie ponawia wywołania i od razu
 przechodzi do `BLOCKED_ENV` z treścią błędu. 429/5xx pozostają błędami przejściowymi. Modele 5.5
 wymagają Claude CLI ≥ 2.1.280 (`claude --version` w `factory doctor`).
+
+## Trudność tasków i model buildera (`routing`, `decision_model`)
+
+Każdy task planu dostaje `difficulty` (`easy | medium | hard`). Ocena końcowa to maksimum z:
+
+1. etykiety planera (`difficulty`, brak = `medium`) z uzasadnieniem w `difficulty_reasons`;
+2. dolnej granicy kontrolera z rekordu taska (`difficulty.structural_floor`): foldery/globy w
+   `file_scope` lub > 3 pliki produkcyjne → medium, > 6 → hard; ryzyko > low, > 3 wymagania,
+   > 2 kontrakty wyjściowe → medium; testy się nie liczą;
+3. opcjonalnie modelu decyzyjnego Jev (TypeSafe AI), gdy `decision_model.provider: jev` i ustawiony
+   jest `TYPESAFE_API_KEY`. Pytanie typu `choice` z rubryką z `difficulty.CRITERIA`; odpowiedź liczy
+   się tylko przy `confidence ≥ min_confidence` (0.6) i może ocenę tylko podnieść. Błąd, timeout
+   lub brak klucza → krok pominięty, bez wpływu na job. Klucz czyta tylko kontroler (agenci go nie
+   dostają). Koszt (~$0.00004 za task) jest w zdarzeniu `plan.difficulty` (`decider_usd`).
+
+Ocena jest liczona raz na rewizję planu (`ctx.task_difficulty`), przekazywana do decomposition
+review (`controller_difficulty`), a task `hard` bez `difficulty_reasons: ["indivisible: …"]` jest
+problemem kontrolera: planer musi go podzielić. Kryteria atomowości są w
+`factory-plan/references/task-schema.md`.
+
+Model buildera: `routing.builder_models[poziom]` (easy i medium: Sonnet, hard: Opus). Haiku tylko
+dla pierwszej próby feature'a ze ścieżki trivial (`routing.trivial_path_model`: atomowa zmiana,
+niskie ryzyko, znany wzorzec); kolejna próba idzie już według mapy. Zasada: lepiej zapłacić za
+Sonnet od razu niż za poprawki; przy `escalate_on_retry` każda kolejna próba
+taska idzie o poziom wyżej (easy → medium → hard). Zdarzenie `task.routed` zapisuje poziom i
+model każdej próby. Pusta mapa `builder_models` zostawia wiązanie roli `builder`.
+`factory doctor` pokazuje `routing` i czy model decyzyjny jest aktywny; `factory status` pokazuje
+trudność każdego taska.

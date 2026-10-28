@@ -314,6 +314,38 @@ class ReviewPolicy(Strict):
         return self
 
 
+class SpecPolicy(Strict):
+    """Who settles the product decisions a request leaves open (chosen per job at submit)."""
+
+    # guided: the job stops after intake until the operator answers them; auto: the proposed answers are assumed.
+    default_mode: Literal["guided", "auto"] = "guided"
+    max_decisions: int = Field(default=7, ge=1, le=15)
+
+
+Difficulty = Literal["easy", "medium", "hard"]
+
+
+class Routing(Strict):
+    """Builder model per task difficulty; an empty map keeps the builder role binding."""
+
+    builder_models: dict[Difficulty, str] = {}
+    # Each further attempt of a task uses the model one difficulty level up (hard stays hard).
+    escalate_on_retry: bool = True
+    # First attempt of a trivial-path feature (atomic, low risk, known pattern); retries use `builder_models`.
+    trivial_path_model: str | None = None
+
+
+class DecisionModel(Strict):
+    """Optional typed decision model (second opinion on task difficulty). Skipped when its key is absent."""
+
+    provider: Literal["none", "jev"] = "none"
+    model: str = "jev-latest"
+    url: str = "https://api.typesafe.ai/v1/systemone"
+    api_key_env: str = "TYPESAFE_API_KEY"  # read by the controller only; never passed to agents
+    min_confidence: float = Field(default=0.6, ge=0, le=1)
+    timeout_seconds: float = Field(default=10, gt=0, le=60)
+
+
 class FactoryConfig(Strict):
     schema_version: Literal[1]
     data_dir: str
@@ -324,6 +356,9 @@ class FactoryConfig(Strict):
     merge: Merge
     runtime: Runtime
     review: ReviewPolicy = ReviewPolicy()
+    spec: SpecPolicy = SpecPolicy()
+    routing: Routing = Routing()
+    decision_model: DecisionModel = DecisionModel()
 
 
 class LoadedConfig(BaseModel):

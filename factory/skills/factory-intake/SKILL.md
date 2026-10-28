@@ -27,6 +27,7 @@ explicitly (`BLOCKED`, controller state `NEEDS_INFO`).
   `factory-repo-map` result for vocabulary and existing behavior.
 - Factory policy summary: allowed repositories, modes and operations (to detect
   requests outside the granted permission scope).
+- `spec_mode` (`guided | auto`) and `max_decisions`.
 
 ## Procedure
 
@@ -46,10 +47,21 @@ explicitly (`BLOCKED`, controller state `NEEDS_INFO`).
 6. Record `open_questions` only for facts that change what must be built. Each
    question that blocks progress also gets a blocking finding; questions that the
    analysis rounds can answer from the repository are not blocking.
-7. Classify each future direction as `required_now`, `committed_next` or
+7. List `decisions`: product choices the request leaves open that change what is built
+   or how a user experiences it (limits, defaults, who may do what, what happens on
+   failure, which content/data, visual direction when the request asks for a look). See
+   `references/normalization.md` ("Decisions"). Each has `id` (`Q-1`...), the `question`
+   in the language of the request, `why` (what is built differently), 2-4 `options` when
+   the choice is discrete, and the `proposed` answer you would pick with the reason in it.
+   Order by impact, at most `max_decisions`. Not decisions: anything the request already
+   settles, technical choices the analysis decides from the repository, and hypothetical
+   future work. In `guided` mode the operator answers them before analysis; in `auto`
+   mode the proposals are assumed, so propose the safest reasonable default. A decision
+   with a proposal never makes the verdict `BLOCKED`.
+8. Classify each future direction as `required_now`, `committed_next` or
    `hypothetical` (see `references/normalization.md`). Speculative wishes are
    `hypothetical` and are not built.
-8. Check permission scope: a request to touch a repository, environment or
+9. Check permission scope: a request to touch a repository, environment or
    operation the policy does not grant is `BLOCKED`, not silently reduced.
 
 ## Output
@@ -62,6 +74,8 @@ Envelope per contract, `kind: "intake"`. Payload:
   "acceptance_criteria": ["The user sees only their own operations."],
   "constraints": ["Use the existing login"],
   "open_questions": [],
+  "decisions": [{"id": "Q-1", "question": "How many operations per page?", "why": "Sets the page size and the pagination controls",
+    "options": ["20", "50", "100"], "proposed": "20, the size of the existing lists"}],
   "future_directions": [{"description": "History export", "status": "hypothetical"}]
 }
 ```
