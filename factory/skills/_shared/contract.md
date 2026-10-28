@@ -97,6 +97,21 @@ no trailing commas, no placeholders like `<sha>`.
   completeness; the list of checked criteria does.
 - `payload` follows the skill-specific shape documented in its `SKILL.md`.
 
+### Severity and blocking
+
+Severity is the impact on a user or on the data, not how easy the fix is:
+
+| Situation | Severity | Blocking |
+|---|---|---|
+| Data the user entered or saved is lost, duplicated or silently wrong | `medium` or higher | yes |
+| The user gets stuck: no response, no way to retry or leave, a control that never re-enables | `medium` or higher | yes |
+| A requirement, contract, security minimum or another task breaks | per impact | yes |
+| A visible defect that has a workaround (unclear message, weak focus, misaligned layout) | `medium` | per requirement |
+| Maintainability, naming, duplication, style | `low` | no |
+
+A finding you describe as a real user-facing defect is never `low`. If you would write
+"the user loses", "is stuck", "is saved twice" or "cannot", it blocks.
+
 ### Verdict semantics
 
 | Verdict | Meaning | Controller effect |

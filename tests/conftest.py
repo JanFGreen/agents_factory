@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import shutil
 import subprocess
 from pathlib import Path
@@ -186,6 +188,21 @@ def review_pass(kind: str) -> FakeReply:
     return FakeReply(envelope(kind, payload={}))
 
 
+ALL_SCENARIOS_PASS = {s: "PASS" for s in ("timeout", "cancellation", "retry_idempotent", "lost_response", "double_submit",
+                                           "unmount_or_navigation", "partial_failure")}
+
+
+def request_inputs(request) -> dict:
+    return json.loads(request.prompt.split("<inputs>\n", 1)[1].split("\n</inputs>", 1)[0])
+
+
+def code_review_pass(request) -> FakeReply:
+    """A passing code review that answers the failure-mode table for every effect site it is given."""
+    sites = request_inputs(request).get("effect_sites", [])
+    modes = [{"path": s["path"], "operation": ", ".join(s["kinds"]), "scenarios": ALL_SCENARIOS_PASS, "evidence": "fixture"} for s in sites]
+    return FakeReply(envelope("code-review", payload={"failure_modes": modes}))
+
+
 def base_responders(path: str = "trivial") -> dict[str, Any]:
     responders: dict[str, Any] = {
         "factory-intake": FakeReply(envelope("intake", payload={"goal": "greeting exclaims", "acceptance_criteria": [], "constraints": [], "open_questions": []})),
@@ -194,7 +211,7 @@ def base_responders(path: str = "trivial") -> dict[str, Any]:
         "factory-spec-evaluate": spec_eval_reply(),
         "factory-implement": implement_by_task,
         "factory-root-cause": FakeReply(envelope("root-cause", payload={"hypothesis": "h"})),
-        "factory-code-review": review_pass("code-review"),
+        "factory-code-review": code_review_pass,
         "factory-security-review": review_pass("security-review"),
         "factory-ui-review": review_pass("ui-review"),
         "factory-product-verify": review_pass("product-verify"),

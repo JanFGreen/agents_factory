@@ -39,13 +39,13 @@ from .evidence import EvidenceStore, Producer
 from .features import NormalizedFeature, classify, load_feature, path_rank, record_classification, store_feature
 from .identities import InputIdentity, ResultKind, digest
 from .lanes import ParallelLanes
-from .policy import RISK_ORDER, evaluate_diff, max_risk, security_triggers
+from .policy import RISK_ORDER, effect_sites, evaluate_diff, is_test_file, max_risk, security_triggers
 from .preview import PreviewServer
 from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
 from .scheduler import (LeaseLost, NoSlot, acquire_lease, acquire_slot, check_fence, heartbeat, ready_tasks, release_allocation,
                         release_lease, validate_dag, wait_for_slot)
-from .schemas import (HEURISTICS, VISUAL_ASPECTS, ContractError, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, UiReviewPayload,
+from .schemas import (HEURISTICS, VISUAL_ASPECTS, CodeReviewPayload, ContractError, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, UiReviewPayload,
                       envelope_json_schema, parse_envelope)
 from .state import Store, new_id, now
 from .workspaces import GENERATED_EXCLUDES, GitError, WorkspaceManager, allocate_port, default_branch, git, release_job_resources
@@ -340,6 +340,7 @@ class Factory(ParallelLanes):
         extra_note: str = "",
         model: str | None = None,
         browser: dict | None = None,
+        scratch: Path | None = None,
     ) -> AgentResult:
         kind = skill.removeprefix("factory-")
         role = SKILL_ROLE[skill]
@@ -353,7 +354,7 @@ class Factory(ParallelLanes):
             binding = binding.model_copy(update={"model": review.cheaper_models[role]})
         try:
             result = self._call_agent_loop(job_id, skill, kind, role, binding, inputs, task_id=task_id, writable=writable,
-                                           purpose=purpose, extra_note=extra_note, browser=browser)
+                                           purpose=purpose, extra_note=extra_note, browser=browser, scratch=scratch)
         finally:
             if browser is not None:
                 self._close_browser(browser)
@@ -361,7 +362,8 @@ class Factory(ParallelLanes):
             result.screenshots = self._collect_screenshots(job_id, browser, self._agent_producer(result, skill))
         return result
 
-    def _call_agent_loop(self, job_id, skill, kind, role, binding, inputs, *, task_id, writable, purpose, extra_note, browser):
+    def _call_agent_loop(self, job_id, skill, kind, role, binding, inputs, *, task_id, writable, purpose, extra_note, browser,
+                         scratch=None):
         repairs_left = self.cfg.factory.attempts.structured_output_repair
         transient_left = 2
         error_note = ""
@@ -370,7 +372,7 @@ class Factory(ParallelLanes):
             try:
                 result_text, snapshot, handle, attempt_id, pdigest = self._run_agent_once(
                     job_id, skill, role, binding, inputs, task_id=task_id, writable=writable,
-                    note=extra_note + error_note, max_budget=self.cfg.factory.budget.max_cost_per_agent_call, browser=browser,
+                    note=extra_note + error_note, max_budget=self.cfg.factory.budget.max_cost_per_agent_call, browser=browser, scratch=scratch,
                 )
             except BaseException:
                 budgets.release(self.store, reservation)
@@ -396,7 +398,7 @@ class Factory(ParallelLanes):
                 raise StageBlocked(S.NEEDS_HUMAN, f"{skill} returned invalid structured output twice: {exc}") from exc
             return AgentResult(env, payload, handle.run_id, snapshot.model_id or binding.model, attempt_id, pdigest)
 
-    def _run_agent_once(self, job_id, skill, role, binding, inputs, *, task_id, writable, note, max_budget, browser=None):
+    def _run_agent_once(self, job_id, skill, role, binding, inputs, *, task_id, writable, note, max_budget, browser=None, scratch=None):
         job = self._job(job_id)
         lane = getattr(self._lane, "worktree", None)
         worktree = lane or (Path(job["worktree"]) if job["worktree"] else Path(job["repo_path"]))
@@ -435,11 +437,11 @@ class Factory(ParallelLanes):
         attempt_id = new_id("att")
         own = lane or (Path(job["worktree"]) if job["worktree"] else None)
         denied = tuple(default_denied_reads(self.data_dir, own))
-        granted = ((worktree,) if writable else ()) + ((Path(browser["evidence_dir"]),) if browser else ())
+        granted = ((worktree,) if writable else ()) + ((Path(browser["evidence_dir"]),) if browser else ()) + ((scratch,) if scratch else ())
         policy = SandboxPolicy(writable=granted, denied_read=denied, env={**self._toolchain_env(job_id), **(browser or {}).get("env", {})})
         tools = binding.tools if writable else [t for t in binding.tools if t in READ_ONLY_TOOLS + ["Bash"]]
-        if browser and "Bash" not in tools:
-            tools = [*tools, "Bash"]  # the browser CLI is driven through the shell
+        if (browser or scratch) and "Bash" not in tools:
+            tools = [*tools, "Bash"]  # the browser CLI and probe tests are driven through the shell
         try:
             binding, runtime_options, endpoint_slot = self._resolve_runtime(job_id, role, binding)
         except BaseException:
@@ -1409,17 +1411,27 @@ class Factory(ParallelLanes):
             skill = REVIEW_SKILLS[review]
             browser = self._browser_session(job_id) if review in BROWSER_REVIEWS else None
             notes = ctx.get("review_notes", {}).get(task_id, {})
-            res = self.call_agent(job_id, skill, {
-                "task": task, "spec": ctx.get("spec"), "diff": diff_text[:60000], "head_sha": frozen_head,
-                "gate_evidence": gate.payload if gate else None, "risk": self._job(job_id)["risk"],
-                "security_depth": security_depth, "surfaces": surfaces,
-                "spec_advisories": ctx.get("spec_advisories", []), **self._verification_context(job_id, "task", browser),
-                **({"design": self._design_context(job_id, with_text=True)} if review == "ui-review" else {}),
-                **(self._security_inputs(job_id, task_id, files) if review == "security-review" else {}),
-                **({"controller_note": notes[review]} if notes.get(review) else {}),
-            }, task_id=task_id, purpose="review", browser=browser,
-                model=self.cfg.factory.review.security.baseline_model if review == "security-review" and security_depth == "baseline" else None)
+            sites = effect_sites(files) if review == "code-review" else []
+            probe = self._probe_workspace(job_id, wt) if sites else None
+            try:
+                res = self.call_agent(job_id, skill, {
+                    "task": task, "spec": ctx.get("spec"), "diff": diff_text[:60000], "head_sha": frozen_head,
+                    "gate_evidence": gate.payload if gate else None, "risk": self._job(job_id)["risk"],
+                    "security_depth": security_depth, "surfaces": surfaces,
+                    "spec_advisories": ctx.get("spec_advisories", []), **self._verification_context(job_id, "task", browser),
+                    **({"design": self._design_context(job_id, with_text=True)} if review == "ui-review" else {}),
+                    **(self._security_inputs(job_id, task_id, files) if review == "security-review" else {}),
+                    **({"effect_sites": sites, "probe_workspace": self._probe_inputs(job_id, probe)} if sites else {}),
+                    **({"controller_note": notes[review]} if notes.get(review) else {}),
+                }, task_id=task_id, purpose="review", browser=browser, scratch=probe,
+                    model=self.cfg.factory.review.security.baseline_model if review == "security-review" and security_depth == "baseline" else None)
+            except BaseException:
+                if probe is not None:  # the probe copy must not outlive a failed call
+                    self._drop_probe(job_id, probe)
+                raise
             if WorkspaceManager.head(wt) != frozen_head or git(wt, "status", "--porcelain", "--", ".", *GENERATED_EXCLUDES):
+                if probe is not None:
+                    self._drop_probe(job_id, probe)
                 raise StageBlocked(S.NEEDS_HUMAN, "worktree changed while reviewers were running (reviewers are read-only)")
             verdict, findings = res.envelope.verdict, self._findings(res.envelope)
             payload = {"envelope": res.envelope.model_dump(), **({"screenshots": res.screenshots} if res.screenshots else {})}
@@ -1429,13 +1441,106 @@ class Factory(ParallelLanes):
                 if problem:
                     payload["controller"] = {"verdict": verdict, "problem": problem}
                 self._set_review_note(job_id, task_id, review, problem)
+            findings = self._keep_escalations(job_id, task_id, review, findings)
             if review == "security-review":
                 verdict, findings = self._triage_security(job_id, task_id, verdict, findings, {d.path for d in files})
+            if review == "code-review":
+                probes = self._run_probes(job_id, task_id, res, probe) if probe else []
+                verdict, findings, problem = self._hold_code_review(job_id, res, sites, probes, findings)
+                if probes:
+                    payload["probes"] = probes
+                if problem:
+                    payload["controller"] = {"verdict": verdict, "problem": problem}
+                self._set_review_note(job_id, task_id, review, problem)
             self._record(job_id, kind, verdict, payload, ident=ident,
                          producer=self._agent_producer(res, skill), task_id=task_id, findings=findings)
             verdicts[review] = verdict
             error_class = error_class or res.envelope.payload.get("error_class")
         return verdicts, error_class
+
+    # --- failure modes: effect sites, probe workspace, probes run by the trusted runner -------
+
+    def _probe_workspace(self, job_id: str, wt: Path) -> Path:
+        """A disposable, writable copy of the candidate where a reviewer writes probe tests."""
+        path = self.data_dir / "probes" / job_id / uuid.uuid4().hex[:12]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        repo = Path(self._job(job_id)["repo_path"])
+        git(repo, "worktree", "add", "--quiet", "--detach", str(path), WorkspaceManager.head(wt))
+        WorkspaceManager.link_from_checkout(repo, path, self._checks(job_id).link_from_checkout)
+        return path
+
+    def _probe_check(self, job_id: str):
+        return next((c for c in self._checks(job_id).checks if c.report == "junit"), None)
+
+    def _probe_inputs(self, job_id: str, probe: Path | None) -> dict[str, Any] | None:
+        unit = self._probe_check(job_id)
+        if probe is None or unit is None:
+            return None
+        command = [a.replace("{worktree}", str(probe)).replace("{python}", sys.executable) for a in unit.argv if "{report}" not in a]
+        return {"dir": str(probe), "test_command": command,
+                "how": "A writable copy of the candidate at head_sha (the review worktree stays read-only). To prove a "
+                       "suspected failure, add one test file here next to the code it probes (the repo's test naming), "
+                       "run it with test_command plus the file path, and name it in failure_modes[].probe. The controller "
+                       "re-runs every named probe in the trusted runner: a probe that fails there makes its finding blocking."}
+
+    def _run_probes(self, job_id: str, task_id: str | None, res: AgentResult, probe: Path) -> list[dict]:
+        """Re-run the reviewer's probe tests in the trusted sandbox; a failing probe is evidence of a defect."""
+        results: list[dict] = []
+        try:
+            unit = self._probe_check(job_id)
+            payload = res.payload if isinstance(res.payload, CodeReviewPayload) else None
+            named = {m.probe: m.finding_id for m in (payload.failure_modes if payload else []) if m.probe}
+            for rel, finding_id in list(named.items())[:5]:
+                target = (probe / rel).resolve()
+                if unit is None or not target.is_relative_to(probe.resolve()) or not target.is_file() or not is_test_file(rel):
+                    results.append({"probe": rel, "finding_id": finding_id, "verdict": "INVALID"})
+                    continue
+                spec = unit.model_copy(update={"name": "probe", "argv": [*unit.argv, rel], "min_tests": 1})
+                ev = self.runner.run_check(spec, probe, job_id=job_id, head_sha=WorkspaceManager.head(probe), tree_sha=None,
+                                           extra_env=self._toolchain_env(job_id), base_sha=self._job(job_id)["base_sha"])
+                artifact = self.evidence.put(target.read_bytes(), "probe", self._agent_producer(res, "factory-code-review"), job_id)
+                results.append({"probe": rel, "finding_id": finding_id, "verdict": ev.verdict, "artifact_id": artifact,
+                                "excerpt": ev.excerpt[-1500:]})
+            if results:
+                with self.store.tx() as conn:
+                    self.store.event(conn, job_id, "review.probes", {"task_id": task_id, "probes": [
+                        {k: r[k] for k in ("probe", "finding_id", "verdict")} for r in results]})
+        finally:
+            self._drop_probe(job_id, probe)
+        return results
+
+    def _drop_probe(self, job_id: str, probe: Path) -> None:
+        subprocess.run(["git", "worktree", "remove", "--force", str(probe)], cwd=self._job(job_id)["repo_path"], capture_output=True)
+        shutil.rmtree(probe, ignore_errors=True)
+
+    def _hold_code_review(self, job_id: str, res: AgentResult, sites: list[dict], probes: list[dict],
+                          findings: list[dict]) -> tuple[str, list[dict], str | None]:
+        """Every effectful file needs its failure-mode table; a probe that fails in the trusted runner blocks."""
+        verdict, payload = res.envelope.verdict, res.payload
+        if verdict not in ("PASS", "CHANGES") or not isinstance(payload, CodeReviewPayload):
+            return verdict, findings, None
+        covered = {m.path for m in payload.failure_modes}
+        if missing := [s["path"] for s in sites if s["path"] not in covered]:
+            problem = (f"failure_modes must cover every file with effects ({', '.join(missing)}): for each operation assess "
+                       f"timeout, cancellation, retry_idempotent, lost_response, double_submit, unmount_or_navigation, partial_failure")
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "code_review.inconclusive", {"missing": missing})
+            return "UNKNOWN", findings, problem
+        confirmed = {p["finding_id"]: p for p in probes if p["verdict"] == str(GateVerdict.FAIL_CODE)}
+        if not confirmed:
+            return verdict, findings, None
+        out = []
+        for f in findings:
+            if f["id"] in confirmed:
+                probe = confirmed.pop(f["id"])
+                f = {**f, "blocking": True, "severity": f["severity"] if f["severity"] in ("high", "critical") else "medium",
+                     "evidence_ids": [*f.get("evidence_ids", []), probe["artifact_id"]]}
+            out.append(f)
+        out += [{"id": fid or f"CTRL-probe-{i}", "severity": "medium", "blocking": True, "requirement_ids": [], "location": None,
+                 "problem": f"Probe {p['probe']} fails in the trusted runner: {p['excerpt'][-600:]}", "evidence_ids": [p["artifact_id"]],
+                 "expected_fix": "Make the probed failure mode safe and keep the probe as a regression test.", "status": "open"}
+                for i, (fid, p) in enumerate(confirmed.items())]
+        return "CHANGES", out, None
 
     # --- security review: triggers, known findings, triage -----------------------------
 
@@ -1734,6 +1839,50 @@ class Factory(ParallelLanes):
         notes.setdefault(task_id, {})[review] = note
         self._set_ctx(job_id, review_notes=notes)
 
+    # --- second look at the findings the task reviewers did not block on --------------------
+
+    def _open_nonblocking(self, job_id: str) -> list[dict]:
+        rows = self.store.all("SELECT finding_id, task_id, kind, severity, problem, location_json FROM findings"
+                              " WHERE job_id = ? AND status = 'open' AND blocking = 0 ORDER BY created_at LIMIT 80", (job_id,))
+        return [{"finding_id": r["finding_id"], "task_id": r["task_id"], "kind": r["kind"], "severity": r["severity"],
+                 "location": json.loads(r["location_json"] or "null"), "problem": r["problem"][:600]} for r in rows]
+
+    def _keep_escalations(self, job_id: str, task_id: str | None, review: str, findings: list[dict]) -> list[dict]:
+        """A reviewer may close an escalated finding (by not reporting it or marking it fixed) but never demote it."""
+        escalated = {(f["finding_id"], f["task_id"], f["kind"]) for f in self._ctx(job_id).get("escalated_findings", [])}
+        return [{**f, "blocking": True, "severity": f["severity"] if f["severity"] in ("medium", "high", "critical") else "medium"}
+                if (f["id"], task_id, review) in escalated and f.get("status", "open") == "open" else f for f in findings]
+
+    def _escalate_findings(self, job_id: str, res: AgentResult) -> list[dict]:
+        """Open non-blocking findings the acceptance evaluator shows to be user-facing defects become blocking.
+
+        Only findings that are on record, open and non-blocking can be escalated; the evaluator cannot invent one.
+        """
+        asked = res.envelope.payload.get("escalate") or []
+        if not isinstance(asked, list):
+            return []
+        known = {(f["finding_id"], f["task_id"]): f for f in self._open_nonblocking(job_id)}
+        escalated = []
+        for item in asked[:20]:
+            if not isinstance(item, dict):
+                continue
+            key = (item.get("finding_id"), item.get("task_id"))
+            match = known.get(key) or next((f for (fid, _), f in known.items() if fid == item.get("finding_id")), None)
+            if match is None or match in escalated:
+                continue
+            escalated.append({**match, "reason": str(item.get("reason", ""))[:500]})
+        if escalated:
+            with self.store.tx() as conn:
+                for f in escalated:
+                    conn.execute("UPDATE findings SET blocking = 1, severity = CASE WHEN severity IN ('high','critical') THEN severity"
+                                 " ELSE 'medium' END, updated_at = ? WHERE job_id = ? AND finding_id = ? AND task_id IS ? AND kind = ?",
+                                 (now(), job_id, f["finding_id"], f["task_id"], f["kind"]))
+                self.store.event(conn, job_id, "findings.escalated", {"findings": [
+                    {k: f[k] for k in ("finding_id", "task_id", "kind", "reason")} for f in escalated]})
+            self._set_ctx(job_id, escalated_findings=self._ctx(job_id).get("escalated_findings", []) + [
+                {k: f[k] for k in ("finding_id", "task_id", "kind")} for f in escalated])
+        return escalated
+
     def _inconclusive(self, job_id: str, stage: str, verdict: str, summary: str) -> bool:
         """BLOCKED/UNKNOWN from an evaluator is missing input, not a code defect: retry once, then stop for a human.
 
@@ -1762,8 +1911,12 @@ class Factory(ParallelLanes):
             "feature": self._feature(job_id), "spec": ctx.get("spec"), "acceptance_gate": gate.as_payload(),
             "head_sha": head, "tasks": [dict(r) for r in self.store.all("SELECT task_id, state FROM tasks WHERE job_id = ?", (job_id,))],
             **self._verification_context(job_id, "acceptance", browser), "controller_note": ctx.get("acceptance_note"),
+            "open_findings": self._open_nonblocking(job_id),
         }, purpose="acceptance", browser=browser)
         verdict = res.envelope.verdict if gate.verdict is GateVerdict.PASS else "CHANGES"
+        escalated = self._escalate_findings(job_id, res) if verdict in ("PASS", "CHANGES") else []
+        if escalated:
+            verdict = "CHANGES"
         if verdict in ("BLOCKED", "UNKNOWN") and self._inconclusive(job_id, "acceptance", verdict, res.envelope.summary):
             return
         payload = {"gate": gate.as_payload(), "envelope": res.envelope.model_dump(), **({"screenshots": res.screenshots} if res.screenshots else {})}
@@ -1773,11 +1926,11 @@ class Factory(ParallelLanes):
             self.controller.transition(job_id, S.INTEGRATION)
             return
         error_class = res.envelope.payload.get("error_class")
-        if error_class in ("spec", "decomposition"):
+        if error_class in ("spec", "decomposition") and not escalated:
             return self._back_to_analysis(job_id, f"feature acceptance found a {error_class} defect")
         # Green tasks do not make the parent DONE: reopen the task that owns the failure.
-        owner = res.envelope.payload.get("owner_task_id") or self.store.one(
-            "SELECT task_id FROM tasks WHERE job_id = ? ORDER BY order_idx DESC LIMIT 1", (job_id,))["task_id"]
+        owner = (escalated[0]["task_id"] if escalated and escalated[0]["task_id"] else None) or res.envelope.payload.get("owner_task_id") \
+            or self.store.one("SELECT task_id FROM tasks WHERE job_id = ? ORDER BY order_idx DESC LIMIT 1", (job_id,))["task_id"]
         with self.store.tx() as conn:
             conn.execute("UPDATE tasks SET state = 'REWORK' WHERE job_id = ? AND task_id = ?", (job_id, owner))
         self._set_ctx(job_id, current_task=owner, last_failure={owner: {"verdict": "FEATURE_ACCEPTANCE", "reason": gate.reason,

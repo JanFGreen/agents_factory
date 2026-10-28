@@ -269,6 +269,41 @@ class UiReviewPayload(Model):
         return self
 
 
+FAILURE_SCENARIOS = ("timeout", "cancellation", "retry_idempotent", "lost_response", "double_submit", "unmount_or_navigation",
+                     "partial_failure")
+ScenarioStatus = Literal["PASS", "FAIL", "NOT_APPLICABLE"]
+
+
+class FailureModeCheck(Model):
+    """What happens to one effectful operation when the world misbehaves; each answer cites code or a test."""
+
+    path: str = Field(max_length=500)
+    operation: str = Field(min_length=1, max_length=300)  # e.g. "POST /api/results via saveResult()"
+    scenarios: dict[Literal["timeout", "cancellation", "retry_idempotent", "lost_response", "double_submit",
+                            "unmount_or_navigation", "partial_failure"], ScenarioStatus]
+    evidence: str = Field(min_length=1, max_length=3000)  # file:line or test name per scenario, the reason for NOT_APPLICABLE
+    probe: str | None = Field(default=None, max_length=300)  # probe test file in the probe workspace that shows a FAIL
+    finding_id: str | None = None  # the finding that reports a FAIL
+
+    @model_validator(mode="after")
+    def _complete(self) -> "FailureModeCheck":
+        missing = [s for s in FAILURE_SCENARIOS if s not in self.scenarios]
+        if missing:
+            raise ValueError(f"failure scenarios not assessed for {self.path}: {missing}")
+        if "FAIL" in self.scenarios.values() and not self.finding_id:
+            raise ValueError(f"a FAIL scenario for {self.path} needs the finding_id that reports it")
+        return self
+
+
+class CodeReviewPayload(Model):
+    reviewed_head_sha: str = ""
+    diff_stats: dict[str, int] = {}
+    requirements_checked: list[str] = []
+    scope_creep: list[str] = []
+    reclassification_signal: dict[str, Any] = {}
+    failure_modes: list[FailureModeCheck] = []
+
+
 PAYLOADS: dict[str, type[Model]] = {
     "intake": IntakePayload,
     "classify-feature": ClassificationPayload,
@@ -280,6 +315,7 @@ PAYLOADS: dict[str, type[Model]] = {
     "decomposition-review": DecompositionPayload,
     "implement": ImplementPayload,
     "ui-review": UiReviewPayload,
+    "code-review": CodeReviewPayload,
 }
 
 

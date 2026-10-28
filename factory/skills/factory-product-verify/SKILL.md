@@ -30,6 +30,18 @@ request; green leaf tasks never make the parent DONE automatically.
   handle (URL/ports, synthetic accounts, seeded data) provided by the workspace manager.
 - Trusted runner access for executing flows (browser/API client) and the evidence store IDs it returns.
 - Perspective (`pm` or `qa`) and, for `qa`, access to the evaluator-only holdout pool.
+- `mode: feature-acceptance` only: `open_findings`, the open findings the task reviewers left
+  non-blocking (`finding_id`, `task_id`, `kind`, `severity`, `location`, `problem`).
+
+## Second look at non-blocking findings (feature acceptance)
+
+Task reviewers sometimes rate a real defect `low`. Read every entry of `open_findings` against
+the contract's "Severity and blocking" table and the whole feature as it now runs. When one
+describes a user-facing defect that is still present (lost or duplicated data, a stuck user, a
+requirement not met), confirm it in the candidate (code path, test or browser) and list it in
+`payload.escalate` as `{"finding_id", "task_id", "reason"}`, with the reason naming the evidence.
+The controller makes escalated findings blocking and reopens their task. Leave style and
+maintainability notes alone; do not escalate what you could not confirm.
 
 ## Procedure
 
@@ -84,9 +96,15 @@ Envelope per contract, `kind: "product-verify"`. Payload:
       "result": "PASS"
     }
   ],
-  "intent_gaps": []
+  "intent_gaps": [],
+  "escalate": [
+    {"finding_id": "F-2", "task_id": "TASK-08", "reason": "Confirmed in the served build: after opening the leaderboard and coming back, the typed nickname is gone and Retry saves under the old one (back-nickname.png)."}
+  ]
 }
 ```
+
+- `escalate` (feature acceptance only): open non-blocking findings confirmed as user-facing defects;
+  empty when there are none. Escalating any finding makes the acceptance `CHANGES`.
 
 - `PASS`: every required criterion `PASS` with evidence IDs; no intent gaps; no open blocking finding.
 - `CHANGES`: at least one criterion `FAIL` or an intent gap; findings cite the evidence

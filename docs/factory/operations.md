@@ -219,6 +219,34 @@ sandbox. Report (`report.json`): `success`, `false_accepts`, `false_rejects`, co
 and per task: final state, golden result, cost, attempts, rounds. With n < 30 the report marks the result as
 a pilot. The command makes real, paid Claude calls. Results: `acceptance-report.md`.
 
+## Failure modes, probes and the second look at findings
+
+Live finding (tic-tac-toe): an external review found four defects the factory reviewers passed.
+A retry duplicated a saved result, a hung request blocked saving, focus on a checked option was
+invisible, and the typed nickname was lost after visiting the leaderboard. The code reviewer had
+reported the last one, but rated it `low`. Three controls address this class:
+
+- **Failure-mode table (code review).** The controller finds the diff's effect sites itself
+  (`policy.effect_sites`: network calls, request handlers, persistent writes, browser storage,
+  timers). For every such file the code review must fill `failure_modes`: `timeout`,
+  `cancellation`, `retry_idempotent`, `lost_response`, `double_submit`, `unmount_or_navigation`
+  and `partial_failure`, each `PASS | FAIL | NOT_APPLICABLE` with evidence
+  (`code-review/references/failure-modes.md`). A missing file makes the review inconclusive
+  (`code_review.inconclusive`), and it re-runs with a controller note.
+- **Probes.** For those reviews the reviewer gets a writable, disposable copy of the candidate
+  (`data_dir/probes/…`, Bash, and the repo's `test_command`) and may prove a `FAIL` with a probe
+  test. The controller re-runs every named probe in the trusted runner. A probe that fails there
+  makes its finding blocking (at least `medium`) and the review `CHANGES`. A probe that passes
+  changes nothing. Probes are stored as `probe` artifacts (event `review.probes`), and the copy
+  is removed afterwards.
+- **Severity rubric** (`_shared/contract.md`): lost, duplicated or wrong user data and a stuck
+  user are blocking, whatever the size of the fix.
+- **Second look at acceptance.** Feature acceptance (product-verify) gets every open non-blocking
+  finding (`open_findings`) and may list confirmed user-facing defects in `payload.escalate`.
+  The controller accepts only findings that are on record, makes them blocking, sets acceptance
+  to `CHANGES` and reopens the finding's task (event `findings.escalated`). An escalation is
+  sticky: a later review may close the finding but cannot rate it non-blocking again.
+
 ## Dashboard
 
 ```sh

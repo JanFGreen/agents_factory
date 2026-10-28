@@ -25,6 +25,9 @@ complexity than the classification assumed.
 - Classification of the feature (`complexity_path`, `risk`) and repo-map conventions.
 - Builder handoff (claims to check) and open finding IDs from earlier attempts.
 - `spec_advisories`: non-blocking spec findings. Not handling one is never blocking by itself.
+- `effect_sites`: files of the diff the controller found to call the network, handle requests,
+  write persistent data, use browser storage or timers (`{path, kinds}`), and `probe_workspace`:
+  a writable copy of the candidate with the repo's `test_command`.
 
 ## Procedure
 
@@ -39,16 +42,28 @@ complexity than the classification assumed.
    `problem` (for a principle: its ID and the cost it causes), and an `expected_fix`
    (direction, not a patch). Do not report what the trusted gate enforces (complexity,
    sizes, copied blocks, layer imports, deprecated APIs, formatting): it already passed.
-5. Scope: changes outside `file_scope`, unrequested features, lockfile/API changes not
+5. Failure modes (every file in `effect_sites`, see `references/failure-modes.md`): for each
+   effectful operation fill one `failure_modes` entry and answer all seven scenarios
+   (`timeout`, `cancellation`, `retry_idempotent`, `lost_response`, `double_submit`,
+   `unmount_or_navigation`, `partial_failure`) with `PASS`, `FAIL` or `NOT_APPLICABLE`; the
+   `evidence` names the code line or test for each answer and the reason for each
+   `NOT_APPLICABLE`. Think as the network and the user would misbehave: the response never
+   arrives, arrives after the screen changed, arrives twice; the request succeeded but its
+   answer was lost and the client retries. A file left out makes the review inconclusive.
+   Each `FAIL` has a finding (`finding_id`). When you can, prove it: write a probe test in
+   `probe_workspace.dir`, run it with `test_command`, and name it in `probe`. The controller
+   re-runs the probe in the trusted runner; a probe that fails there makes the finding blocking.
+   A probe must fail because of the defect (assert the correct behavior), not because of a typo.
+6. Scope: changes outside `file_scope`, unrequested features, lockfile/API changes not
    in the task => `scope_creep` entries and findings.
-6. Re-check earlier finding IDs: if fixed with evidence, report them with status
+7. Re-check earlier finding IDs: if fixed with evidence, report them with status
    `fixed`; if not, keep the same ID with status `open`.
-7. Reclassification signal: if the diff reveals new interfaces, data migration,
+8. Reclassification signal: if the diff reveals new interfaces, data migration,
    cross-module coupling or a new trust boundary not in the plan, set
    `reclassification_signal` (suggest a higher class; never lower).
-8. Severity reflects impact; `blocking: true` for anything that violates a
-   requirement, a contract, security minimum or would break other tasks. Style-only
-   remarks are `low`, non-blocking, and few.
+9. Severity follows the contract's "Severity and blocking" table: lost, duplicated or wrong
+   user data and a stuck user are blocking even when the fix is small. Style-only remarks
+   are `low`, non-blocking, and few.
 
 ## Output
 
@@ -60,9 +75,18 @@ Envelope per contract, `kind: "code-review"`. Payload:
   "diff_stats": {"files": 3, "insertions": 142, "deletions": 18},
   "requirements_checked": ["REQ-2", "REQ-3"],
   "scope_creep": [],
-  "reclassification_signal": {"suggested_complexity": null, "reason": ""}
+  "reclassification_signal": {"suggested_complexity": null, "reason": ""},
+  "failure_modes": [
+    {"path": "src/ui/leaderboard-api.ts", "operation": "saveResult(): POST /api/results",
+     "scenarios": {"timeout": "FAIL", "cancellation": "NOT_APPLICABLE", "retry_idempotent": "FAIL", "lost_response": "FAIL",
+                   "double_submit": "PASS", "unmount_or_navigation": "PASS", "partial_failure": "NOT_APPLICABLE"},
+     "evidence": "timeout: fetch has no signal/deadline (leaderboard-api.ts:24), a hung request keeps the form in 'saving'. retry/lost_response: no request id, a retry after a lost 201 inserts a second row (results-route.ts:47). double_submit: Save is disabled while saving (SaveResultForm.tsx:88).",
+     "probe": "src/ui/leaderboard-api.hang.test.ts", "finding_id": "F-4"}
+  ]
 }
 ```
+
+- `failure_modes` covers every file in `effect_sites` (empty when there are none).
 
 - `PASS`: every task requirement traced, no open blocking finding.
 - `CHANGES`: at least one open finding the builder must address (same IDs across rounds).

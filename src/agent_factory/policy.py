@@ -63,6 +63,19 @@ _TRIGGER_RULES: list[tuple[str, re.Pattern[str]]] = [
     ("crypto", re.compile(r"\bcreateHash\(|\bcreateCipheriv\(|\bhashlib\.|\bMath\.random\(\)|\brandom\.(random|randint)\(")),
 ]
 
+# Operations whose failure modes (timeout, retry, lost response, double submit, unmount) need an explicit
+# analysis in code review: network calls, request handlers, persistent writes, browser storage, timers.
+_EFFECT_RULES: list[tuple[str, re.Pattern[str]]] = [
+    ("network-call", re.compile(r"\bfetch\(|\baxios\b|\bXMLHttpRequest\b|\bnew WebSocket\(|\bEventSource\(|"
+                                r"\brequests\.(get|post|put|patch|delete|request)\(|\bhttpx\.|\burllib\.request\b|\baiohttp\b")),
+    ("request-handler", re.compile(r"@(app|router|bp)\.(route|get|post|put|delete|patch)\b|\b(app|router|fastify)\.(get|post|put|patch|delete)\(|"
+                                   r"\bexport\s+(async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE)\b")),
+    ("persistent-write", re.compile(r"\b(INSERT|UPDATE|DELETE)\b\s+(INTO|\w+\s+SET|FROM)\b|\.(save|insert|upsert|update|delete|create)\w*\(\s*\w|"
+                                    r"\bwriteFile(Sync)?\(|\.commit\(\)", re.I)),
+    ("browser-storage", re.compile(r"\b(localStorage|sessionStorage|indexedDB)\b")),
+    ("timer", re.compile(r"\bset(Timeout|Interval)\(|\basyncio\.sleep\(")),
+]
+
 _WEAKENING = [
     re.compile(r"^\+.*(@pytest\.mark\.(skip|xfail)|pytest\.skip\(|unittest\.skip|\.skip\(|\.skipIf\(|\.only\(|\.todo\(|xit\(|xdescribe\()"),
     re.compile(r"^\+\s*assert\s+True\b"),
@@ -231,6 +244,19 @@ def scan_secrets(files: list[FileDiff]) -> list[str]:
             if kinds:
                 found.append(f"possible secret ({', '.join(kinds)}) added in {diff.path}:{line_no}; use configuration, never a literal")
     return found
+
+
+def effect_sites(files: list[FileDiff]) -> list[dict]:
+    """Production files whose added lines call the network, handle requests, persist data, use storage or timers."""
+    sites = []
+    for diff in files:
+        if diff.status == "D" or is_test_file(diff.path) or _DOCS.search(diff.path):
+            continue
+        added = "\n".join(line[1:] for line in diff.patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
+        kinds = [name for name, pattern in _EFFECT_RULES if pattern.search(added)]
+        if kinds:
+            sites.append({"path": diff.path, "kinds": kinds})
+    return sites
 
 
 def security_triggers(files: list[FileDiff], policy: Policy) -> list[dict[str, str]]:

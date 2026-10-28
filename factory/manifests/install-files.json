@@ -52,6 +52,7 @@
   "factory/skills/factory-code-review/examples/blocked.json",
   "factory/skills/factory-code-review/examples/fail.json",
   "factory/skills/factory-code-review/examples/pass.json",
+  "factory/skills/factory-code-review/references/failure-modes.md",
   "factory/skills/factory-code-review/references/review-checklist.md",
   "factory/skills/factory-decomposition-review/SKILL.md",
   "factory/skills/factory-decomposition-review/examples/blocked.json",
