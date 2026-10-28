@@ -325,6 +325,10 @@ class Controller:
         analysis_ok = self._g_analysis_current(job_id)
         if not analysis_ok.ok:
             return analysis_ok
+        if self._ctx(job_id).get("feature_ui_required"):
+            ok, why = self.evidence.current_pass(job_id, ResultKind.UI_REVIEW, self.identity(job_id), job_level=True)
+            if not ok:
+                return GuardResult(False, f"feature walkthrough: {why}")
         if self._ctx(job_id).get("feature_security_required"):
             ok, why = self.evidence.current_pass(job_id, ResultKind.SECURITY_REVIEW, self.identity(job_id), job_level=True)
             if not ok:

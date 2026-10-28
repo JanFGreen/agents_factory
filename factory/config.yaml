@@ -88,6 +88,10 @@ design:
   doc: docs/DESIGN.md
   references_dir: docs/design
   min_visual_score: 3                  # 1-5 score from screenshots; PASS with a lower score => CHANGES
+  # Feature walkthrough at acceptance (UI review in the browser): measured limits.
+  max_layout_shift_px: 8               # the main element must not jump when the state changes
+  min_text_contrast: 4.5               # text in every interaction state (WCAG AA)
+  min_indicator_contrast: 3.0          # focus ring / selection mark against its surroundings
 review:
   # Task reviews in tiers: CHANGES in a tier skips the following ones (they run after the fix).
   # Cheaper reviewer models for low-risk tasks: models.yaml `review_models`.

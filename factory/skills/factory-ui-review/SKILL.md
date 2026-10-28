@@ -82,6 +82,36 @@ environment: judge the running app, not only the diff.
 
 Render-only checks are real here: they are `PASS` or `FAIL`, not `NOT_RUN`.
 
+## Feature walkthrough (`mode: feature`)
+
+At feature acceptance you review the whole served feature once, as its user meets it. A task
+review looks at screens; this one looks at what using them is like. On top of the screen checks
+above (viewports, heuristics, visual scores, design direction), fill these four parts. The
+controller rejects a walkthrough that leaves one out and turns measurements over
+`inputs.limits` into blocking findings. Recipes are in `references/ux-heuristics.md`
+("Measuring in the browser").
+
+1. `flows`, at least two. Walk the **first run on a phone**: open the app at 360x640 and do the
+   main task from nothing. Then walk **the action the user repeats most**, such as the next
+   round, the next item or saving again. List every action in `steps` and count them in `actions`.
+   A repeated action that needs a confirmation step or a detour, or a flow that asks for a
+   choice it then forgets, is `FAIL` with a finding.
+2. `first_screen`: at 360x640 before scrolling, is the primary action visible **together with
+   every choice it depends on**? A visible "Start" button whose settings sit below the fold
+   counts as `required_choices_visible: false`.
+3. `layout_shifts`: for each state change in the flows (start, a move, the result, a new round,
+   messages appearing), measure the main element's `getBoundingClientRect()` before and after
+   and report `shift_px` (the largest change in top or left).
+4. `interaction_states`: for each kind of control (button, option, cell, input), screenshot and
+   measure `hover` and `focus`. For selectable controls also measure `checked`,
+   `checked+hover` and `checked+focus`. Report `text_contrast` from the computed text and
+   background colors, and `indicator_contrast` for the focus ring or selection mark against
+   the color next to it.
+
+Also check that the words name the people, not the mechanics. In a one-player mode the turn,
+the result and the score say "You" and "Computer" (with the mark in brackets), not only "X"
+and "O" (heuristic H2).
+
 ## Environment without a browser (`environment.kind: "local-checkout"`)
 
 The controller states the environment in `<inputs>`. When it is `local-checkout`, no browser,

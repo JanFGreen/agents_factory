@@ -1630,6 +1630,100 @@ class Factory(ParallelLanes):
         self.controller.transition(job_id, S.BUILD_TASK, "feature security review found unmitigated threats")
         return False
 
+    # --- feature walkthrough: the UI as a user meets it, measured -----------------------------
+
+    WALKTHROUGH_STATES = ("hover", "focus")
+    CHECKED_STATES = ("checked+hover", "checked+focus")
+
+    def _feature_ui_review(self, job_id: str, wt: Path, head: str, gate) -> bool:
+        """One walkthrough of the served feature: user flows, first screen, layout shifts, interaction states."""
+        browser = self._browser_session(job_id) if "ui" in (self._ctx(job_id).get("surfaces") or []) else None
+        self._set_ctx(job_id, feature_ui_required=browser is not None)
+        if browser is None:
+            return True
+        ok, _ = self.evidence.current_pass(job_id, ResultKind.UI_REVIEW, self._identity(job_id), job_level=True)
+        if ok:
+            self._close_browser(browser)
+            return True
+        ctx = self._ctx(job_id)
+        design = self.cfg.factory.design
+        diff_text = git(wt, "diff", f"{self._job(job_id)['base_sha']}..HEAD", "--", ".", ":(exclude)openspec")
+        res = self.call_agent(job_id, "factory-ui-review", {
+            "mode": "feature", "feature": self._feature(job_id), "spec": ctx.get("spec"), "diff": diff_text[:120000],
+            "head_sha": head, "gate_evidence": gate.as_payload(), "design": self._design_context(job_id, with_text=True),
+            "limits": {"max_layout_shift_px": design.max_layout_shift_px, "min_text_contrast": design.min_text_contrast,
+                       "min_indicator_contrast": design.min_indicator_contrast, "first_screen": "360x640"},
+            **self._verification_context(job_id, "acceptance", browser), "controller_note": ctx.get("ui_feature_note"),
+        }, purpose="acceptance", browser=browser)
+        verdict, extra, problem = self._hold_ui_review(job_id, res, browser)
+        findings = self._findings(res.envelope) + extra
+        if problem is None and verdict in ("PASS", "CHANGES"):
+            problem, measured = self._hold_walkthrough(res)
+            findings += measured
+            if measured:
+                verdict = "CHANGES"
+        if problem is not None:
+            verdict = "UNKNOWN"
+        if verdict in ("BLOCKED", "UNKNOWN") and self._inconclusive(job_id, "ui_feature", verdict, problem or res.envelope.summary):
+            return False
+        self._record(job_id, ResultKind.UI_REVIEW, verdict, {"scope": "feature", "envelope": res.envelope.model_dump(),
+                                                             **({"screenshots": res.screenshots} if res.screenshots else {})},
+                     producer=self._agent_producer(res, "factory-ui-review"), findings=findings)
+        if verdict == "PASS":
+            return True
+        owner = self._owner_task(job_id, findings, res.envelope.payload.get("owner_task_id"))
+        with self.store.tx() as conn:
+            conn.execute("UPDATE tasks SET state = 'REWORK' WHERE job_id = ? AND task_id = ?", (job_id, owner))
+        self._set_ctx(job_id, current_task=owner, last_failure={owner: {"verdict": "FEATURE_UI", "reason": res.envelope.summary,
+                                                                        "findings": findings}})
+        self.controller.transition(job_id, S.BUILD_TASK, "feature walkthrough found UX defects")
+        return False
+
+    def _hold_walkthrough(self, res: AgentResult) -> tuple[str | None, list[dict]]:
+        """(what the walkthrough left out, findings for measurements over the limits)."""
+        payload = res.payload
+        if not isinstance(payload, UiReviewPayload):
+            return "the feature walkthrough returned no payload", []
+        shots = {s["name"] for s in res.screenshots}
+        problems = []
+        if len(payload.flows) < 2:
+            problems.append("flows: walk at least the first run on a phone and the action the user repeats most")
+        if unknown := sorted({e for f in payload.flows for e in f.evidence_ids} - shots):
+            problems.append(f"flow evidence_ids that are not saved screenshots: {unknown}")
+        if payload.first_screen is None:
+            problems.append("first_screen: measure what 360x640 shows before scrolling")
+        if not payload.layout_shifts:
+            problems.append("layout_shifts: measure the main element before and after each state change of the flows")
+        states = {i.state for i in payload.interaction_states}
+        needed = set(self.WALKTHROUGH_STATES) | (set(self.CHECKED_STATES) if "checked" in states else set())
+        if missing := sorted(needed - states):
+            problems.append(f"interaction_states missing: {missing}")
+        if problems:
+            return "; ".join(problems), []
+        design = self.cfg.factory.design
+        findings = []
+
+        def add(fid: str, problem: str, evidence: list[str]) -> None:
+            findings.append({"id": fid, "severity": "medium", "blocking": True, "requirement_ids": [], "location": None,
+                             "problem": problem, "evidence_ids": evidence, "expected_fix": None, "status": "open"})
+
+        fs = payload.first_screen
+        if fs is not None and not (fs.primary_action_visible and fs.required_choices_visible):
+            add("CTRL-first-screen", f"At {fs.viewport} the first screen does not show the primary action together with the "
+                                     f"choices it needs before scrolling: {fs.note or 'see screenshots'}", fs.evidence_ids)
+        for i, shift in enumerate(payload.layout_shifts):
+            if shift.shift_px > design.max_layout_shift_px:
+                add(f"CTRL-shift-{i + 1}", f"{shift.element} moves {shift.shift_px:.0f}px when {shift.transition} "
+                                           f"(limit {design.max_layout_shift_px:.0f}px)", shift.evidence_ids)
+        for i, st in enumerate(payload.interaction_states):
+            if st.text_contrast is not None and st.text_contrast < design.min_text_contrast:
+                add(f"CTRL-contrast-{i + 1}", f"{st.control} in state {st.state}: text contrast {st.text_contrast:.2f}:1 "
+                                              f"(minimum {design.min_text_contrast}:1)", st.evidence_ids)
+            if st.indicator_contrast is not None and st.indicator_contrast < design.min_indicator_contrast:
+                add(f"CTRL-indicator-{i + 1}", f"{st.control} in state {st.state}: indicator contrast "
+                                               f"{st.indicator_contrast:.2f}:1 (minimum {design.min_indicator_contrast}:1)", st.evidence_ids)
+        return None, findings
+
     def _owner_task(self, job_id: str, findings: list[dict], proposed: str | None) -> str:
         """The task whose file scope holds the first blocking finding; else the reviewer's pick; else the last task."""
         tasks = self.store.all("SELECT task_id, spec_json FROM tasks WHERE job_id = ? ORDER BY order_idx", (job_id,))
@@ -1904,6 +1998,8 @@ class Factory(ParallelLanes):
         if gate.verdict is GateVerdict.ERROR_ENV:
             raise StageBlocked(S.BLOCKED_ENV, gate.reason)
         if gate.verdict is GateVerdict.PASS and not self._feature_security_review(job_id, wt, head, gate):
+            return
+        if gate.verdict is GateVerdict.PASS and not self._feature_ui_review(job_id, wt, head, gate):
             return
         browser = self._browser_session(job_id)
         res = self.call_agent(job_id, "factory-product-verify", {

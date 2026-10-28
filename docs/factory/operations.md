@@ -219,6 +219,32 @@ sandbox. Report (`report.json`): `success`, `false_accepts`, `false_rejects`, co
 and per task: final state, golden result, cost, attempts, rounds. With n < 30 the report marks the result as
 a pilot. The command makes real, paid Claude calls. Results: `acceptance-report.md`.
 
+## Feature walkthrough (UX at acceptance)
+
+Live finding (tic-tac-toe): the task UI reviews judged single screens and passed a game whose
+settings sat below the fold on a phone, whose next round took two clicks, whose board jumped by
+about 68px at start, and whose result said "X" instead of "You". A checked option under the pointer
+was also hard to read. So when the job has a `ui` surface and a served build, feature acceptance
+first runs one UI review in `mode: feature` (`_feature_ui_review`). Besides the screen checks, the
+reviewer must deliver:
+
+- `flows` (at least two): the first run on a phone and the action the user repeats most, with
+  every step, the number of actions and screenshots;
+- `first_screen`: at 360x640 before scrolling, the primary action **and** the choices it needs;
+- `layout_shifts`: the main element measured with `getBoundingClientRect()` before and after each
+  state change;
+- `interaction_states`: hover and focus (and checked, checked+hover, checked+focus for selectable
+  controls), with contrast measured from computed colors.
+
+A walkthrough that leaves a part out is inconclusive and re-runs with a note saying what is
+missing. Measurements over the limits in `config.yaml → design` (`max_layout_shift_px: 8`,
+`min_text_contrast: 4.5`, `min_indicator_contrast: 3.0`) and a first screen without the needed
+choices become blocking `CTRL-*` findings. The walkthrough then returns `CHANGES` and the owner
+task is rebuilt. The guard into INTEGRATION requires a current PASS of the walkthrough
+(`feature_ui_required`). Heuristic H2 now asks for people's names ("You", "Computer") rather than
+tokens ("X", "O"). `DESIGN.md` gains a "First screen and stability" section, and the focus ring
+must reach 3:1 on the checked background too.
+
 ## Failure modes, probes and the second look at findings
 
 Live finding (tic-tac-toe): an external review found four defects the factory reviewers passed.

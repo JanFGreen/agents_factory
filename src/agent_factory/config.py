@@ -399,6 +399,10 @@ class DesignPolicy(Strict):
     doc: str = "docs/DESIGN.md"  # repo-relative; written by the first UI task when missing
     references_dir: str = "docs/design"  # reference images (png/jpg/webp) the UI is compared with
     min_visual_score: int = Field(default=3, ge=1, le=5)  # a served UI review PASS with a lower score becomes CHANGES
+    # Feature walkthrough limits (measured in the browser by the UI reviewer at feature acceptance).
+    max_layout_shift_px: float = Field(default=8, ge=0)
+    min_text_contrast: float = Field(default=4.5, ge=1)
+    min_indicator_contrast: float = Field(default=3.0, ge=1)
 
     @field_validator("doc", "references_dir")
     @classmethod

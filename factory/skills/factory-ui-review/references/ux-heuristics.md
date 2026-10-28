@@ -8,7 +8,7 @@ cites the screenshot file names it is based on (`evidence_ids`).
 | Id | Heuristic | What to look for on the touched screens |
 |---|---|---|
 | H1 | Visibility of system status | Loading, saving and progress are visible; the current step/tab/selection is obvious; results of an action show at once |
-| H2 | Match with the real world | Words of the user, not of the code (no ids, enum names, "null"); familiar order and icons |
+| H2 | Match with the real world | Words of the user, not of the code (no ids, enum names, "null"); familiar order and icons; people named as people ("You", "Computer", a nickname), not only by their internal token ("X", "O", "player 1") |
 | H3 | User control and freedom | Back, cancel, undo or close on every step; no dead end; destructive actions confirm or can be undone |
 | H4 | Consistency and standards | Same action looks and is named the same everywhere; platform conventions (tabs, back, links) |
 | H5 | Error prevention | Disabled/validated inputs before submit, sensible defaults, no easy mis-tap next to a destructive control |
@@ -47,3 +47,16 @@ screens have nothing this heuristic covers; say why in `note`), `NOT_RUN` (only 
   List the compared images in `references`.
 - `exists: false`: `NOT_APPLICABLE`, unless this task was meant to create the document (then its
   absence is a `FAIL` finding against the spec).
+
+## Measuring in the browser (Playwright CLI)
+
+- **Element box:** `<cli> eval "() => JSON.stringify(document.querySelector('<selector>').getBoundingClientRect())"`.
+  Read it before and after the action. `shift_px` = max(|Δtop|, |Δleft|).
+- **Colors:** `<cli> eval "() => { const s = getComputedStyle(document.querySelector('<selector>')); return JSON.stringify([s.color, s.backgroundColor, s.outlineColor, s.boxShadow]); }"`.
+  Take the background from the nearest ancestor with a non-transparent one. Contrast =
+  (L1 + 0.05) / (L2 + 0.05) with the WCAG relative luminance of each sRGB color.
+- **States:** `<cli> hover <ref>` for hover; `<cli> press Tab` until the control has focus for
+  focus; click a selectable control, then hover or Tab back to it for the combined states. Take a
+  screenshot in each state and cite it.
+- **First screen:** `<cli> resize 360 640`, reload, screenshot without scrolling. An element is
+  above the fold when its `getBoundingClientRect().bottom <= 640`.

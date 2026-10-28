@@ -26,14 +26,19 @@ A feature that adds or changes user-visible screens and finds `exists: false`:
 2. **Tokens** – where they live in code (one module/theme file) and their values:
    - color: background, surface, text (primary/secondary), primary, accent, success, warning, danger,
      each with its dark-theme value; text contrast >= 4.5:1 on its background;
+   - interaction colors: hover, pressed, selected and focus ring; the focus ring has >= 3:1 against
+     every surface it can appear on, including the selected (checked) background;
    - typography: font family, a type scale (e.g. 12/14/16/20/24/32) with weights and line heights;
    - spacing: one scale (e.g. 4/8/12/16/24/32/48); radius; elevation/shadow.
 3. **Layout** – grid/max content width, breakpoints, safe areas, minimum touch target (44 px).
 4. **Components** – the shared components every screen uses (button, input, card, list item,
    empty/error state), with variants. New screens compose these; no ad-hoc styles.
-5. **Motion** – durations (e.g. 150-250 ms), easing, what animates (feedback, transitions) and
+5. **First screen and stability** – what a 360x640 phone shows before scrolling (the primary
+   action and every choice it needs), what collapses once the task is under way, and which
+   areas keep a fixed size so content does not jump when state changes.
+6. **Motion** – durations (e.g. 150-250 ms), easing, what animates (feedback, transitions) and
    reduced-motion behavior.
-6. **Voice** – tone of copy, terminology, how errors and empty states are worded.
+7. **Voice** – tone of copy, terminology, how errors and empty states are worded.
 
 ## Rules for code
 

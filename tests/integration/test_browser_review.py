@@ -66,18 +66,40 @@ def ui_payload(shot: str = "home-390.png", width: int = 390, score: int = 4, des
     }
 
 
-class UiReviewer(Reviewer):
-    """A browser UI reviewer; ``replies`` gives (save_screenshot, payload) per call, the last one repeats."""
+def walkthrough(shift: float = 0, first_ok: bool = True, contrast: float = 7.0, shot: str = "home-390.png",
+                design: str = "NOT_APPLICABLE") -> dict:
+    """A complete feature walkthrough (mode: feature) on top of the screen review."""
+    return {**ui_payload(shot, design=design),
+            "flows": [{"name": "first run on a phone", "steps": ["open", "pick mode", "start"], "actions": 2, "status": "PASS",
+                       "evidence_ids": [shot]},
+                      {"name": "next round", "steps": ["New round"], "actions": 1, "status": "PASS", "evidence_ids": [shot]}],
+            "first_screen": {"primary_action_visible": True, "required_choices_visible": first_ok, "evidence_ids": [shot]},
+            "layout_shifts": [{"transition": "Start round", "element": "the board", "shift_px": shift, "evidence_ids": [shot]}],
+            "interaction_states": [{"control": "option", "state": s, "text_contrast": contrast, "indicator_contrast": 3.5,
+                                    "evidence_ids": [shot]} for s in ("hover", "focus", "checked", "checked+hover", "checked+focus")]}
 
-    def __init__(self, replies: list[tuple[bool, dict]]):
+
+class UiReviewer(Reviewer):
+    """A browser UI reviewer; ``replies`` gives (save_screenshot, payload) per task review, the last one repeats.
+
+    Feature walkthroughs (mode: feature) answer from ``feature_replies`` (default: one complete walkthrough).
+    """
+
+    def __init__(self, replies: list[tuple[bool, dict]], feature_replies: list[tuple[bool, dict]] | None = None):
         super().__init__("ui-review")
         self.replies = replies
+        self.feature_replies = feature_replies or [(True, walkthrough())]
         self.inputs: list[dict] = []
+        self.feature_inputs: list[dict] = []
 
     def __call__(self, request) -> FakeReply:
         inputs = json.loads(request.prompt.split("<inputs>\n", 1)[1].split("\n</inputs>", 1)[0])
-        self.inputs.append(inputs)
-        save, payload = self.replies[min(len(self.inputs), len(self.replies)) - 1]
+        if inputs.get("mode") == "feature":
+            self.feature_inputs.append(inputs)
+            save, payload = self.feature_replies[min(len(self.feature_inputs), len(self.feature_replies)) - 1]
+        else:
+            self.inputs.append(inputs)
+            save, payload = self.replies[min(len(self.inputs), len(self.replies)) - 1]
         if save and inputs["environment"]["kind"] == "served":
             (Path(inputs["environment"]["browser"]["evidence_dir"]) / "home-390.png").write_bytes(PNG)
         return FakeReply(envelope("ui-review", payload=payload))
@@ -163,7 +185,7 @@ def test_ui_review_gets_the_design_direction_and_its_reference_images(make_env, 
     (repo / "docs" / "DESIGN.md").write_text("# Design\n\nCalm and focused.\n")
     (repo / "docs" / "design" / "home.png").write_bytes(PNG)
     _push(repo, "design direction")
-    ui = UiReviewer([(True, ui_payload(design="PASS"))])
+    ui = UiReviewer([(True, ui_payload(design="PASS"))], [(True, walkthrough(design="PASS"))])
     seen: dict[str, dict] = {}
 
     def spy(name, reply):
@@ -239,7 +261,7 @@ def test_screens_a_later_task_mounts_need_screenshots_but_no_visual_scores(make_
     env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
     job = env.submit()
     assert env.factory.run(job) == "READY_TO_MERGE"
-    assert [v for v, _ in _ui_results(env, job)] == ["PASS"]
+    assert [v for v, _ in _ui_results(env, job)] == ["PASS", "PASS"]  # the task review, then the feature walkthrough
     assert env.events(job, "ui_review.not_rendered")
 
 
@@ -251,3 +273,45 @@ def test_not_rendered_still_needs_the_screenshots_of_what_the_app_shows(make_env
     job = env.submit()
     assert env.factory.run(job) == "READY_TO_MERGE"
     assert [v for v, _ in _ui_results(env, job)][0] == "UNKNOWN"
+
+
+
+def _feature_results(env, job):
+    rows = env.store.all("SELECT verdict, payload_artifact_id FROM results WHERE job_id = ? AND kind = 'ui-review' AND task_id IS NULL"
+                         " ORDER BY rowid", (job,))
+    return [(r["verdict"], env.factory.evidence.read_json(r["payload_artifact_id"])) for r in rows]
+
+
+def test_the_feature_walkthrough_runs_once_at_acceptance_and_guards_integration(make_env, tmp_path, repo):
+    ui = UiReviewer([(True, ui_payload())])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert len(ui.feature_inputs) == 1 and ui.feature_inputs[0]["limits"]["max_layout_shift_px"] == 8
+    assert [v for v, _ in _feature_results(env, job)] == ["PASS"]
+    assert env.store.job_context(job)["feature_ui_required"] is True
+
+
+def test_a_walkthrough_without_flows_or_measurements_is_rerun_with_what_is_missing(make_env, tmp_path, repo):
+    partial = {**walkthrough(), "flows": [], "layout_shifts": []}
+    ui = UiReviewer([(True, ui_payload())], [(True, partial), (True, walkthrough())])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    note = ui.feature_inputs[1]["controller_note"]
+    assert "flows:" in note and "layout_shifts:" in note
+    assert [v for v, _ in _feature_results(env, job)] == ["PASS"]  # the inconclusive try is not recorded as a verdict
+
+
+def test_measurements_over_the_limits_block_and_reopen_a_task(make_env, tmp_path, repo):
+    bad = walkthrough(shift=68, first_ok=False, contrast=1.6)
+    ui = UiReviewer([(True, ui_payload())], [(True, bad), (True, walkthrough())])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    verdicts = [v for v, _ in _feature_results(env, job)]
+    assert verdicts == ["CHANGES", "PASS"]
+    ids = {r["finding_id"] for r in env.store.all("SELECT finding_id FROM findings WHERE job_id = ? AND task_id IS NULL"
+                                                   " AND kind = 'ui-review'", (job,))}
+    assert {"CTRL-first-screen", "CTRL-shift-1"} <= ids and any(i.startswith("CTRL-contrast-") for i in ids)
+    assert env.calls("factory-implement") == 2  # the owner task was rebuilt with the findings

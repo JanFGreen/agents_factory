@@ -246,6 +246,46 @@ class DesignDirectionCheck(Model):
     deviations: list[str] = []
 
 
+class UserFlow(Model):
+    """A task the user repeats, walked in the served app: every action counted, every screen shot."""
+
+    name: str = Field(min_length=1, max_length=200)  # e.g. "first run on a phone", "play the next round"
+    steps: list[str] = Field(min_length=1)  # one entry per user action, in order
+    actions: int = Field(ge=1)  # clicks, taps and key presses the flow needs
+    status: Literal["PASS", "FAIL"]
+    evidence_ids: list[str] = Field(min_length=1)
+    note: str = Field(default="", max_length=1000)
+
+
+class LayoutShift(Model):
+    """Measured in the browser: the main element's position before and after a state change."""
+
+    transition: str = Field(min_length=1, max_length=200)  # e.g. "Start round pressed"
+    element: str = Field(min_length=1, max_length=200)  # e.g. "the board"
+    shift_px: float = Field(ge=0)
+    evidence_ids: list[str] = []
+
+
+class FirstScreen(Model):
+    """What a phone shows before any scrolling (360x640): the primary action and every choice it needs."""
+
+    viewport: str = "360x640"
+    primary_action_visible: bool
+    required_choices_visible: bool
+    evidence_ids: list[str] = Field(min_length=1)
+    note: str = Field(default="", max_length=1000)
+
+
+class InteractionState(Model):
+    """One control in one state, with contrast measured from computed colors in the page."""
+
+    control: str = Field(min_length=1, max_length=200)
+    state: Literal["default", "hover", "focus", "checked", "checked+hover", "checked+focus", "disabled", "pressed"]
+    text_contrast: float | None = Field(default=None, ge=1, le=21)
+    indicator_contrast: float | None = Field(default=None, ge=1, le=21)  # focus ring or selection mark vs. its surroundings
+    evidence_ids: list[str] = []
+
+
 class UiReviewPayload(Model):
     viewports: list[UiViewport] = []
     states: dict[str, CheckStatus] = {}
@@ -258,6 +298,11 @@ class UiReviewPayload(Model):
     # the screenshots then prove what the app shows, and the visual judgement waits for the task that mounts them.
     touched_screens_rendered: bool = True
     not_rendered_reason: str = Field(default="", max_length=1000)
+    # Feature walkthrough (mode: feature): measured, not judged by eye.
+    flows: list[UserFlow] = []
+    first_screen: FirstScreen | None = None
+    layout_shifts: list[LayoutShift] = []
+    interaction_states: list[InteractionState] = []
 
     @model_validator(mode="after")
     def _unique(self) -> "UiReviewPayload":
