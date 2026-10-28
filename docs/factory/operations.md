@@ -354,3 +354,31 @@ Bez buildu (brak `dist/index.html`) albo bez programu (`factory doctor` → `bro
 recenzja zostaje `local-checkout`. Instalacja: `cd tools/playwright-cli && npm ci`; przeglądarka
 z cache Playwright (`playwright-cli install-browser`, jeśli jej brak). Aplikacja w podglądzie działa
 bez backendu (serwer API nie jest uruchamiany).
+
+## Ocena UX ze zrzutów i kierunek wizualny (`design`)
+
+ui-review ocenia ekrany ze zrzutów, które sam zrobił (`factory-ui-review/references/ux-heuristics.md`):
+
+- **heurystyki Nielsena** `H1`..`H10`: każda `PASS | FAIL | NOT_APPLICABLE | NOT_RUN` z zrzutami;
+- **jakość wizualna**: `hierarchy`, `layout`, `typography`, `color`, `consistency`, `polish`, ocena 1-5
+  z rubryki;
+- **zgodność z kierunkiem wizualnym** (`design_direction`): porównanie z `docs/DESIGN.md` i obrazami
+  wzorcowymi z `docs/design/` (ścieżki w `config.yaml` → `design`).
+
+Kontroler nie wierzy deklaracjom recenzenta i sprawdza wynik ui-review:
+
+- w trybie `served` każdy viewport z `browser.viewports` musi mieć zrzut zapisany w katalogu dowodów
+  i wskazany w `viewports[].evidence_ids`. Nazwy w `evidence_ids` muszą być zebranymi plikami.
+  Wszystkie 10 heurystyk i 6 ocen wizualnych muszą być wypełnione. Inaczej wynik to `UNKNOWN`
+  (zdarzenie `ui_review.inconclusive`), a recenzja powtarza się z `controller_note`, co brakowało.
+  Po 3 próbach job przechodzi do `NEEDS_HUMAN`;
+- PASS z oceną wizualną poniżej `design.min_visual_score` (domyślnie 3) zamienia się na CHANGES
+  z blokującym findingiem `CTRL-visual-<aspekt>`. Zamyka go dopiero kolejna recenzja, nie builder;
+- gdy `docs/DESIGN.md` istnieje, `design_direction` musi być `PASS` albo `FAIL`, także bez przeglądarki.
+
+Kierunek wizualny (`_shared/design-direction.md`): gdy feature zmienia ekrany, a repo nie ma
+`docs/DESIGN.md`, intake w trybie guided pyta o kierunek: 2-4 konkretne warianty (charakter,
+paleta, gęstość, produkt wzorcowy). Specyfikacja dodaje wymaganie zapisania dokumentu (kierunek,
+tokeny, layout, komponenty, motion, ton). Plan robi z niego pierwszy task UI, od którego zależą
+taski ekranów. Obrazy wzorcowe (makiety, zrzuty zaakceptowanego wyglądu) kładzie się do
+`docs/design/`. Recenzent je otwiera i porównuje z nimi zrzuty.

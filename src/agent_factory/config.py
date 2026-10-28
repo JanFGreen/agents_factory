@@ -382,6 +382,21 @@ class SpecPolicy(Strict):
     max_decisions: int = Field(default=7, ge=1, le=15)
 
 
+class DesignPolicy(Strict):
+    """The target repository's design direction: the visual contract UI work is built and reviewed against."""
+
+    doc: str = "docs/DESIGN.md"  # repo-relative; written by the first UI task when missing
+    references_dir: str = "docs/design"  # reference images (png/jpg/webp) the UI is compared with
+    min_visual_score: int = Field(default=3, ge=1, le=5)  # a served UI review PASS with a lower score becomes CHANGES
+
+    @field_validator("doc", "references_dir")
+    @classmethod
+    def _relative(cls, path: str) -> str:
+        if path.startswith("/") or ".." in path.split("/"):
+            raise ValueError(f"design paths are repo-relative: {path!r}")
+        return path
+
+
 Difficulty = Literal["easy", "medium", "hard"]
 
 
@@ -436,6 +451,7 @@ class FactoryConfig(Strict):
     review: ReviewPolicy = ReviewPolicy()
     spec: SpecPolicy = SpecPolicy()
     browser: BrowserConfig | None = None
+    design: DesignPolicy = DesignPolicy()
     routing: Routing = Routing()
     decision_model: DecisionModel = DecisionModel()
 

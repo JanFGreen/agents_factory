@@ -211,6 +211,58 @@ class ImplementPayload(Model):
     claimed_checks: list[str] = []
 
 
+CheckStatus = Literal["PASS", "FAIL", "NOT_APPLICABLE", "NOT_RUN"]
+HEURISTICS = ("H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8", "H9", "H10")  # Nielsen's ten usability heuristics
+VISUAL_ASPECTS = ("hierarchy", "layout", "typography", "color", "consistency", "polish")
+
+
+class UiViewport(Model):
+    name: str
+    width: int = Field(ge=200, le=4000)
+    evidence_ids: list[str] = []
+
+
+class HeuristicCheck(Model):
+    id: Literal["H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8", "H9", "H10"]
+    status: CheckStatus
+    evidence_ids: list[str] = []
+    note: str = Field(default="", max_length=1000)
+
+
+class VisualScore(Model):
+    """Visual quality of the touched screens judged from screenshots: 1 (broken) .. 5 (polished)."""
+
+    aspect: Literal["hierarchy", "layout", "typography", "color", "consistency", "polish"]
+    score: int | None = Field(default=None, ge=1, le=5)  # None: not rendered (local-checkout)
+    evidence_ids: list[str] = []
+    note: str = Field(default="", max_length=1000)
+
+
+class DesignDirectionCheck(Model):
+    """Conformance of the touched screens to the repository's design direction and reference images."""
+
+    status: CheckStatus = "NOT_APPLICABLE"
+    references: list[str] = []  # reference images compared, repo-relative
+    deviations: list[str] = []
+
+
+class UiReviewPayload(Model):
+    viewports: list[UiViewport] = []
+    states: dict[str, CheckStatus] = {}
+    a11y: dict[str, CheckStatus] = {}
+    consistency_notes: list[str] = []
+    heuristics: list[HeuristicCheck] = []
+    visual: list[VisualScore] = []
+    design_direction: DesignDirectionCheck = DesignDirectionCheck()
+
+    @model_validator(mode="after")
+    def _unique(self) -> "UiReviewPayload":
+        for name, ids in (("heuristics", [h.id for h in self.heuristics]), ("visual", [v.aspect for v in self.visual])):
+            if len(ids) != len(set(ids)):
+                raise ValueError(f"{name} entries must be unique")
+        return self
+
+
 PAYLOADS: dict[str, type[Model]] = {
     "intake": IntakePayload,
     "classify-feature": ClassificationPayload,
@@ -221,6 +273,7 @@ PAYLOADS: dict[str, type[Model]] = {
     "plan": PlanPayload,
     "decomposition-review": DecompositionPayload,
     "implement": ImplementPayload,
+    "ui-review": UiReviewPayload,
 }
 
 

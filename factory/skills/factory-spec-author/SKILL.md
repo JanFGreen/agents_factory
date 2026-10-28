@@ -6,6 +6,7 @@ description: Use in controller states MICRO_SPEC (trivial path) or ANALYSIS_ROUN
 # factory-spec-author
 
 Follow ../_shared/contract.md
+Follow ../_shared/design-direction.md
 
 ## Purpose
 
@@ -29,6 +30,7 @@ context; nobody approves it manually.
 - Standard/complex: the selected option (`decision.json`) when it exists in this round.
 - Previous round artifacts and open findings from `factory-spec-evaluate` (rounds 2-3).
 - `analysis_round_id` and the change id (e.g. `add-operation-history`).
+- `design`: the design direction document (`text` when it exists) and reference images.
 
 ## Procedure
 
@@ -55,6 +57,12 @@ context; nobody approves it manually.
 7. In rounds 2-3 change only artifacts touched by open findings; answer each
    finding ID in `checked_criteria` ("F-3 addressed: ...").
 8. Do not turn a current-code bug into a requirement; describe intended behavior.
+9. User-visible screens: when `design.exists` is false, add a requirement (source
+   `derived_necessary_dependency`, or `decision:Q-n` for the answered visual direction) to write
+   `design.doc` with the required sections of the design direction and the tokens module it
+   names, with an acceptance criterion that every new screen uses those tokens and shared
+   components. When it exists, add a constraint that new screens follow it; a request that
+   changes the look updates the document in the same change.
 
 ## Output
 

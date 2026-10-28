@@ -8,8 +8,13 @@
       "id": "F-2",
       "severity": "high",
       "blocking": true,
-      "requirement_ids": ["REQ-2"],
-      "location": {"path": "src/history/ui/TypeFilter.tsx", "line": 21},
+      "requirement_ids": [
+        "REQ-2"
+      ],
+      "location": {
+        "path": "src/history/ui/TypeFilter.tsx",
+        "line": 21
+      },
       "problem": "Custom div-based dropdown has no tabindex or key handlers; keyboard users cannot change the filter (accessibility snapshot ev-a11y-0210).",
       "expected_fix": "Use the existing components/Select.tsx or a native select with an accessible label.",
       "status": "open"
@@ -18,8 +23,13 @@
       "id": "F-3",
       "severity": "medium",
       "blocking": true,
-      "requirement_ids": ["REQ-2"],
-      "location": {"path": "src/history/ui/HistoryList.tsx", "line": 64},
+      "requirement_ids": [
+        "REQ-2"
+      ],
+      "location": {
+        "path": "src/history/ui/HistoryList.tsx",
+        "line": 64
+      },
       "problem": "On forced 500 from /api/history the mobile view renders an empty white area with no message or retry (screenshot ev-shot-0212).",
       "expected_fix": "Render the shared ErrorState component with a retry action for failed loads.",
       "status": "open"
@@ -35,11 +45,55 @@
   "limitations": [],
   "payload": {
     "viewports": [
-      {"name": "desktop", "width": 1280, "evidence_ids": ["ev-shot-0211"]},
-      {"name": "mobile", "width": 375, "evidence_ids": ["ev-shot-0212"]}
+      {
+        "name": "desktop",
+        "width": 1280,
+        "evidence_ids": [
+          "ev-shot-0211"
+        ]
+      },
+      {
+        "name": "mobile",
+        "width": 375,
+        "evidence_ids": [
+          "ev-shot-0212"
+        ]
+      }
     ],
-    "states": {"loading": "PASS", "empty": "PASS", "error": "FAIL", "success": "PASS"},
-    "a11y": {"keyboard": "FAIL", "focus_visible": "FAIL", "labels": "PASS", "contrast": "PASS"},
-    "consistency_notes": ["TypeFilter duplicates components/Select.tsx with a different style"]
+    "states": {
+      "loading": "PASS",
+      "empty": "PASS",
+      "error": "FAIL",
+      "success": "PASS"
+    },
+    "a11y": {
+      "keyboard": "FAIL",
+      "focus_visible": "FAIL",
+      "labels": "PASS",
+      "contrast": "PASS"
+    },
+    "consistency_notes": [
+      "TypeFilter duplicates components/Select.tsx with a different style"
+    ],
+    "visual": [
+      {
+        "aspect": "layout",
+        "score": 2,
+        "evidence_ids": [
+          "ev-shot-0212"
+        ],
+        "note": "Error state leaves an empty white area on mobile"
+      }
+    ],
+    "heuristics": [
+      {
+        "id": "H9",
+        "status": "FAIL",
+        "evidence_ids": [
+          "ev-shot-0212"
+        ],
+        "note": "No message or retry after a failed load"
+      }
+    ]
   }
 }

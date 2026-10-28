@@ -9,27 +9,199 @@
       "severity": "low",
       "blocking": false,
       "requirement_ids": [],
-      "location": {"path": "src/history/ui/HistoryList.tsx", "line": 112},
-      "problem": "Amount column is left-aligned while other money columns in the app are right-aligned (evidence ev-shot-0201).",
+      "location": {
+        "path": "src/history/ui/HistoryList.tsx",
+        "line": 112
+      },
+      "problem": "Amount column is left-aligned while other money columns in the app are right-aligned (history-1280.png).",
       "expected_fix": "Use the existing MoneyCell component for alignment.",
       "status": "open"
     }
   ],
   "checked_criteria": [
     "Environment serves candidate tree 9f1c2e7",
-    "Desktop 1280 px and mobile 375 px screenshots of /history",
+    "Desktop 1280 px and mobile 390 px screenshots of /history",
     "Loading, empty, error and success states",
     "Keyboard-only filter + pagination flow",
-    "Focus visibility, labels and contrast of new filter controls"
+    "Focus visibility, labels and contrast of new filter controls",
+    "Nielsen heuristics H1-H10 and visual scores from the screenshots; docs/DESIGN.md and docs/design/history.png"
   ],
   "limitations": [],
   "payload": {
     "viewports": [
-      {"name": "desktop", "width": 1280, "evidence_ids": ["ev-shot-0201", "ev-shot-0203"]},
-      {"name": "mobile", "width": 375, "evidence_ids": ["ev-shot-0202", "ev-shot-0204"]}
+      {
+        "name": "desktop",
+        "width": 1280,
+        "evidence_ids": [
+          "history-1280.png",
+          "history-empty-1280.png"
+        ]
+      },
+      {
+        "name": "mobile",
+        "width": 390,
+        "evidence_ids": [
+          "history-390.png",
+          "history-error-390.png"
+        ]
+      }
     ],
-    "states": {"loading": "PASS", "empty": "PASS", "error": "PASS", "success": "PASS"},
-    "a11y": {"keyboard": "PASS", "focus_visible": "PASS", "labels": "PASS", "contrast": "PASS"},
-    "consistency_notes": ["Pagination reuses components/Pager.tsx", "Filter select reuses components/Select.tsx"]
+    "states": {
+      "loading": "PASS",
+      "empty": "PASS",
+      "error": "PASS",
+      "success": "PASS"
+    },
+    "a11y": {
+      "keyboard": "PASS",
+      "focus_visible": "PASS",
+      "labels": "PASS",
+      "contrast": "PASS"
+    },
+    "consistency_notes": [
+      "Pagination reuses components/Pager.tsx",
+      "Filter select reuses components/Select.tsx"
+    ],
+    "heuristics": [
+      {
+        "id": "H1",
+        "status": "PASS",
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Skeleton rows while loading"
+      },
+      {
+        "id": "H2",
+        "status": "PASS",
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Operation types shown with their product names"
+      },
+      {
+        "id": "H3",
+        "status": "PASS",
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Filter has a clear reset"
+      },
+      {
+        "id": "H4",
+        "status": "PASS",
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Pager and Select are the shared components"
+      },
+      {
+        "id": "H5",
+        "status": "PASS",
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Date range cannot end before it starts"
+      },
+      {
+        "id": "H6",
+        "status": "PASS",
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Active filters stay visible as chips"
+      },
+      {
+        "id": "H7",
+        "status": "PASS",
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Enter applies the filter"
+      },
+      {
+        "id": "H8",
+        "status": "PASS",
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "One primary action, no duplicated totals"
+      },
+      {
+        "id": "H9",
+        "status": "PASS",
+        "evidence_ids": [
+          "history-error-390.png"
+        ],
+        "note": "Load error explains and offers retry"
+      },
+      {
+        "id": "H10",
+        "status": "PASS",
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Empty state explains how operations appear"
+      }
+    ],
+    "visual": [
+      {
+        "aspect": "hierarchy",
+        "score": 4,
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Title, filter, list in reading order"
+      },
+      {
+        "aspect": "layout",
+        "score": 4,
+        "evidence_ids": [
+          "history-390.png"
+        ],
+        "note": "8/16 spacing scale, no overflow on mobile"
+      },
+      {
+        "aspect": "typography",
+        "score": 4,
+        "evidence_ids": [
+          "history-390.png"
+        ],
+        "note": "Type scale from tokens; body 16 px"
+      },
+      {
+        "aspect": "color",
+        "score": 4,
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Token palette; amounts in text-primary"
+      },
+      {
+        "aspect": "consistency",
+        "score": 3,
+        "evidence_ids": [
+          "history-1280.png"
+        ],
+        "note": "Amount alignment differs from other money columns (F-1)"
+      },
+      {
+        "aspect": "polish",
+        "score": 4,
+        "evidence_ids": [
+          "history-empty-1280.png"
+        ],
+        "note": "Designed empty state with illustration"
+      }
+    ],
+    "design_direction": {
+      "status": "PASS",
+      "references": [
+        "docs/design/history.png"
+      ],
+      "deviations": [
+        "Amount column alignment (F-1, low)"
+      ]
+    }
   }
 }

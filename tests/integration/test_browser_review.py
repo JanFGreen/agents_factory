@@ -10,8 +10,9 @@ from pathlib import Path
 import yaml
 
 from agent_factory.adapters.fake import FakeReply, envelope
+from agent_factory.schemas import HEURISTICS, VISUAL_ASPECTS
 
-from ..conftest import UNIT_CHECK, git_commit_all, sh
+from ..conftest import UNIT_CHECK, git_commit_all, implement_by_task, sh
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"fake-image"
 BUILD = {"name": "web-build", "argv": ["{python}", "-c", "import pathlib; d = pathlib.Path('dist'); d.mkdir(exist_ok=True); "
@@ -56,9 +57,51 @@ class Reviewer:
         return FakeReply(envelope(self.kind, payload={}))
 
 
+def ui_payload(shot: str = "home-390.png", width: int = 390, score: int = 4, design: str = "NOT_APPLICABLE") -> dict:
+    return {
+        "viewports": [{"name": "mobile", "width": width, "evidence_ids": [shot]}],
+        "heuristics": [{"id": h, "status": "PASS", "evidence_ids": [shot]} for h in HEURISTICS],
+        "visual": [{"aspect": a, "score": score, "evidence_ids": [shot], "note": f"{a} ok"} for a in VISUAL_ASPECTS],
+        "design_direction": {"status": design},
+    }
+
+
+class UiReviewer(Reviewer):
+    """A browser UI reviewer; ``replies`` gives (save_screenshot, payload) per call, the last one repeats."""
+
+    def __init__(self, replies: list[tuple[bool, dict]]):
+        super().__init__("ui-review")
+        self.replies = replies
+        self.inputs: list[dict] = []
+
+    def __call__(self, request) -> FakeReply:
+        inputs = json.loads(request.prompt.split("<inputs>\n", 1)[1].split("\n</inputs>", 1)[0])
+        self.inputs.append(inputs)
+        save, payload = self.replies[min(len(self.inputs), len(self.replies)) - 1]
+        if save and inputs["environment"]["kind"] == "served":
+            (Path(inputs["environment"]["browser"]["evidence_dir"]) / "home-390.png").write_bytes(PNG)
+        return FakeReply(envelope("ui-review", payload=payload))
+
+
+def implement_ui(request) -> FakeReply:
+    """The usual greeting change plus a page, so the job diff has a UI surface."""
+    reply = implement_by_task(request)
+    return FakeReply(reply.envelope, edits={**reply.edits, "app/page.html": "<p>hi</p>\n"})
+
+
+def _push(repo: Path, message: str) -> None:
+    git_commit_all(repo, message)
+    sh(repo, "git", "push", "-q", "origin", "trunk")
+
+
+def _ui_results(env, job):
+    rows = env.store.all("SELECT verdict, payload_artifact_id FROM results WHERE job_id = ? AND kind = 'ui-review' ORDER BY rowid", (job,))
+    return [(r["verdict"], env.factory.evidence.read_json(r["payload_artifact_id"])) for r in rows]
+
+
 def test_reviewer_gets_the_served_build_a_browser_and_its_screenshots_are_kept(make_env, tmp_path, repo):
     reviewer = Reviewer("product-verify")
-    env, log = _env(make_env, tmp_path, repo, {"factory-product-verify": reviewer})
+    env, log = _env(make_env, tmp_path, repo, {"factory-product-verify": reviewer, "factory-ui-review": UiReviewer([(True, ui_payload())])})
     job = env.submit()
     assert env.factory.run(job) == "READY_TO_MERGE"
 
@@ -113,3 +156,77 @@ def test_a_missing_browser_binary_falls_back_to_local_checkout(make_env, tmp_pat
     job = env.submit()
     assert env.factory.run(job) == "READY_TO_MERGE"
     assert seen and all('"kind": "local-checkout"' in p for p in seen)
+
+
+def test_ui_review_gets_the_design_direction_and_its_reference_images(make_env, tmp_path, repo):
+    (repo / "docs" / "design").mkdir(parents=True)
+    (repo / "docs" / "DESIGN.md").write_text("# Design\n\nCalm and focused.\n")
+    (repo / "docs" / "design" / "home.png").write_bytes(PNG)
+    _push(repo, "design direction")
+    ui = UiReviewer([(True, ui_payload(design="PASS"))])
+    seen: dict[str, dict] = {}
+
+    def spy(name, reply):
+        def respond(request):
+            seen[name] = json.loads(request.prompt.split("<inputs>\n", 1)[1].split("\n</inputs>", 1)[0])
+            return reply(request) if callable(reply) else reply
+        return respond
+
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    for skill in ("factory-intake", "factory-spec-author", "factory-implement"):
+        env.runtime.responders[skill] = spy(skill, env.runtime.responders[skill])
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    design = ui.inputs[0]["design"]
+    assert design["exists"] and design["references"] == ["docs/design/home.png"] and "Calm and focused" in design["text"]
+    assert seen["factory-intake"]["design"]["exists"] and "text" not in seen["factory-intake"]["design"]
+    assert "Calm and focused" in seen["factory-spec-author"]["design"]["text"]
+    assert seen["factory-implement"]["design"]["doc"] == "docs/DESIGN.md"
+
+
+def test_a_ui_review_without_saved_screenshots_is_rerun_with_a_controller_note(make_env, tmp_path, repo):
+    ui = UiReviewer([(False, ui_payload()), (True, ui_payload())])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    results = _ui_results(env, job)
+    assert results[0][0] == "UNKNOWN" and "no saved screenshot cited for viewport width(s) [390]" in results[0][1]["controller"]["problem"]
+    assert "controller_note" not in ui.inputs[0] and "[390]" in ui.inputs[1]["controller_note"]
+    assert results[-1][0] == "PASS"
+
+
+def test_a_ui_review_that_skips_heuristics_or_cites_unknown_files_is_inconclusive(make_env, tmp_path, repo):
+    partial = ui_payload()
+    partial["heuristics"] = partial["heuristics"][:3]
+    partial["visual"][0]["evidence_ids"] = ["made-up.png"]
+    ui = UiReviewer([(True, partial)])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "NEEDS_HUMAN"  # inconclusive on every retry
+    problem = _ui_results(env, job)[0][1]["controller"]["problem"]
+    assert "heuristics not assessed: ['H4'" in problem and "evidence_ids that are not saved screenshots: ['made-up.png']" in problem
+
+
+def test_a_ui_pass_with_a_visual_score_below_the_floor_becomes_changes(make_env, tmp_path, repo):
+    ui = UiReviewer([(True, ui_payload(score=2)), (True, ui_payload())])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    verdicts = [v for v, _ in _ui_results(env, job)]
+    assert verdicts[0] == "CHANGES" and verdicts[-1] == "PASS"
+    findings = env.store.all("SELECT finding_id, blocking, status FROM findings WHERE job_id = ? AND kind = 'ui-review'", (job,))
+    assert {f["finding_id"] for f in findings} == {f"CTRL-visual-{a}" for a in VISUAL_ASPECTS}
+    assert all(f["blocking"] == 1 and f["status"] == "fixed" for f in findings)  # closed by the next review, not by the builder
+
+
+def test_an_existing_design_doc_must_be_checked_even_without_a_browser(make_env, tmp_path, repo):
+    (repo / "docs").mkdir()
+    (repo / "docs" / "DESIGN.md").write_text("# Design\n")
+    _push(repo, "design doc")
+    ui = UiReviewer([(False, {"design_direction": {"status": "NOT_APPLICABLE"}}), (False, {"design_direction": {"status": "PASS"}})])
+    env = make_env("trivial", responders={"factory-ui-review": ui, "factory-implement": implement_ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    results = _ui_results(env, job)
+    assert results[0][0] == "UNKNOWN" and "docs/DESIGN.md exists" in results[0][1]["controller"]["problem"]
+    assert results[-1][0] == "PASS" and ui.inputs[0]["environment"]["kind"] == "local-checkout"

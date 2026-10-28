@@ -116,3 +116,13 @@ def test_models_yaml_rejects_unknown_sections_and_needs_claude(tmp_path):
     (d / "models.yaml").write_text(yaml.safe_dump(models))
     with pytest.raises(ConfigError, match="runtimes.claude is required"):
         load_config(d)
+
+
+def test_design_direction_paths_are_repo_relative(tmp_path):
+    d = make_factory_dir(tmp_path)
+    cfg = load_config(d)
+    assert cfg.factory.design.doc == "docs/DESIGN.md" and cfg.factory.design.min_visual_score == 3
+    text = (d / "config.yaml").read_text().replace("doc: docs/DESIGN.md", "doc: ../DESIGN.md")
+    (d / "config.yaml").write_text(text)
+    with pytest.raises(ConfigError, match="repo-relative"):
+        load_config(d)

@@ -31,6 +31,9 @@ The operator answers them in `guided` mode; in `auto` mode the `proposed` answer
 | "Who may raise the limits: everyone, or paying users only?" | "Export later?" (future direction, `hypothetical`) |
 
 - Ask in the language of the request; keep the question answerable in one line.
+- Visual direction (only when a UI is built or changed and the repository has no design
+  direction document): "Which look should the app have?" with concrete directions as options,
+  each naming personality, palette, density and a reference product. Not: "Should it look good?".
 - `why` names what is built differently; `options` are mutually exclusive when given.
 - `proposed` is a full answer, not "it depends"; prefer the existing product's behaviour,
   then the safest and simplest choice.

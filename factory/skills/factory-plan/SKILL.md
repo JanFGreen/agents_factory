@@ -7,6 +7,7 @@ description: Use in controller state DECOMPOSE, after the selected option and a 
 
 Follow ../_shared/contract.md
 Follow ../_shared/engineering-principles.md
+Follow ../_shared/design-direction.md
 
 ## Purpose
 
@@ -59,14 +60,18 @@ the micro-spec).
    tasks or tasks with an empty `file_scope`. End-to-end acceptance of the whole
    feature against the original request is the controller's FEATURE_ACCEPTANCE stage;
    do not add a separate end-to-end task for it. Green leaf tasks never mark the parent done.
-8. Mark `parallel_safe_with` only when file scopes and contracts are disjoint and no
+8. UI: when the spec requires the design direction document (`design.exists` is false), the
+   first UI task writes `design.doc`, the tokens module and the shared base components it
+   lists; every task that builds a screen `depends_on` it. Screens never define their own
+   colors, type sizes or spacing.
+9. Mark `parallel_safe_with` only when file scopes and contracts are disjoint and no
    lockfile/API change is shared.
-9. Classify every future direction as `required_now`, `committed_next` or
+10. Classify every future direction as `required_now`, `committed_next` or
    `hypothetical`. Build only `required_now`; record `committed_next` as
    `future_constraints` on affected tasks; `hypothetical` is a note only.
-10. Check limits: depth <= 3, leaves <= 20. If the feature cannot fit, return
+11. Check limits: depth <= 3, leaves <= 20. If the feature cannot fit, return
    `BLOCKED` with a staging proposal (epics) in findings; never drop requirements.
-11. Self-check before output: acyclic `depends_on`, every requirement covered, every
+12. Self-check before output: acyclic `depends_on`, every requirement covered, every
     referenced task ID exists (see `references/task-schema.md`).
 
 ## Output

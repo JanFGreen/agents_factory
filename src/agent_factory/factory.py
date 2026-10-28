@@ -43,7 +43,8 @@ from .preview import PreviewServer
 from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
 from .scheduler import LeaseLost, NoSlot, acquire_lease, acquire_slot, check_fence, heartbeat, ready_tasks, release_allocation, release_lease, validate_dag
-from .schemas import ContractError, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, envelope_json_schema, parse_envelope
+from .schemas import (HEURISTICS, VISUAL_ASPECTS, ContractError, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, UiReviewPayload,
+                      envelope_json_schema, parse_envelope)
 from .state import Store, new_id, now
 from .workspaces import GENERATED_EXCLUDES, GitError, WorkspaceManager, allocate_port, default_branch, git, release_job_resources
 
@@ -75,6 +76,7 @@ REVIEW_SKILLS = {
 }
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep"]
 BROWSER_REVIEWS = ("ui-review", "product-verify")  # reviews that look at the served web build when there is one
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 _FOLLOW = re.compile(r"^Follow \.\./_shared/([\w.-]+\.md)\s*$", re.M)  # shared documents a skill names
 
 
@@ -641,6 +643,7 @@ class Factory(ParallelLanes):
             res = self.call_agent(job_id, "factory-intake", {
                 "feature": self._feature(job_id), "repo_map": self._repo_map(job_id),
                 "spec_mode": mode, "max_decisions": self.cfg.factory.spec.max_decisions,
+                "design": self._design_context(job_id),
             })
             if res.envelope.verdict == "BLOCKED":
                 raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
@@ -814,7 +817,7 @@ class Factory(ParallelLanes):
         res = self.call_agent(job_id, "factory-spec-author", {
             "mode": "micro" if micro else "openspec", "feature": self._feature(job_id), "intake": ctx.get("intake"),
             "decision": ctx.get("decision"), "previous_spec": ctx.get("spec"), "previous_findings": ctx.get("analysis_findings", []),
-            "change_id": ctx["change_id"],
+            "change_id": ctx["change_id"], "design": self._design_context(job_id, with_text=True),
         })
         if res.payload is None:
             raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
@@ -967,7 +970,7 @@ class Factory(ParallelLanes):
             "spec_evaluation": {"verdict": "PASS", "spec_digest": ctx.get("spec_digest"), "advisories": ctx.get("spec_advisories", [])},
             "previous_plan": ctx.get("plan"), "previous_findings": ctx.get("analysis_findings", []),
             "limits": self.cfg.workflow.decomposition.model_dump(),
-            "repo_map": self._repo_map(job_id),
+            "repo_map": self._repo_map(job_id), "design": self._design_context(job_id, with_text=True),
         })
         if res.payload is None:
             raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
@@ -1235,7 +1238,7 @@ class Factory(ParallelLanes):
             "task": json.loads(task["spec_json"]), "spec": ctx.get("spec"), "feature_goal": self._feature(job_id)["goal"],
             "open_findings": open_findings, "last_failure": ctx.get("last_failure", {}).get(task_id),
             "root_cause": root_cause, "human_feedback": ctx.get("human_feedback"),
-            "spec_advisories": ctx.get("spec_advisories", []),
+            "spec_advisories": ctx.get("spec_advisories", []), "design": self._design_context(job_id),
             "test_scope": "test files (tests/, test_*.py, *.test.ts(x), *.spec.ts(x)) are always in scope: add or extend the tests that prove this task's acceptance",
         }, task_id=task_id, writable=True, purpose="build", model=self._builder_model(job_id, task_id, self._task(job_id, task_id)["attempts"]))
 
@@ -1397,18 +1400,28 @@ class Factory(ParallelLanes):
                 continue
             skill = REVIEW_SKILLS[review]
             browser = self._browser_session(job_id) if review in BROWSER_REVIEWS else None
+            notes = ctx.get("review_notes", {}).get(task_id, {})
             res = self.call_agent(job_id, skill, {
                 "task": task, "spec": ctx.get("spec"), "diff": diff_text[:60000], "head_sha": frozen_head,
                 "gate_evidence": gate.payload if gate else None, "risk": self._job(job_id)["risk"],
                 "security_depth": security_depth, "surfaces": surfaces,
                 "spec_advisories": ctx.get("spec_advisories", []), **self._verification_context(job_id, "task", browser),
+                **({"design": self._design_context(job_id, with_text=True)} if review == "ui-review" else {}),
+                **({"controller_note": notes[review]} if notes.get(review) else {}),
             }, task_id=task_id, purpose="review", browser=browser)
             if WorkspaceManager.head(wt) != frozen_head or git(wt, "status", "--porcelain", "--", ".", *GENERATED_EXCLUDES):
                 raise StageBlocked(S.NEEDS_HUMAN, "worktree changed while reviewers were running (reviewers are read-only)")
+            verdict, findings = res.envelope.verdict, self._findings(res.envelope)
             payload = {"envelope": res.envelope.model_dump(), **({"screenshots": res.screenshots} if res.screenshots else {})}
-            self._record(job_id, kind, res.envelope.verdict, payload, ident=ident,
-                         producer=self._agent_producer(res, skill), task_id=task_id, findings=self._findings(res.envelope))
-            verdicts[review] = res.envelope.verdict
+            if review == "ui-review":
+                verdict, extra, problem = self._hold_ui_review(job_id, res, browser)
+                findings += extra
+                if problem:
+                    payload["controller"] = {"verdict": verdict, "problem": problem}
+                self._set_review_note(job_id, task_id, review, problem)
+            self._record(job_id, kind, verdict, payload, ident=ident,
+                         producer=self._agent_producer(res, skill), task_id=task_id, findings=findings)
+            verdicts[review] = verdict
             error_class = error_class or res.envelope.payload.get("error_class")
         return verdicts, error_class
 
@@ -1540,6 +1553,68 @@ class Factory(ParallelLanes):
             with self.store.tx() as conn:
                 self.store.event(conn, job_id, "browser.screenshots", {"count": len(shots), "names": [s["name"] for s in shots]})
         return shots
+
+    # --- design direction and UX evidence -------------------------------------------
+
+    def _design_context(self, job_id: str, with_text: bool = False) -> dict[str, Any]:
+        """Where the repository's design direction lives, whether it exists yet, and its reference images."""
+        cfg = self.cfg.factory.design
+        wt = self._active_worktree(job_id)
+        doc, refs_dir = wt / cfg.doc, wt / cfg.references_dir
+        refs = sorted(str(p.relative_to(wt)) for p in refs_dir.rglob("*")
+                      if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES) if refs_dir.is_dir() else []
+        context: dict[str, Any] = {"doc": cfg.doc, "exists": doc.is_file(), "references_dir": cfg.references_dir, "references": refs[:12],
+                                   "min_visual_score": cfg.min_visual_score}
+        if with_text and doc.is_file():
+            context["text"] = doc.read_text(errors="replace")[:12000]
+        return context
+
+    def _hold_ui_review(self, job_id: str, res: AgentResult, browser: dict | None) -> tuple[str, list[dict], str | None]:
+        """Hold a UI review to what it can show: saved screenshots per viewport, every heuristic, the design doc.
+
+        A review that claims a look without the screenshots is inconclusive (it re-runs with a note);
+        a PASS that scores the visuals below the policy floor contradicts itself and becomes CHANGES.
+        """
+        verdict, payload = res.envelope.verdict, res.payload
+        if verdict not in ("PASS", "CHANGES") or not isinstance(payload, UiReviewPayload):
+            return verdict, [], None
+        problems = []
+        design = self._design_context(job_id)
+        if design["exists"] and payload.design_direction.status in ("NOT_APPLICABLE", "NOT_RUN"):
+            problems.append(f"{design['doc']} exists, so design_direction must be PASS or FAIL against it")
+        low: list[Any] = []
+        if browser is not None:
+            shots = {s["name"] for s in res.screenshots}
+            widths = {int(v.partition("x")[0]) for v in browser["viewports"]}
+            covered = {v.width for v in payload.viewports if v.evidence_ids and set(v.evidence_ids) <= shots}
+            if missing := sorted(widths - covered):
+                problems.append(f"no saved screenshot cited for viewport width(s) {missing} (saved: {sorted(shots) or 'none'})")
+            cited = {e for v in payload.viewports for e in v.evidence_ids} | {e for v in payload.visual for e in v.evidence_ids}
+            if unknown := sorted(cited - shots):
+                problems.append(f"evidence_ids that are not saved screenshots: {unknown}")
+            if missing_h := [h for h in HEURISTICS if h not in {x.id for x in payload.heuristics}]:
+                problems.append(f"heuristics not assessed: {missing_h}")
+            if missing_v := [a for a in VISUAL_ASPECTS if a not in {v.aspect for v in payload.visual if v.score is not None}]:
+                problems.append(f"visual aspects not scored from screenshots: {missing_v}")
+            if verdict == "PASS":
+                low = [v for v in payload.visual if v.score is not None and v.score < self.cfg.factory.design.min_visual_score]
+        if problems:
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "ui_review.inconclusive", {"problems": problems})
+            return "UNKNOWN", [], "; ".join(problems)
+        findings = [{
+            "id": f"CTRL-visual-{v.aspect}", "severity": "medium", "blocking": True, "requirement_ids": [], "location": None,
+            "problem": f"UI review scored {v.aspect} {v.score}/5 from the screenshots, below the policy floor "
+                       f"{self.cfg.factory.design.min_visual_score}: {v.note or 'no note'}",
+            "evidence_ids": v.evidence_ids, "expected_fix": f"Raise {v.aspect} to the design direction ({design['doc']}).",
+            "status": "open",
+        } for v in low]
+        return ("CHANGES" if low else verdict), findings, None
+
+    def _set_review_note(self, job_id: str, task_id: str, review: str, note: str | None) -> None:
+        notes = self._ctx(job_id).get("review_notes", {})
+        notes.setdefault(task_id, {})[review] = note
+        self._set_ctx(job_id, review_notes=notes)
 
     def _inconclusive(self, job_id: str, stage: str, verdict: str, summary: str) -> bool:
         """BLOCKED/UNKNOWN from an evaluator is missing input, not a code defect: retry once, then stop for a human.

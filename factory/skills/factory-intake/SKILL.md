@@ -28,6 +28,7 @@ explicitly (`BLOCKED`, controller state `NEEDS_INFO`).
 - Factory policy summary: allowed repositories, modes and operations (to detect
   requests outside the granted permission scope).
 - `spec_mode` (`guided | auto`) and `max_decisions`.
+- `design`: whether the repository has a design direction document (`doc`, `exists`) and reference images.
 
 ## Procedure
 
@@ -58,6 +59,12 @@ explicitly (`BLOCKED`, controller state `NEEDS_INFO`).
    future work. In `guided` mode the operator answers them before analysis; in `auto`
    mode the proposals are assumed, so propose the safest reasonable default. A decision
    with a proposal never makes the verdict `BLOCKED`.
+   When the request adds or changes user-visible screens, `design.exists` is false and the
+   request does not already describe the look, one decision is the visual direction: 2-4
+   `options`, each a concrete direction in one line (personality, palette, density, a named
+   reference product), e.g. "Calm and focused: off-white surfaces, one blue accent, generous
+   spacing, like Linear"; `proposed` is the one that fits the audience best. The answer becomes
+   the design direction document (see `references/normalization.md`, "Decisions").
 8. Classify each future direction as `required_now`, `committed_next` or
    `hypothetical` (see `references/normalization.md`). Speculative wishes are
    `hypothetical` and are not built.

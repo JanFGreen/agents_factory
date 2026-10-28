@@ -82,6 +82,12 @@ browser:
   binary: tools/playwright-cli/node_modules/.bin/playwright-cli
   viewports: ["390x844", "1280x800"]
   idle_timeout_ms: 300000
+design:
+  # Kierunek wizualny repo docelowego (tokeny, typografia, motion, wzorce). Gdy go brak, intake pyta
+  # o kierunek (guided), a pierwszy task UI go zapisuje. ui-review porównuje ekrany z nim i z obrazami wzorcowymi.
+  doc: docs/DESIGN.md
+  references_dir: docs/design
+  min_visual_score: 3                  # ocena 1-5 ze zrzutów; PASS z niższą oceną => CHANGES
 review:
   # Recenzje tasków w poziomach: CHANGES w poziomie pomija kolejne (uruchomią się po poprawce).
   # Tańsze modele recenzentów dla tasków niskiego ryzyka: models.yaml `review_models`.

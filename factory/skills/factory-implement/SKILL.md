@@ -28,6 +28,7 @@ controller decides. You never approve, merge or close findings.
 - Repository instructions (`AGENTS.md`, `CLAUDE.md`) and repo-map commands.
 - `spec_advisories`: non-blocking spec findings (unrequested edge cases). Handle them
   when it is cheap and inside `file_scope`; never widen scope or change requested behavior for them.
+- `design`: path of the design direction document (`doc`, `exists`) and reference images.
 
 ## Procedure
 
@@ -44,6 +45,10 @@ controller decides. You never approve, merge or close findings.
    reuse the existing unit instead of copying it (EP-4), add a variant by adding a unit
    (EP-10), use the API of the installed version (EP-12). When a limit or the clone check
    fails, restructure; never silence it with a suppression comment.
+   UI: read `design.doc` when it exists and build screens from its tokens and shared
+   components; open the reference images it names. A task that creates the document
+   follows the required sections in its spec. Changing a token or the direction is stated
+   in the handoff, never done silently.
 5. Address every open finding ID from earlier attempts; describe the fix per ID in
    `handoff`. Do not mark findings fixed — an evaluator does.
 6. Run the quick local checks (tests, lint, types) you are allowed to run and list them
