@@ -1,17 +1,17 @@
-# Agent Factory — wariant A (adapter Claude). Wartości startowe do ewaluacji, nie optimum.
+# Agent Factory — variant A (Claude adapter). Starting values for evaluation, not an optimum.
 schema_version: 1
-data_dir: "~/.local/share/agent-factory"   # stan runtime poza repo: SQLite, artefakty, worktree, logi
+data_dir: "~/.local/share/agent-factory"   # runtime state outside the repo: SQLite, artifacts, worktrees, logs
 execution:
   max_active_jobs: 1
   max_agent_processes: 4
-  max_builders_per_job: 3              # >1: niezależne gotowe taski budowane równolegle w torach (lanes.py)
+  max_builders_per_job: 3              # >1: independent ready tasks built in parallel in lanes (lanes.py)
   max_test_processes: 2
   max_integration_candidates: 1
   lease_ttl_seconds: 120
   heartbeat_seconds: 20
   command_timeout_seconds: 600
   reviewer_timeout_seconds: 900
-  agent_stall_seconds: 300            # brak nowych zdarzeń strumienia CLI => przerwij i ponów
+  agent_stall_seconds: 300            # no new CLI stream events => abort and retry
   job_deadline_minutes: 120
 attempts:
   intake: 2
@@ -26,14 +26,14 @@ budget:
   warning_fraction: 0.70
   reserve_for_verification_fraction: 0.25
   unknown_price_policy: require_operator_limit
-  plan_approval: required             # po planie: szacunek kosztu do akceptacji (`factory plan approve`)
-  auto_approve_below_usd: 5            # małe zmiany ruszają bez akceptacji
-  max_cost_per_agent_call: 1.50        # konserwatywna rezerwacja i --max-budget-usd na wywołanie
+  plan_approval: required             # after the plan: cost estimate for approval (`factory plan approve`)
+  auto_approve_below_usd: 5            # small changes start without approval
+  max_cost_per_agent_call: 1.50        # conservative reservation and --max-budget-usd per call
 policy:
   mode: local                          # offline | local | pr | automerge | release
   deploy: false
   external_messages: false
-  protected_paths:                     # transytywne wejścia oceny: builder nie może ich zmieniać
+  protected_paths:                     # transitive evaluation inputs: the builder must not change them
     - "factory/*"
     - "openspec/*"
     - ".github/*"
@@ -47,7 +47,7 @@ policy:
     - "package-lock.json"
     - "tsconfig*.json"
     - "eslint.config.*"
-    - ".jscpd.json"                    # kontrole jakości i ich baseline (engineering-principles)
+    - ".jscpd.json"                    # quality checks and their baselines (engineering-principles)
     - ".jscpd-baseline.json"
     - ".dependency-cruiser.*"
     - "ruff.toml"
@@ -63,42 +63,42 @@ policy:
     high: ["*auth*", "*login*", "*permission*", "*migrations/*", "*secret*", "*payment*"]
     medium: ["*api*", "*models*", "*schema*", "*db*"]
 merge:
-  enabled: false                       # włącz raz po konfiguracji docelowego repo
-  human_interaction: "off"             # off | before_merge | on_risk (tekst, nie boolean)
+  enabled: false                       # enable once the target repo is configured
+  human_interaction: "off"             # off | before_merge | on_risk (string, not boolean)
   human_review_risk_levels: [high]
   approval_timeout_action: wait
   require_current_head: true
   require_required_checks: true
   allow_admin_bypass: false
 spec:
-  # guided: po intake job czeka na odpowiedzi na decyzje produktowe (`factory decide`);
-  # auto: przyjmowane są proponowane odpowiedzi. Tryb wybiera się per job przy `factory submit --mode`.
+  # guided: after intake the job waits for answers to product decisions (`factory decide`);
+  # auto: the proposed answers are accepted. The mode is chosen per job with `factory submit --mode`.
   default_mode: guided
   max_decisions: 7
 browser:
-  # Przeglądarka dla ui-review i product-verify: kontroler serwuje build z `preview` manifestu checków
-  # na 127.0.0.1, a recenzent ogląda go przez Playwright CLI (zrzuty, snapshot dostępności, konsola).
+  # Browser for ui-review and product-verify: the controller serves the build from the check manifest's `preview`
+  # on 127.0.0.1, and the reviewer views it through Playwright CLI (screenshots, accessibility snapshot, console).
   tool: playwright-cli
   binary: tools/playwright-cli/node_modules/.bin/playwright-cli
   viewports: ["390x844", "1280x800"]
   idle_timeout_ms: 300000
 design:
-  # Kierunek wizualny repo docelowego (tokeny, typografia, motion, wzorce). Gdy go brak, intake pyta
-  # o kierunek (guided), a pierwszy task UI go zapisuje. ui-review porównuje ekrany z nim i z obrazami wzorcowymi.
+  # Visual direction of the target repo (tokens, typography, motion, patterns). When it is missing, intake asks
+  # for a direction (guided), and the first UI task records it. ui-review compares screens with it and with reference images.
   doc: docs/DESIGN.md
   references_dir: docs/design
-  min_visual_score: 3                  # ocena 1-5 ze zrzutów; PASS z niższą oceną => CHANGES
+  min_visual_score: 3                  # 1-5 score from screenshots; PASS with a lower score => CHANGES
 review:
-  # Recenzje tasków w poziomach: CHANGES w poziomie pomija kolejne (uruchomią się po poprawce).
-  # Tańsze modele recenzentów dla tasków niskiego ryzyka: models.yaml `review_models`.
+  # Task reviews in tiers: CHANGES in a tier skips the following ones (they run after the fix).
+  # Cheaper reviewer models for low-risk tasks: models.yaml `review_models`.
   tiers:
     - [code-review, test-adequacy, ui-review]
     - [product-verify, security-review]
   security:
-    # Per task: przegląd baseline (model review_models.security_baseline) z triggerami z diffu i znanymi findingami.
-    # Pełna analiza zagrożeń całego diffu raz na feature przed akceptacją: off | on_trigger | always.
+    # Per task: baseline review (model review_models.security_baseline) with triggers from the diff and known findings.
+    # Full threat analysis of the whole diff once per feature before acceptance: off | on_trigger | always.
     feature_review: on_trigger
-    full_per_task_for_risk: []         # np. [high]: dodatkowo pełny przegląd każdego taska
+    full_per_task_for_risk: []         # e.g. [high]: additionally a full review of every task
 runtime:
   sandbox: required
-  # Modele, role, routing i dostawcy agentów: factory/models.yaml (jedyne miejsce wyboru modeli).
+  # Models, roles, routing and agent providers: factory/models.yaml (the only place models are selected).

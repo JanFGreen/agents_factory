@@ -1,171 +1,171 @@
-# Operacje
+# Operations
 
-Wszystkie komendy uruchamiaj z katalogu głównego repo fabryki (`factory doctor` szuka
-`factory.lock.json` i `tools/openspec/...` względem bieżącego katalogu). Flagi globalne podawaj
-**przed** podkomendą: `uv run factory --json --data-dir <dir> --factory-dir <dir> <cmd>`.
-`--factory-dir` domyślnie `$AGENT_FACTORY_DIR` albo `factory`.
+Run all commands from the root of the factory repo (`factory doctor` looks for
+`factory.lock.json` and `tools/openspec/...` relative to the current directory). Pass global flags
+**before** the subcommand: `uv run factory --json --data-dir <dir> --factory-dir <dir> <cmd>`.
+`--factory-dir` defaults to `$AGENT_FACTORY_DIR` or `factory`.
 
-Exit codes (`cli.py`): `0` ok, `2` błąd użycia/konfiguracji, `3` odmowa (`TransitionRefused`, zły
-`--revision`, `--mode` niezgodny z konfiguracją), `4` job zatrzymany (`HALTED`) lub brak sandboxa.
+Exit codes (`cli.py`): `0` ok, `2` usage/configuration error, `3` refusal (`TransitionRefused`, wrong
+`--revision`, `--mode` not matching the configuration), `4` job halted (`HALTED`) or no sandbox.
 
-## Instalacja
+## Installation
 
 ```sh
-uv sync                        # Python 3.12 (.python-version), zależności z uv.lock
-uv run pytest                  # offline; testy live są pomijane
-(cd tools/openspec && npm ci)  # tylko jeśli brakuje node_modules; wersja w factory.lock.json
+uv sync                        # Python 3.12 (.python-version), dependencies from uv.lock
+uv run pytest                  # offline; live tests are skipped
+(cd tools/openspec && npm ci)  # only if node_modules is missing; version in factory.lock.json
 ```
 
-Claude CLI musi być zainstalowane (`runtime.claude_binary`, domyślnie `claude` w `PATH`) i zalogowane
-lokalnie. Fabryka nie przekazuje klucza API przez środowisko.
+The Claude CLI must be installed (`runtime.claude_binary`, default `claude` in `PATH`) and logged in
+locally. The factory does not pass an API key through the environment.
 
 ## `factory doctor`
 
-Raportuje: walidację konfiguracji i `policy_digest`, `data_dir`, wersję schematu bazy, wynik probe
-sandboxa, ścieżkę i wersję `claude`, `factory.lock.json`, obecność binarki OpenSpec, listę skilli,
-zarejestrowane repo, informację o poświadczeniach. Exit 4, gdy sandbox nie działa lub brak `claude`.
-Doctor nie wykonuje płatnego wywołania modelu — działanie auth potwierdza dopiero live smoke
+Reports: configuration validation and `policy_digest`, `data_dir`, database schema version, sandbox
+probe result, path and version of `claude`, `factory.lock.json`, presence of the OpenSpec binary, the
+skill list, registered repos, credential information. Exit 4 when the sandbox does not work or `claude`
+is missing. Doctor makes no paid model call — working auth is confirmed only by the live smoke
 (`AGENT_FACTORY_LIVE=1 uv run pytest tests/live`).
 
-## Rejestracja repo
+## Registering a repo
 
 ```sh
 uv run factory init --repo /path/to/repo --mode local [--repo-id app] [--base-branch main] [--checks node]
 ```
 
-Repo musi mieć `.git` i remote `origin` (worktree powstaje z `origin/<base>` po `git fetch`).
-`--mode` musi być równy `policy.mode` w `factory/config.yaml` — zmiana trybu to zmiana konfiguracji
-przez operatora. Bez `--base-branch` gałąź bazowa jest ustalana z `origin/HEAD` lub `ls-remote`.
-Rejestr: `data_dir/repos.json`.
+The repo must have `.git` and an `origin` remote (the worktree is created from `origin/<base>` after
+`git fetch`). `--mode` must equal `policy.mode` in `factory/config.yaml` — changing the mode is a
+configuration change made by the operator. Without `--base-branch` the base branch is determined from
+`origin/HEAD` or `ls-remote`. Registry: `data_dir/repos.json`.
 
-`--checks <name>` wybiera zaufany manifest `factory/checks/<name>.yaml` dla repo (domyślnie
-`default.yaml`, pytest). Nazwa jest zapisywana w kontekście joba przy `submit`, więc job nie zmienia
-manifestu w trakcie; digest katalogu `checks/` nadal unieważnia wyniki po edycji. `node.yaml`
-(vitest + `tsc` + `eslint --max-warnings=0` + `expo export --platform web`) ma
-`link_from_checkout: ["node_modules"]`: operator robi `npm ci` w checkoutcie repo, a każdy worktree
-dostaje symlink do tych zależności (checki nie mają sieci). Link musi być ignorowany przez git
-(`node_modules` bez końcowego `/`), inaczej job kończy się `BLOCKED_ENV`; brak katalogu w checkoutcie
-— też `BLOCKED_ENV`. Narzędzia nie mogą pisać do linkowanego katalogu (sandbox), więc cache trzymaj
-w repo (np. `cacheDir` vitest, `--configLoader runner`). Nowa zależność = operator aktualizuje
-checkout. Node musi być w `PATH` procesu fabryki (np. `nvm use 24`).
+`--checks <name>` selects the trusted manifest `factory/checks/<name>.yaml` for the repo (default
+`default.yaml`, pytest). The name is stored in the job context at `submit`, so a job does not change
+its manifest midway; the digest of the `checks/` directory still invalidates results after an edit.
+`node.yaml` (vitest + `tsc` + `eslint --max-warnings=0` + `expo export --platform web`) has
+`link_from_checkout: ["node_modules"]`: the operator runs `npm ci` in the repo checkout, and each
+worktree gets a symlink to those dependencies (checks have no network). The link must be ignored by git
+(`node_modules` without a trailing `/`), otherwise the job ends in `BLOCKED_ENV`; a missing directory in
+the checkout also gives `BLOCKED_ENV`. Tools cannot write to the linked directory (sandbox), so keep
+caches in the repo (e.g. vitest `cacheDir`, `--configLoader runner`). New dependency = the operator
+updates the checkout. Node must be in the factory process `PATH` (e.g. `nvm use 24`).
 
-## Zgłoszenie i uruchomienie
+## Submitting and running
 
 ```sh
-uv run factory submit --file feature.yaml [--repo-id app] [--mode guided|auto]   # albo --text "opis"
+uv run factory submit --file feature.yaml [--repo-id app] [--mode guided|auto]   # or --text "description"
 uv run factory run --job job-0123456789ab
-uv run factory run [--max-jobs N]                            # aktywne joby po kolei; --queue nic nie zmienia
+uv run factory run [--max-jobs N]                            # active jobs one by one; --queue changes nothing
 ```
 
-Plik YAML (`features.FeatureFile`, nieznane pola odrzucane): wymagane jest tylko
-`original_request`; opcjonalne `feature_id`, `repo_id` (musi zgadzać się z wybranym repo), `goal`,
-`constraints`, `acceptance_criteria`, `future_directions`. Brak `feature_id` → `FEAT-<8 hex z
-hasha treści>`. (`workflow.yaml: feature_input.required_fields` jest walidowane, ale kod go nie
-egzekwuje.) Ponowne `submit` identycznej treści zwraca istniejący aktywny job; zmieniona treść tego
-samego `feature_id` tworzy nową rewizję i nowy job. `--issue` nie jest obsługiwane.
+YAML file (`features.FeatureFile`, unknown fields rejected): only `original_request` is required;
+optional are `feature_id`, `repo_id` (must match the selected repo), `goal`, `constraints`,
+`acceptance_criteria`, `future_directions`. No `feature_id` → `FEAT-<8 hex of the content
+hash>`. (`workflow.yaml: feature_input.required_fields` is validated, but the code does not enforce
+it.) Resubmitting identical content returns the existing active job; changed content for the same
+`feature_id` creates a new revision and a new job. `--issue` is not supported.
 
-### Tryb specyfikacji: `guided` albo `auto` (`spec`)
+### Spec mode: `guided` or `auto` (`spec`)
 
-Przy `submit` wybierasz, kto rozstrzyga decyzje produktowe, których zgłoszenie nie przesądza
-(limity, domyślne zachowanie, kto co może, co przy błędzie, kierunek wizualny). Bez `--mode` CLI
-pyta w terminalu; bez terminala bierze `spec.default_mode` (domyślnie `guided`).
+At `submit` you choose who settles the product decisions the request leaves open (limits, default
+behavior, who can do what, what happens on error, visual direction). Without `--mode` the CLI asks in
+the terminal; without a terminal it uses `spec.default_mode` (default `guided`).
 
-- `guided`: intake zwraca do `spec.max_decisions` (7) decyzji, każdą z opcjami i proponowaną
-  odpowiedzią. Job staje w `NEEDS_INFO` przed klasyfikacją i analizą (koszt: tylko intake).
-- `auto`: proponowane odpowiedzi są przyjmowane jako założenia (`source: assumed`) i job nie staje.
+- `guided`: intake returns up to `spec.max_decisions` (7) decisions, each with options and a proposed
+  answer. The job stops in `NEEDS_INFO` before classification and analysis (cost: intake only).
+- `auto`: proposed answers are accepted as assumptions (`source: assumed`) and the job does not stop.
 
 ```sh
-uv run factory status --job <id>                    # decisions: id, pytanie, propozycja, odpowiedź
-uv run factory decide <id>                          # w terminalu: pytanie po pytaniu (Enter = propozycja, numer = opcja)
-uv run factory decide <id> --answer Q-1="tekst" --answer Q-3="..." [--accept-proposed]
+uv run factory status --job <id>                    # decisions: id, question, proposal, answer
+uv run factory decide <id>                          # in the terminal: question by question (Enter = proposal, number = option)
+uv run factory decide <id> --answer Q-1="text" --answer Q-3="..." [--accept-proposed]
 ```
 
-Po ostatniej odpowiedzi `decide` wznawia job (`factory run --job <id>`). Odpowiedzi trafiają do
-`feature.decisions` wszystkich kolejnych etapów: odpowiedź człowieka (`human`, `accepted`) jest
-wiążąca jak treść zgłoszenia — spec mapuje ją na wymaganie (`source: decision:Q-n`), a ewaluator
-spec blokuje, gdy jej brakuje lub jest sprzeczna. Założenie z trybu `auto` jest tylko domyślne.
-Guard `COMPLEXITY_ASSESSMENT` odmawia przejścia, dopóki jakaś decyzja czeka na odpowiedź.
+After the last answer `decide` resumes the job (`factory run --job <id>`). The answers go into
+`feature.decisions` of all subsequent stages: a human answer (`human`, `accepted`) is binding like the
+request text — the spec maps it to a requirement (`source: decision:Q-n`), and the spec evaluator
+blocks when it is missing or contradicted. An assumption from `auto` mode is only a default.
+The `COMPLEXITY_ASSESSMENT` guard refuses the transition while any decision is awaiting an answer.
 
-`factory run` kończy się na stanie terminalnym, zatrzymanym albo na `READY_TO_MERGE`, gdy
-`merge.enabled: false` (wynik zaakceptowany lokalnie na gałęzi `factory/<job-id>`, bez merge).
+`factory run` ends at a terminal state, a halted state, or at `READY_TO_MERGE` when
+`merge.enabled: false` (result accepted locally on the `factory/<job-id>` branch, without merge).
 
-## Status i diagnoza
+## Status and diagnosis
 
 ```sh
 uv run factory --json status [--job <id>]
-uv run factory inspect <id>                       # + ostatnie 50 zdarzeń, findings, wyniki
+uv run factory inspect <id>                       # + last 50 events, findings, results
 uv run factory feature classify <feature-id>
 uv run factory feature inspect-analysis <feature-id>
-uv run factory verify <id>                        # ponowna weryfikacja podpisów i hashy wyników
+uv run factory verify <id>                        # re-verify result signatures and hashes
 ```
 
-Pola `status`: `state`, `path`, `risk`, `blocked_reason`, `head_sha`, `base_sha`, `analysis_rounds`
-(`użyte/limit`), `build_attempts`, `budget {limit, committed, spent}`, `tasks`, `last_checkpoint`
-(id artefaktu handoffu), `next_step`, `criteria_digest` (tylko w `AWAITING_HUMAN_MERGE`, inaczej `null`).
+`status` fields: `state`, `path`, `risk`, `blocked_reason`, `head_sha`, `base_sha`, `analysis_rounds`
+(`used/limit`), `build_attempts`, `budget {limit, committed, spent}`, `tasks`, `last_checkpoint`
+(handoff artifact id), `next_step`, `criteria_digest` (only in `AWAITING_HUMAN_MERGE`, otherwise `null`).
 
-| `state` | `next_step` (z `cli._next_step`) | Co zrobić |
+| `state` | `next_step` (from `cli._next_step`) | What to do |
 |---|---|---|
-| `ANALYSIS_LIMIT_REACHED` | inspect-analysis, raise-limit z powodem lub reject | `feature inspect-analysis`, potem `feature raise-limit` i `resume` albo `cancel` |
-| `BUDGET_EXHAUSTED` | podnieś budżet z powodem, `resume` | patrz „Budżet” |
-| `BLOCKED_ENV` | napraw środowisko z `blocked_reason`, `resume` | np. brak narzędzia, baseline FAIL, brak skilla, run agenta `failed`; `resume` działa tylko, gdy `resume_state` = `BUILD_TASK` (patrz „Wznowienie”) |
-| `NEEDS_INFO` | nowa rewizja feature'a | popraw plik i `submit` ponownie; stary job zostaje w `NEEDS_INFO` (anuluj go) |
-| `NEEDS_HUMAN` | przeczytaj `blocked_reason`; `resume` lub `cancel` | `guard refused: …` = nieaktualne dowody (patrz „Zmiana i wycofanie zmiany fabryki”) |
+| `ANALYSIS_LIMIT_REACHED` | inspect-analysis, raise-limit with a reason, or reject | `feature inspect-analysis`, then `feature raise-limit` and `resume`, or `cancel` |
+| `BUDGET_EXHAUSTED` | raise the budget with a reason, `resume` | see "Budget" |
+| `BLOCKED_ENV` | fix the environment per `blocked_reason`, `resume` | e.g. missing tool, baseline FAIL, missing skill, agent run `failed`; `resume` works only when `resume_state` = `BUILD_TASK` (see "Resuming") |
+| `NEEDS_INFO` | new feature revision | fix the file and `submit` again; the old job stays in `NEEDS_INFO` (cancel it) |
+| `NEEDS_HUMAN` | read `blocked_reason`; `resume` or `cancel` | `guard refused: …` = stale evidence (see "Changing and reverting a factory change") |
 | `AWAITING_HUMAN_MERGE` | `approve|reject|rework --revision <digest>` | |
-| `READY_TO_MERGE` | merge wyłączony | sprawdź gałąź; włącz `merge.enabled` w konfiguracji, jeśli chcesz merge |
+| `READY_TO_MERGE` | merge disabled | check the branch; enable `merge.enabled` in the configuration if you want a merge |
 
-`blocked_reason` to dokładny powód z `StageBlocked`/wyjątku (np. `guard for REVIEW refused: gate result
+`blocked_reason` is the exact reason from `StageBlocked`/the exception (e.g. `guard for REVIEW refused: gate result
 is stale for head_sha`, `reserving $1.50 for build would exceed ...`).
 
-## Wznowienie
+## Resuming
 
 ```sh
 uv run factory resume <id>
 ```
 
-Przywraca `resume_state` zapisany przy zatrzymaniu i od razu wywołuje `run`. Liczniki rund, prób i
-budżetu nie są resetowane. Przejście musi być legalne (`legal()`), inaczej exit 3; guard stanu
-docelowego nie jest sprawdzany przy wznowieniu, tylko przy kolejnym przejściu. Dla stanu
-niezatrzymanego komenda nic nie zmienia i tylko uruchamia `run`.
+Restores the `resume_state` saved at the halt and immediately calls `run`. Round, attempt and budget
+counters are not reset. The transition must be legal (`legal()`), otherwise exit 3; the target state's
+guard is not checked on resume, only on the next transition. For a state that is not halted the
+command changes nothing and only starts `run`.
 
-Znane ograniczenie: z `BLOCKED_ENV` legalny jest tylko powrót do `BUILD_TASK`, a z `NEEDS_INFO`
-tylko do `INTAKE`. Job zatrzymany w `BLOCKED_ENV` w innym stanie (np. baseline w `SINGLE_TASK_READY`,
-gate `ERROR_ENV` w `CHECKS`, brak handlera w `MERGING`) nie da się wznowić przez `resume`
-(`cannot resume BLOCKED_ENV -> …`) — pozostaje `cancel` i ponowne `submit`. Szczegóły w
+Known limitation: from `BLOCKED_ENV` the only legal return is to `BUILD_TASK`, and from `NEEDS_INFO`
+only to `INTAKE`. A job halted in `BLOCKED_ENV` from another state (e.g. baseline in `SINGLE_TASK_READY`,
+gate `ERROR_ENV` in `CHECKS`, missing handler in `MERGING`) cannot be resumed with `resume`
+(`cannot resume BLOCKED_ENV -> …`) — what remains is `cancel` and a fresh `submit`. Details in
 `state-machine.md`.
 
-## Limit rund analizy
+## Analysis round limit
 
 ```sh
 uv run factory feature raise-limit <feature-id> --analysis-rounds 5 --reason "..."
 uv run factory resume <job-id>
 ```
 
-Nowy limit musi być wyższy od obecnego; powód jest wymagany; zdarzenie `analysis.limit_raised`.
+The new limit must be higher than the current one; a reason is required; event `analysis.limit_raised`.
 
-## Budżet
+## Budget
 
 ```sh
-uv run factory budget raise <job-id> --to 40 --reason "powód podniesienia"
+uv run factory budget raise <job-id> --to 40 --reason "reason for the raise"
 uv run factory resume <job-id>
 ```
 
-`budgets.raise_budget`: nowy limit musi być wyższy od obecnego, powód jest wymagany, aktor = `$USER`,
-zdarzenie `budget.raised`. Agent nie może podnieść limitu.
+`budgets.raise_budget`: the new limit must be higher than the current one, a reason is required, actor = `$USER`,
+event `budget.raised`. An agent cannot raise the limit.
 
-## Anulowanie
+## Cancelling
 
 ```sh
 uv run factory cancel <id>
 ```
 
-`CANCELLING` → zatrzymanie żywych procesów agentów (SIGTERM, potem SIGKILL grupy) → `CANCELLED`,
-`active=0`. Worktree zostaje (usuń przez `cleanup`).
+`CANCELLING` → stop live agent processes (SIGTERM, then SIGKILL of the group) → `CANCELLED`,
+`active=0`. The worktree stays (remove it with `cleanup`).
 
-## Decyzja człowieka przy merge
+## Human decision at merge
 
-Aktywna tylko przy `merge.enabled: true` i `human_interaction` = `before_merge` lub `on_risk`.
-`--revision` to `criteria_digest` = digest `{head, base, spec_digest, policy_digest}` bieżącego
-kandydata. Pobierz go z `uv run factory --json status --job <id>` (pole `criteria_digest`).
+Active only with `merge.enabled: true` and `human_interaction` = `before_merge` or `on_risk`.
+`--revision` is the `criteria_digest` = digest of `{head, base, spec_digest, policy_digest}` of the current
+candidate. Get it from `uv run factory --json status --job <id>` (field `criteria_digest`).
 
 ```sh
 uv run factory approve <id> --revision <digest>
@@ -173,22 +173,22 @@ uv run factory reject  <id> --revision <digest> --reason "..."
 uv run factory rework  <id> --file feedback.md --revision <digest>
 ```
 
-Nieaktualny `--revision` → exit 3. Zgoda, której digest przestał pasować (nowy commit, nowa baza,
-zmiana spec lub polityki), jest unieważniana (`approval.invalidated`). Rework przenosi treść pliku do
-`human_feedback` buildera i wraca do `BUILD_TASK` ostatniego zadania. Wszystkie trzy komendy wymagają
+Stale `--revision` → exit 3. An approval whose digest no longer matches (new commit, new base,
+spec or policy change) is invalidated (`approval.invalidated`). Rework passes the file contents to the
+builder's `human_feedback` and returns to `BUILD_TASK` of the last task. All three commands require
 `--revision`.
 
-## Recovery po awarii
+## Recovery after a crash
 
 ```sh
 uv run factory recover --all
 ```
 
-Dla każdego aktywnego joba (`recovery.recover_job`): weryfikacja podpisów wyników → czy worktree
-istnieje i jest na `factory/<job-id>` → żywe procesy agentów zostają do adopcji, martwe oznaczane
-`lost` → zwolnienie wygasłych lease martwych właścicieli → rekonsyliacja outboxu (`lookup` przed
-ponowieniem; potwierdzony merge w `MERGING` → `MERGED`, `active=0` i `_post_merge_cleanup`) →
-zwolnienie osieroconych rezerwacji budżetu. Raport `actions`/`problems` w JSON. Potem
+For each active job (`recovery.recover_job`): verify result signatures → check that the worktree
+exists and is on `factory/<job-id>` → live agent processes are kept for adoption, dead ones are marked
+`lost` → release expired leases of dead owners → reconcile the outbox (`lookup` before
+retrying; a confirmed merge in `MERGING` → `MERGED`, `active=0` and `_post_merge_cleanup`) →
+release orphaned budget reservations. `actions`/`problems` report in JSON. Then
 `factory run --job <id>`.
 
 ## Cleanup
@@ -198,251 +198,251 @@ uv run factory cleanup <id> --dry-run
 uv run factory cleanup <id>
 ```
 
-`git worktree remove` bez `--force`; worktree z niezacommitowanymi zmianami jest zachowany (błąd).
-Gałąź `factory/<job-id>` usuwana tylko przez `git branch -d` i tylko gdy job jest `MERGED`. Po
-udanym merge cleanup wykonuje się automatycznie (`_post_merge_cleanup`); błąd cleanup daje zdarzenie
-`cleanup.warning`, stan zostaje `MERGED`.
+`git worktree remove` without `--force`; a worktree with uncommitted changes is kept (error).
+The `factory/<job-id>` branch is deleted only with `git branch -d` and only when the job is `MERGED`. After
+a successful merge cleanup runs automatically (`_post_merge_cleanup`); a cleanup error produces the event
+`cleanup.warning`, and the state stays `MERGED`.
 
-## Eval fabryki
+## Factory eval
 
 ```sh
 uv run factory eval --suite tests/evals/dev.yaml --profile full|single-agent
 ```
 
-`evals.run_suite`: każde zadanie z pliku suite (`tests/evals/dev.yaml`: 20 zadań w kategoriach
-simple-fix, regression, crud, api, ui, auth, migration, incomplete) dostaje świeżą kopię fixture
-(`tests/fixtures/repos/greeter`) z lokalnym bare remote, osobny `state.db` i `data_dir` w
-`data_dir/evals/<suite>-<profile>-<id>/`. `full` uruchamia całą fabrykę, `single-agent` jedno
-wywołanie `factory-implement` bez analizy i review. Sukces rozstrzygają golden testy z pliku suite,
-dokładane do kopii scratch finalnego drzewa (bez `.git`) i uruchamiane przez `TrustedRunner` w
-sandboxie. Raport (`report.json`): `success`, `false_accepts`, `false_rejects`, koszt, mediana czasu,
-per zadanie: stan końcowy, wynik golden, koszt, próby, rundy. Przy n < 30 raport oznacza wynik jako
-pilot. Komenda wykonuje prawdziwe, płatne wywołania Claude. Wyniki: `acceptance-report.md`.
+`evals.run_suite`: each task from the suite file (`tests/evals/dev.yaml`: 20 tasks in the categories
+simple-fix, regression, crud, api, ui, auth, migration, incomplete) gets a fresh copy of the fixture
+(`tests/fixtures/repos/greeter`) with a local bare remote, its own `state.db` and `data_dir` in
+`data_dir/evals/<suite>-<profile>-<id>/`. `full` runs the whole factory, `single-agent` a single
+`factory-implement` call without analysis or review. Success is decided by the golden tests from the suite file,
+added to a scratch copy of the final tree (without `.git`) and run by `TrustedRunner` in the
+sandbox. Report (`report.json`): `success`, `false_accepts`, `false_rejects`, cost, median time,
+and per task: final state, golden result, cost, attempts, rounds. With n < 30 the report marks the result as
+a pilot. The command makes real, paid Claude calls. Results: `acceptance-report.md`.
 
 ## Dashboard
 
 ```sh
-nvm use 24                                   # akcje uruchamiają fabrykę z PATH tego procesu
+nvm use 24                                   # actions run the factory with this process's PATH
 uv run factory dashboard [--port 8765] [--read-only]
-# otwórz http://127.0.0.1:8765
+# open http://127.0.0.1:8765
 ```
 
-Podgląd na żywo (odświeżanie co 3–5 s, bez przeładowania strony):
+Live view (refreshes every 3–5 s, without reloading the page):
 
-- **lista jobów** w grupach: „Needs you” (stany zatrzymane), „Running”, „Ready to merge”, „Finished”;
-  przy każdym postęp tasków i budżet;
-- **job**: stan, ścieżka, ryzyko, cel; KPI (wydane / budżet ze znacznikiem kosztorysu, taski, próby,
-  czas); **graf tasków** (kolumny według zależności, kolor stanu, próby, koszt; wybór taska
-  pokazuje werdykty wszystkich recenzji, kryteria, pliki i otwarte findingi); koszt per rola;
-  **zrzuty** z recenzji w przeglądarce; findings (otwarte / blokujące / wszystkie); oś zdarzeń;
-  log uruchomienia w tle.
+- **job list** in groups: "Needs you" (halted states), "Running", "Ready to merge", "Finished";
+  each with task progress and budget;
+- **job**: state, path, risk, goal; KPIs (spent / budget with the estimate marker, tasks, attempts,
+  time); **task graph** (columns by dependency, state color, attempts, cost; selecting a task
+  shows the verdicts of all reviews, criteria, files and open findings); cost per role;
+  **screenshots** from browser reviews; findings (open / blocking / all); event timeline;
+  background run log.
 
-Akcje (bez `--read-only`), każda to ta sama komenda CLI co w terminalu (`dashboard/actions.py`,
-stała lista argv, bez powłoki), więc guardy kontrolera działają bez zmian:
+Actions (without `--read-only`), each is the same CLI command as in the terminal (`dashboard/actions.py`,
+fixed argv list, no shell), so the controller's guards work unchanged:
 
-| Przycisk | Komenda | Tryb |
+| Button | Command | Mode |
 |---|---|---|
-| Save answers / Accept all proposals | `factory decide <id> --answer Q-n=… / --accept-proposed` | od razu |
-| Approve plan and build | `factory plan approve <id> --budget X`, potem `resume` | od razu + w tle |
-| Raise budget and resume | `factory budget raise <id> --to X --reason …`, potem `resume` | od razu + w tle |
-| Run / Resume | `factory run --job <id>` / `factory resume <id>` | w tle (`caffeinate -i` na macOS) |
-| Approve merge / Reject | `factory approve|reject <id> --revision <digest>` | w tle |
-| Cancel job | `factory cancel <id>` | od razu |
+| Save answers / Accept all proposals | `factory decide <id> --answer Q-n=… / --accept-proposed` | immediate |
+| Approve plan and build | `factory plan approve <id> --budget X`, then `resume` | immediate + background |
+| Raise budget and resume | `factory budget raise <id> --to X --reason …`, then `resume` | immediate + background |
+| Run / Resume | `factory run --job <id>` / `factory resume <id>` | background (`caffeinate -i` on macOS) |
+| Approve merge / Reject | `factory approve|reject <id> --revision <digest>` | background |
+| Cancel job | `factory cancel <id>` | immediate |
 
-Uruchomienia w tle: jedno na job naraz; log w `data_dir/dashboard/runs/`. Odmowa kontrolera
-(exit 3) wraca jako komunikat, nie jako sukces.
+Background runs: one per job at a time; log in `data_dir/dashboard/runs/`. A controller refusal
+(exit 3) comes back as a message, not as success.
 
-Bezpieczeństwo: tylko `127.0.0.1`; nagłówek `Host` musi wskazywać localhost (DNS rebinding);
-POST wymaga tokenu wygenerowanego przy starcie serwera (w stronie) i `Origin` tego serwera (CSRF);
-CSP `script-src 'self'`, bez zewnętrznych skryptów; dane wstawiane wyłącznie jako tekst. Z artefaktów
-serwowane są tylko zrzuty ekranu. `/job/<id>` i `/plain` to strony bez JavaScriptu.
+Security: `127.0.0.1` only; the `Host` header must point to localhost (DNS rebinding);
+POST requires a token generated at server start (in the page) and this server's `Origin` (CSRF);
+CSP `script-src 'self'`, no external scripts; data is inserted only as text. Of the artifacts, only
+screenshots are served. `/job/<id>` and `/plain` are pages without JavaScript.
 
-## Backup i restore
+## Backup and restore
 
-Zatrzymaj `factory run` przed backupem albo użyj API backupu SQLite (bezpieczne przy WAL):
+Stop `factory run` before the backup or use the SQLite backup API (safe with WAL):
 
 ```sh
 D=~/.local/share/agent-factory
 sqlite3 "$D/state.db" ".backup '$BACKUP/state.db'"
-# albo przez API Pythona (to samo, co Store.conn.backup):
+# or through the Python API (same as Store.conn.backup):
 # uv run python -c "import sqlite3; sqlite3.connect('$D/state.db').backup(sqlite3.connect('$BACKUP/state.db'))"
 rsync -a "$D/artifacts/" "$BACKUP/artifacts/"
-cp -p "$D/keys/evidence.key" "$BACKUP/keys/"   # bez klucza żaden wynik nie przejdzie weryfikacji
+cp -p "$D/keys/evidence.key" "$BACKUP/keys/"   # without the key no result will pass verification
 cp -p "$D/repos.json" "$BACKUP/"
 ```
 
-Klucz `evidence.key` jest sekretem — przechowuj backup z prawami `0600`. Restore: zatrzymaj
-kontroler, odtwórz `state.db` (usuń stare `-wal`/`-shm`), `artifacts/`, `keys/`, `repos.json`, potem
-`factory recover --all` i `factory verify <id>` dla aktywnych jobów. Worktree (`data_dir/worktrees`)
-to dane Git — odtwarzaj je z gałęzi `factory/<job-id>` w repo docelowym lub z kopii katalogu; recover
-zgłosi brakujący worktree jako problem.
+The `evidence.key` key is a secret — store the backup with `0600` permissions. Restore: stop the
+controller, restore `state.db` (remove old `-wal`/`-shm`), `artifacts/`, `keys/`, `repos.json`, then
+run `factory recover --all` and `factory verify <id>` for active jobs. Worktrees (`data_dir/worktrees`)
+are Git data — restore them from the `factory/<job-id>` branches in the target repo or from a copy of the directory; recover
+reports a missing worktree as a problem.
 
-## Retencja
+## Retention
 
-Brak automatycznej retencji. Artefakty, logi agentów (`agent-logs/`), scratch runnera (`runs/`) i
-zdarzenia rosną bez limitu. Logi mogą zawierać dane z repo — czyść je ręcznie po zakończeniu jobów
-(artefakty referencjonowane przez `results` usuwaj tylko razem z wierszami, inaczej `verify` zgłosi błąd).
+There is no automatic retention. Artifacts, agent logs (`agent-logs/`), runner scratch (`runs/`) and
+events grow without limit. Logs may contain data from the repo — clean them up manually after jobs finish
+(delete artifacts referenced by `results` only together with their rows, otherwise `verify` reports an error).
 
-## Zmiana i wycofanie zmiany fabryki
+## Changing and reverting a factory change
 
-Zmiana kontrolera, polityki, checków lub skilli to osobna zmiana w repo fabryki (testy + review), nie
-część joba aplikacyjnego. Wycofanie: `git revert <commit>` w repo fabryki i `uv run pytest`.
+A change to the controller, policy, checks or skills is a separate change in the factory repo (tests + review), not
+part of an application job. Revert: `git revert <commit>` in the factory repo and `uv run pytest`.
 
-Skutki dla trwających jobów:
+Effects on running jobs:
 
-- `policy_digest` = digest treści `config.yaml` + `models.yaml` + `workflow.yaml` + `selection.yaml`. Każda zmiana
-  (także modelu roli) czyni nieaktualnymi wszystkie wyniki zależne od `policy_digest` (czyli
-  praktycznie wszystkie). Revert przywraca dokładnie poprzedni digest, więc wyniki sprzed zmiany
-  znów są aktualne, a wyniki wyprodukowane w czasie wadliwej konfiguracji stają się nieaktualne.
-- Zmiana `factory/checks/` lub `factory/skills/` zmienia `checks_digest` (liczony na żywo przez
-  `Controller.checks_digest()`), więc unieważnia wyniki `gate`, review, akceptacji i integracji. Job w
-  `REVIEW` z nieaktualnym gate wraca do `CHECKS` i ponawia checki bez rebuildu. Wyniki analizy
-  (spec, dekompozycja) od `checks_digest` nie zależą.
-- `factory/prompts/` i `environment_digest` (zamrożony przy `INTAKE`) nie unieważniają niczego.
-- Gdy guard odrzuci przejście z powodu nieaktualnych dowodów, job przechodzi do `NEEDS_HUMAN` z
-  `blocked_reason = "guard refused: …"`. Dla wyników analizy po zmianie polityki nie ma ścieżki
-  ponownej ewaluacji (`resume` powtórzy odmowę) — obejście: `cancel` i ponowne `submit`.
+- `policy_digest` = digest of the contents of `config.yaml` + `models.yaml` + `workflow.yaml` + `selection.yaml`. Any change
+  (including a role's model) makes stale all results that depend on `policy_digest` (that is,
+  practically all of them). A revert restores exactly the previous digest, so results from before the change
+  are current again, and results produced under the faulty configuration become stale.
+- A change to `factory/checks/` or `factory/skills/` changes `checks_digest` (computed live by
+  `Controller.checks_digest()`), so it invalidates `gate`, review, acceptance and integration results. A job in
+  `REVIEW` with a stale gate returns to `CHECKS` and reruns the checks without a rebuild. Analysis results
+  (spec, decomposition) do not depend on `checks_digest`.
+- `factory/prompts/` and `environment_digest` (frozen at `INTAKE`) invalidate nothing.
+- When a guard rejects a transition because of stale evidence, the job moves to `NEEDS_HUMAN` with
+  `blocked_reason = "guard refused: …"`. For analysis results after a policy change there is no path
+  for re-evaluation (`resume` repeats the refusal) — workaround: `cancel` and a fresh `submit`.
 
-## Szacunek kosztu planu i akceptacja (`budget.plan_approval`)
+## Plan cost estimate and approval (`budget.plan_approval`)
 
-Po zaakceptowaniu planu (lub micro-spec) kontroler liczy szacunek (`estimate.py`): na task
-`rundy × (builder + recenzenci [+ ui-review dla plików UI])` plus weryfikacja feature'a, z historii
-fabryki (średni koszt wywołania na rolę, średnia liczba prób na zaakceptowany task; ≥ 5 próbek),
-inaczej z wartości domyślnych. Backtest na LearnEnglish: −20%…+25% względem faktycznego kosztu.
-Job zatrzymuje się w `NEEDS_HUMAN` z kwotą, podstawą i sugerowanym limitem (zapas 25% + rezerwa na
-weryfikację), chyba że szacunek ≤ `auto_approve_below_usd`. Guard `BUILD_TASK` wymaga akceptacji
-dla bieżącego `plan_digest` — nowy plan wymaga nowej akceptacji.
+After the plan (or micro-spec) is accepted, the controller computes an estimate (`estimate.py`): per task
+`rounds × (builder + reviewers [+ ui-review for UI files])` plus feature verification, from factory
+history (average call cost per role, average number of attempts per accepted task; ≥ 5 samples),
+otherwise from default values. Backtest on LearnEnglish: −20%…+25% relative to the actual cost.
+The job stops in `NEEDS_HUMAN` with the amount, the basis and a suggested limit (25% margin + reserve for
+verification), unless the estimate is ≤ `auto_approve_below_usd`. The `BUILD_TASK` guard requires an approval
+for the current `plan_digest` — a new plan requires a new approval.
 
 ```sh
-uv run factory --json status --job <id>            # pole plan_estimate
-uv run factory plan approve <id> [--budget 60]     # ustawia limit joba (domyślnie sugerowany)
+uv run factory --json status --job <id>            # plan_estimate field
+uv run factory plan approve <id> [--budget 60]     # sets the job limit (default: the suggested one)
 uv run factory resume <id>
 ```
 
-## Task, który wyczerpał próby
+## A task that exhausted its attempts
 
-Task przechodzi w `FAILED` sam: jego odrzucone próby są cofane z gałęzi joba (łatka jako artefakt),
-niezależne taski budują się dalej. Gdy nic nie zostało do zbudowania, job czeka w `NEEDS_HUMAN`
-z listą nieudanych, zablokowanych i zaakceptowanych tasków.
+The task moves to `FAILED` on its own: its rejected attempts are reverted from the job branch (patch stored as an artifact),
+and independent tasks keep building. When nothing is left to build, the job waits in `NEEDS_HUMAN`
+with a list of failed, blocked and accepted tasks.
 
 ```sh
-uv run factory inspect <id>                                        # findings taska
-uv run factory task retry <id> TASK-04 --attempts 1 --reason "..."  # więcej prób (1-3)
+uv run factory inspect <id>                                        # task findings
+uv run factory task retry <id> TASK-04 --attempts 1 --reason "..."  # more attempts (1-3)
 uv run factory resume <id>
 ```
 
-## Koszt recenzji (`review`)
+## Review cost (`review`)
 
-Recenzje tasków idą poziomami (`review.tiers`): CHANGES w pierwszym poziomie (code, test adequacy,
-UI) pomija drogie product-verify i security-review w tej próbie; uruchomią się, gdy poziom przejdzie.
-Taski jobów o ryzyku z `cheaper_models_for_risk` (domyślnie `low`) mają tańszych recenzentów
-(`cheaper_models`); akceptacja feature'a i integracja zawsze używają pełnych powiązań ról.
+Task reviews run in tiers (`review.tiers`): CHANGES in the first tier (code, test adequacy,
+UI) skips the expensive product-verify and security-review in that attempt; they run once the tier passes.
+Tasks of jobs whose risk is in `cheaper_models_for_risk` (default `low`) get cheaper reviewers
+(`cheaper_models`); feature acceptance and integration always use the full role bindings.
 
-## Bezpieczeństwo: narzędzia, triggery, deduplikacja (`review.security`)
+## Security: tools, triggers, deduplication (`review.security`)
 
-Deterministyczne kontrole idą przed recenzją agenta:
+Deterministic checks run before the agent review:
 
-- **skan sekretów** w policy gate (`policy.py::scan_secrets`), zawsze włączony, bez zależności.
-  Zablokuje pliki sekretów (`.env`, `*.pem`, `*.key`, `credentials.json`; szablony `.env.example`
-  przechodzą) i literały o kształcie klucza: klucz prywatny, AWS, GitHub, OpenAI/Anthropic, Google,
-  Slack, Stripe live, JWT, a poza testami także `password = "<losowa wartość>"`. Wynik to FAIL_POLICY
-  z plikiem i linią. Wartość nigdy nie trafia do dowodów;
-- **`sast`** (manifest `node.yaml`): przypięty semgrep (`tools/semgrep`, `uv sync --project tools/semgrep`)
-  z lokalnymi regułami `factory/checks/semgrep/security.yml`. Działa offline, bez sieci w sandboxie,
-  `--metrics=off`. Dzięki `--baseline-commit {base_sha}` zgłasza tylko kod dodany przez job.
-  Reguły obejmują eval, wstrzykiwanie poleceń i SQL, ujścia HTML (XSS), słabą losowość i hasze haseł,
-  niezweryfikowany JWT, wyłączone TLS i open redirect. Bez programu repo z `sast` staje w BLOCKED_ENV
-  (`factory doctor` → `sast.present`). Inny manifest dodaje ten sam check;
-- **`npm audit` nie jest checkiem**: gate nie ma sieci, a `package.json` i lockfile są chronione,
-  więc nową zależność i jej audyt robi operator.
+- **secret scan** in the policy gate (`policy.py::scan_secrets`), always on, no dependencies.
+  It blocks secret files (`.env`, `*.pem`, `*.key`, `credentials.json`; `.env.example` templates
+  pass) and key-shaped literals: private key, AWS, GitHub, OpenAI/Anthropic, Google,
+  Slack, Stripe live, JWT, and outside tests also `password = "<random value>"`. The result is FAIL_POLICY
+  with the file and line. The value never goes into evidence;
+- **`sast`** (`node.yaml` manifest): pinned semgrep (`tools/semgrep`, `uv sync --project tools/semgrep`)
+  with the local rules `factory/checks/semgrep/security.yml`. Works offline, with no network in the sandbox,
+  `--metrics=off`. With `--baseline-commit {base_sha}` it reports only code added by the job.
+  The rules cover eval, command and SQL injection, HTML sinks (XSS), weak randomness and password hashes,
+  unverified JWT, disabled TLS and open redirect. Without the program, a repo with `sast` stops in BLOCKED_ENV
+  (`factory doctor` → `sast.present`). Another manifest adds the same check;
+- **`npm audit` is not a check**: the gate has no network, and `package.json` and the lockfile are protected,
+  so a new dependency and its audit are done by the operator.
 
-Recenzja agenta:
+Agent review:
 
-- **per task: baseline** na modelu `review_models.security_baseline` (Sonnet). Kontroler podaje
-  `security_triggers` z faktycznego diffu (`auth`, `secrets`, `endpoint`, `sql`, `outbound-request`,
+- **per task: baseline** on the model `review_models.security_baseline` (Sonnet). The controller passes
+  `security_triggers` from the actual diff (`auth`, `secrets`, `endpoint`, `sql`, `outbound-request`,
   `html-sink`, `process-exec`, `file-upload`, `webhook`, `crypto`, `dependency`, `sensitive-path`)
-  i `known_findings`. Recenzent sprawdza zagrożenia tych triggerów, nie cały model zagrożeń;
-- **raz na feature: pełna analiza** (rola `security_reviewer`, Opus) całego diffu przed akceptacją,
-  gdy był trigger albo ryzyko high (`feature_review: on_trigger`; `always`/`off`). CHANGES otwiera
-  ponownie task, którego `file_scope` obejmuje plik findingu. Guard przejścia do INTEGRATION wymaga
-  aktualnego PASS tej recenzji;
-- **triage w kontrolerze**: finding w pliku spoza diffu nigdy nie blokuje (prefiks `[outside this
-  diff]`), a finding, który inny task już zgłosił (ta sama ścieżka, ≥60% tych samych słów, nie
-  `fixed`), jest pomijany. CHANGES, który miał tylko takie findingi, staje się PASS. Zdarzenie:
+  and `known_findings`. The reviewer checks the threats of those triggers, not the whole threat model;
+- **once per feature: full analysis** (role `security_reviewer`, Opus) of the whole diff before acceptance,
+  when there was a trigger or high risk (`feature_review: on_trigger`; `always`/`off`). CHANGES reopens
+  the task whose `file_scope` covers the finding's file. The guard for the transition to INTEGRATION requires
+  a current PASS of this review;
+- **triage in the controller**: a finding in a file outside the diff never blocks (prefix `[outside this
+  diff]`), and a finding another task has already reported (same path, ≥60% of the same words, not
+  `fixed`) is skipped. A CHANGES that had only such findings becomes PASS. Event:
   `security.findings_triaged`;
-- `full_per_task_for_risk: [high]` przywraca pełny przegląd każdego taska dla wysokiego ryzyka.
+- `full_per_task_for_risk: [high]` restores a full review of every task for high risk.
 
-## Zasady inżynierskie i kontrole jakości (`_shared/engineering-principles.md`)
+## Engineering principles and quality checks (`_shared/engineering-principles.md`)
 
-Konkretne reguły zamiast haseł SOLID/DRY/KISS: każda ma ID (`EP-1`…`EP-14`) i jest oznaczona
-jako *gate* (sprawdza narzędzie) albo *review* (ocenia code reviewer). Builder, code reviewer i
-planer mają je w prompcie (`Follow ../_shared/engineering-principles.md` w `SKILL.md`). Kontroler
-dołącza do promptu każdy plik `_shared`, który skill wskazuje, oraz własne `references/*.md`
-skilla: agent nie czyta `factory/`, więc inaczej checklisty by do niego nie dotarły.
+Concrete rules instead of SOLID/DRY/KISS slogans: each has an ID (`EP-1`…`EP-14`) and is marked
+as *gate* (checked by a tool) or *review* (judged by the code reviewer). The builder, code reviewer and
+planner have them in their prompt (`Follow ../_shared/engineering-principles.md` in `SKILL.md`). The controller
+appends to the prompt every `_shared` file the skill points to, plus the skill's own `references/*.md`:
+the agent does not read `factory/`, so otherwise the checklists would not reach it.
 
-- **Gate (profil Node, `checks/node.yaml`)**: lint z limitami (złożoność ≤ 10, zagnieżdżenie ≤ 3,
-  ≤ 4 parametry, funkcja ≤ 60 linii, plik ≤ 300 linii), granice warstw (`no-restricted-imports`),
-  `@typescript-eslint/no-deprecated` oraz `duplicates`: jscpd z baseline, nowy klon ≥ 50 tokenów
-  oblewa gate. Konfiguracja leży w repo aplikacji (`eslint.config.*`, `.jscpd.json`,
-  `.jscpd-baseline.json`) i jest chroniona (`policy.protected_paths`): builder jej nie zmieni.
-- **Baseline**: kod sprzed limitów jest na jawnej liście (blok „Legacy baseline” w ESLint, klony w
-  `.jscpd-baseline.json`). Baseline tylko maleje; po refaktorze operator zawęża go ręcznie
+- **Gate (Node profile, `checks/node.yaml`)**: lint with limits (complexity ≤ 10, nesting ≤ 3,
+  ≤ 4 parameters, function ≤ 60 lines, file ≤ 300 lines), layer boundaries (`no-restricted-imports`),
+  `@typescript-eslint/no-deprecated` and `duplicates`: jscpd with a baseline, a new clone ≥ 50 tokens
+  fails the gate. The configuration lives in the application repo (`eslint.config.*`, `.jscpd.json`,
+  `.jscpd-baseline.json`) and is protected (`policy.protected_paths`): the builder cannot change it.
+- **Baseline**: code from before the limits is on an explicit list (the "Legacy baseline" block in ESLint, clones in
+  `.jscpd-baseline.json`). The baseline only shrinks; after a refactor the operator narrows it manually
   (`npx jscpd --config .jscpd.json --baseline .jscpd-baseline.json --update-baseline`).
-- **Policy**: wyłączenie kontroli komentarzem (`eslint-disable` całego bloku lub reguły limitu
-  czy warstw, `@ts-ignore`, `@ts-nocheck`, `jscpd:ignore`, `noqa: C901`, gołe `noqa`,
-  `#[allow(clippy::too_many_lines)]`, `CHECKSTYLE:OFF`) w pliku kodu to naruszenie polityki.
-  Celowane wyjątki (`eslint-disable-next-line react-hooks/exhaustive-deps`, `@ts-expect-error`)
-  są dozwolone.
-- **Review**: code reviewer zgłasza tylko reguły *review* z ID i kosztem; nie powtarza tego, co
-  sprawdził gate. Profile Python, Rust i Java (narzędzia dla każdej reguły *gate*) są opisane w
-  dokumencie zasad; manifest checków dla nich trzeba dodać przy pierwszym takim repo.
+- **Policy**: disabling a check with a comment (`eslint-disable` of a whole block or of a limit
+  or layer rule, `@ts-ignore`, `@ts-nocheck`, `jscpd:ignore`, `noqa: C901`, bare `noqa`,
+  `#[allow(clippy::too_many_lines)]`, `CHECKSTYLE:OFF`) in a code file is a policy violation.
+  Targeted exceptions (`eslint-disable-next-line react-hooks/exhaustive-deps`, `@ts-expect-error`)
+  are allowed.
+- **Review**: the code reviewer reports only *review* rules, with ID and cost; it does not repeat what
+  the gate checked. The Python, Rust and Java profiles (tools for each *gate* rule) are described in the
+  principles document; their checks manifest has to be added with the first such repo.
 
-## Przegląd UI w przeglądarce (`browser`, `preview` w manifeście checków)
+## UI review in the browser (`browser`, `preview` in the checks manifest)
 
-Gdy manifest checków repo ma `preview` (np. `node.yaml`: `static_dir: dist`, budowane przez check
-`web-build`), a `config.yaml` ma `browser`, ui-review i product-verify (recenzja taska i akceptacja
-feature'a) dostają środowisko `served` zamiast `local-checkout`:
+When the repo's checks manifest has `preview` (e.g. `node.yaml`: `static_dir: dist`, built by the
+`web-build` check), and `config.yaml` has `browser`, ui-review and product-verify (task review and feature
+acceptance) get the `served` environment instead of `local-checkout`:
 
-- kontroler serwuje zbudowany katalog worktree na `127.0.0.1:<port z puli>` (`preview.py`; nieznane
-  ścieżki → `index.html` dla SPA, `/x` → `x.html` dla eksportu statycznego); serwer żyje do końca
-  `factory run` dla danego joba;
-- recenzent dostaje Bash i Playwright CLI (`tools/playwright-cli`, wersja w `factory.lock.json`):
-  `open`, `resize`, `snapshot` (drzewo dostępności z refami), `click`/`fill`/`press`, `console`,
-  `screenshot`. Działa w sandboxie fabryki: worktree tylko do odczytu, zapis tylko do katalogu
-  dowodów; `PLAYWRIGHT_MCP_SANDBOX=false`, bo wewnętrzny sandbox Chrome nie startuje w sandboxie
-  fabryki, `ISOLATED=true` (profil w pamięci), `ALLOWED_ORIGINS` = adres podglądu;
-- po wywołaniu kontroler zamyka sesję przeglądarki (`close`), a zrzuty z katalogu dowodów zapisuje
-  jako artefakty (`screenshots` w wyniku recenzji, zdarzenie `browser.screenshots`).
+- the controller serves the built worktree directory on `127.0.0.1:<port from the pool>` (`preview.py`; unknown
+  paths → `index.html` for SPAs, `/x` → `x.html` for static export); the server lives until the end of
+  `factory run` for the given job;
+- the reviewer gets Bash and the Playwright CLI (`tools/playwright-cli`, version in `factory.lock.json`):
+  `open`, `resize`, `snapshot` (accessibility tree with refs), `click`/`fill`/`press`, `console`,
+  `screenshot`. It runs in the factory sandbox: worktree read-only, writes only to the evidence
+  directory; `PLAYWRIGHT_MCP_SANDBOX=false`, because Chrome's internal sandbox does not start inside the factory
+  sandbox, `ISOLATED=true` (in-memory profile), `ALLOWED_ORIGINS` = the preview address;
+- after the call the controller closes the browser session (`close`), and stores the screenshots from the evidence directory
+  as artifacts (`screenshots` in the review result, event `browser.screenshots`).
 
-Bez buildu (brak `dist/index.html`) albo bez programu (`factory doctor` → `browser.present: false`)
-recenzja zostaje `local-checkout`. Instalacja: `cd tools/playwright-cli && npm ci`; przeglądarka
-z cache Playwright (`playwright-cli install-browser`, jeśli jej brak). Aplikacja w podglądzie działa
-bez backendu (serwer API nie jest uruchamiany).
+Without a build (no `dist/index.html`) or without the program (`factory doctor` → `browser.present: false`)
+the review stays `local-checkout`. Installation: `cd tools/playwright-cli && npm ci`; the browser comes
+from the Playwright cache (`playwright-cli install-browser`, if it is missing). The app in the preview runs
+without a backend (the API server is not started).
 
-## Ocena UX ze zrzutów i kierunek wizualny (`design`)
+## UX assessment from screenshots and visual direction (`design`)
 
-ui-review ocenia ekrany ze zrzutów, które sam zrobił (`factory-ui-review/references/ux-heuristics.md`):
+ui-review assesses screens from the screenshots it took itself (`factory-ui-review/references/ux-heuristics.md`):
 
-- **heurystyki Nielsena** `H1`..`H10`: każda `PASS | FAIL | NOT_APPLICABLE | NOT_RUN` z zrzutami;
-- **jakość wizualna**: `hierarchy`, `layout`, `typography`, `color`, `consistency`, `polish`, ocena 1-5
-  z rubryki;
-- **zgodność z kierunkiem wizualnym** (`design_direction`): porównanie z `docs/DESIGN.md` i obrazami
-  wzorcowymi z `docs/design/` (ścieżki w `config.yaml` → `design`).
+- **Nielsen heuristics** `H1`..`H10`: each `PASS | FAIL | NOT_APPLICABLE | NOT_RUN` with screenshots;
+- **visual quality**: `hierarchy`, `layout`, `typography`, `color`, `consistency`, `polish`, a 1-5 score
+  from the rubric;
+- **conformance to the visual direction** (`design_direction`): comparison with `docs/DESIGN.md` and the reference
+  images in `docs/design/` (paths in `config.yaml` → `design`).
 
-Kontroler nie wierzy deklaracjom recenzenta i sprawdza wynik ui-review:
+The controller does not trust the reviewer's claims and checks the ui-review result:
 
-- w trybie `served` każdy viewport z `browser.viewports` musi mieć zrzut zapisany w katalogu dowodów
-  i wskazany w `viewports[].evidence_ids`. Nazwy w `evidence_ids` muszą być zebranymi plikami.
-  Wszystkie 10 heurystyk i 6 ocen wizualnych muszą być wypełnione. Inaczej wynik to `UNKNOWN`
-  (zdarzenie `ui_review.inconclusive`), a recenzja powtarza się z `controller_note`, co brakowało.
-  Po 3 próbach job przechodzi do `NEEDS_HUMAN`;
-- PASS z oceną wizualną poniżej `design.min_visual_score` (domyślnie 3) zamienia się na CHANGES
-  z blokującym findingiem `CTRL-visual-<aspekt>`. Zamyka go dopiero kolejna recenzja, nie builder;
-- gdy `docs/DESIGN.md` istnieje, `design_direction` musi być `PASS` albo `FAIL`, także bez przeglądarki.
+- in `served` mode every viewport from `browser.viewports` must have a screenshot saved in the evidence directory
+  and listed in `viewports[].evidence_ids`. Names in `evidence_ids` must be collected files.
+  All 10 heuristics and 6 visual scores must be filled in. Otherwise the result is `UNKNOWN`
+  (event `ui_review.inconclusive`), and the review is repeated with a `controller_note` saying what was missing.
+  After 3 attempts the job moves to `NEEDS_HUMAN`;
+- a PASS with a visual score below `design.min_visual_score` (default 3) is turned into CHANGES
+  with a blocking finding `CTRL-visual-<aspect>`. Only a subsequent review closes it, not the builder;
+- when `docs/DESIGN.md` exists, `design_direction` must be `PASS` or `FAIL`, even without a browser.
 
-Kierunek wizualny (`_shared/design-direction.md`): gdy feature zmienia ekrany, a repo nie ma
-`docs/DESIGN.md`, intake w trybie guided pyta o kierunek: 2-4 konkretne warianty (charakter,
-paleta, gęstość, produkt wzorcowy). Specyfikacja dodaje wymaganie zapisania dokumentu (kierunek,
-tokeny, layout, komponenty, motion, ton). Plan robi z niego pierwszy task UI, od którego zależą
-taski ekranów. Obrazy wzorcowe (makiety, zrzuty zaakceptowanego wyglądu) kładzie się do
-`docs/design/`. Recenzent je otwiera i porównuje z nimi zrzuty.
+Visual direction (`_shared/design-direction.md`): when a feature changes screens and the repo has no
+`docs/DESIGN.md`, intake in guided mode asks about the direction: 2-4 concrete variants (character,
+palette, density, reference product). The spec adds a requirement to write the document (direction,
+tokens, layout, components, motion, tone). The plan turns it into the first UI task, on which the screen
+tasks depend. Reference images (mockups, screenshots of the accepted look) go into
+`docs/design/`. The reviewer opens them and compares the screenshots against them.

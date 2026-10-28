@@ -31,7 +31,7 @@ checks:
     timeout_seconds: 300
     required: true
     stage: task
-  - name: sast                          # semgrep z lokalnymi regułami fabryki (offline); tylko kod dodany względem bazy joba
+  - name: sast                          # semgrep with the factory's local rules (offline); only code added relative to the job base
     argv: ["{factory}/tools/semgrep/.venv/bin/semgrep", "scan", "--config", "{factory}/factory/checks/semgrep/security.yml",
            "--baseline-commit", "{base_sha}", "--error", "--metrics=off", "--disable-version-check", "--quiet", "."]
     timeout_seconds: 600

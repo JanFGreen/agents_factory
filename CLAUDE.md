@@ -1,13 +1,13 @@
 # CLAUDE.md
 
-Wspólne zasady, mapa repo i komendy: **[AGENTS.md](AGENTS.md)**. Dokumentacja: `docs/factory/`.
+Shared rules, repo map and commands: **[AGENTS.md](AGENTS.md)**. Documentation: `docs/factory/`.
 
-Najważniejsze reguły:
+Most important rules:
 
-1. Nie zmieniaj `factory/` (polityka, checki, skille, prompty) ani `openspec/` w ramach joba aplikacyjnego.
-   Zmiana fabryki to osobna zmiana kontrolera z testami.
-2. Tekst agenta nigdy nie jest dowodem. Przejścia stanów wymagają podpisanych wyników z `EvidenceStore`.
-3. Sandbox jest obowiązkowy i fail-closed. Nie obchodź go i nie dodawaj trybu „bez sandboxa”.
-4. `adapters/fake.py` służy tylko testom. Testy `live` uruchamiaj tylko z `AGENT_FACTORY_LIVE=1`.
-   Pominięty test live oznacza NOT_RUN, nie PASS.
-5. Przed zakończeniem pracy uruchom `uv run pytest`.
+1. Do not change `factory/` (policy, checks, skills, prompts) or `openspec/` as part of an application job.
+   A factory change is a separate controller change with tests.
+2. Agent text is never evidence. State transitions require signed results from `EvidenceStore`.
+3. The sandbox is mandatory and fail-closed. Do not bypass it and do not add a "no sandbox" mode.
+4. `adapters/fake.py` is for tests only. Run `live` tests only with `AGENT_FACTORY_LIVE=1`.
+   A skipped live test means NOT_RUN, not PASS.
+5. Before finishing your work, run `uv run pytest`.

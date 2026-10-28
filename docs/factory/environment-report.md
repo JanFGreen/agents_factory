@@ -1,16 +1,16 @@
-# Raport środowiska (B0)
+# Environment report (B0)
 
-Data pomiaru: 2026-10-26. Host: maszyna deweloperska operatora. Wyniki to faktyczne wyjście komend.
+Measurement date: 2026-10-26. Host: the operator's development machine. Results are the actual command output.
 
-## Narzędzia
+## Tools
 
-| Komenda | Wynik |
+| Command | Result |
 |---|---|
 | `sw_vers` | `ProductName: macOS`, `ProductVersion: 26.6.2`, `BuildVersion: 25G83` |
 | `uname -m` | `arm64` |
-| `python3 --version` | `Python 3.14.4` (systemowy; projekt go nie używa) |
+| `python3 --version` | `Python 3.14.4` (system; not used by the project) |
 | `uv --version` | `uv 0.13.0 (4ecd0eff2 2026-10-09 aarch64-apple-darwin)` |
-| `uv run python --version` | `Python 3.12.12` (z `.python-version` = `3.12`) |
+| `uv run python --version` | `Python 3.12.12` (from `.python-version` = `3.12`) |
 | `node --version` | `v20.20.0` |
 | `git --version` | `git version 2.50.1 (Apple Git-155)` |
 | `claude --version` | `2.1.74 (Claude Code)` |
@@ -20,37 +20,37 @@ Data pomiaru: 2026-10-26. Host: maszyna deweloperska operatora. Wyniki to faktyc
 | `which bwrap` | `bwrap not found` |
 | `OPENSPEC_TELEMETRY=0 tools/openspec/node_modules/.bin/openspec --version` | `1.15.0` |
 
-## Decyzje wynikające z discovery
+## Decisions resulting from discovery
 
-- **Docker**: binarka jest, ale daemon nie odpowiedział podczas discovery (`docker info` zawiesza się
-  na tym hoście; nie był uruchamiany ponownie). Docker nie jest używany.
-- **Sandbox**: wybrano `sandbox-exec` (`MacSandbox`). `uv run factory doctor` raportuje
+- **Docker**: the binary is present, but the daemon did not respond during discovery (`docker info` hangs
+  on this host; it was not restarted). Docker is not used.
+- **Sandbox**: `sandbox-exec` (`MacSandbox`) was chosen. `uv run factory doctor` reports
   `sandbox: ok, name: macos-sandbox-exec, probe: write outside and secret read denied`.
-  `bwrap` (Linux) nie był testowany na tym hoście.
-- **Repo docelowe**: nie wskazano, więc fabrykę utworzono jako osobny projekt w tym katalogu
-  (blueprint §3 pkt 1). Testy działają na fixture `tests/fixtures/repos/greeter` z lokalnym bare
+  `bwrap` (Linux) was not tested on this host.
+- **Target repo**: none was specified, so the factory was created as a separate project in this directory
+  (blueprint §3 item 1). Tests run on the `tests/fixtures/repos/greeter` fixture with a local bare
   remote.
-- **CI**: brak skonfigurowanego CI (brak `.github/workflows`). Jedyną bramką jest lokalne `uv run pytest`.
-- **OpenSpec**: `@fission-ai/openspec` 1.15.0 przypięty w `tools/openspec` (`factory.lock.json`,
-  wymagany Node `>=20.19.0`, zweryfikowany `v20.20.0`).
+- **CI**: no CI configured (no `.github/workflows`). The only gate is the local `uv run pytest`.
+- **OpenSpec**: `@fission-ai/openspec` 1.15.0 pinned in `tools/openspec` (`factory.lock.json`,
+  requires Node `>=20.19.0`, verified `v20.20.0`).
 
-## Poświadczenia
+## Credentials
 
-| Integracja | Stan |
+| Integration | State |
 |---|---|
-| Claude CLI | auth przez lokalne logowanie CLI (keychain/konfiguracja w `~/.claude`), nie przez zmienne środowiska. `factory doctor` nie sprawdza auth — potwierdzi to dopiero live smoke (`AGENT_FACTORY_LIVE=1 uv run pytest tests/live`); w tym raporcie **nie uruchomiono** live smoke |
-| GitHub | `gh auth status`: `github.com`, `✓ Logged in to github.com account janzielinski-soter (keyring)`, `Active account: true`. Nieużywane: tryb `local`, a `GitHubAdapter` nie jest podłączony w CLI |
+| Claude CLI | auth via local CLI login (keychain/configuration in `~/.claude`), not via environment variables. `factory doctor` does not check auth — only a live smoke will confirm it (`AGENT_FACTORY_LIVE=1 uv run pytest tests/live`); live smoke was **not run** for this report |
+| GitHub | `gh auth status`: `github.com`, `✓ Logged in to github.com account janzielinski-soter (keyring)`, `Active account: true`. Unused: `local` mode, and `GitHubAdapter` is not wired into the CLI |
 
-## Baseline fabryki
+## Factory baseline
 
-| Komenda | Wynik |
+| Command | Result |
 |---|---|
-| `uv run factory doctor` | config ok, `policy_digest e5388270…5538f29`, `data_dir ~/.local/share/agent-factory`, `mode local`, schemat bazy 2, sandbox ok, `claude` 2.1.74 znaleziony |
-| `uv run pytest -q` | `144 passed, 2 skipped in 88.55s` — pominięte to 2 testy `tests/live` (wymagają `AGENT_FACTORY_LIVE=1`), czyli NOT_RUN |
+| `uv run factory doctor` | config ok, `policy_digest e5388270…5538f29`, `data_dir ~/.local/share/agent-factory`, `mode local`, database schema 2, sandbox ok, `claude` 2.1.74 found |
+| `uv run pytest -q` | `144 passed, 2 skipped in 88.55s` — the skipped ones are 2 `tests/live` tests (they require `AGENT_FACTORY_LIVE=1`), i.e. NOT_RUN |
 
-## Braki do uzupełnienia
+## Gaps to fill
 
-- Live smoke z prawdziwym Claude CLI (koszt API) — nie wykonany w ramach tego raportu.
-- Brak testu `bwrap` na Linuksie.
-- Brak testu `GitHubAdapter` na prawdziwym GitHub.
-- Brak CI.
+- Live smoke with the real Claude CLI (API cost) — not performed as part of this report.
+- No `bwrap` test on Linux.
+- No `GitHubAdapter` test against real GitHub.
+- No CI.

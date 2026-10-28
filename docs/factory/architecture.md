@@ -1,92 +1,92 @@
-# Architektura Agent Factory (stan zaimplementowany)
+# Agent Factory architecture (implemented state)
 
-Dokument opisuje to, co jest w kodzie `src/agent_factory/`, a nie docelowy blueprint. Odstępstwa od
-blueprintu są wymienione na końcu.
+This document describes what is in the code under `src/agent_factory/`, not the target blueprint. Deviations from
+the blueprint are listed at the end.
 
-## Komponenty i odpowiedzialności
+## Components and responsibilities
 
-| Komponent | Moduł | Za co odpowiada | Czego nie robi |
+| Component | Module | Responsible for | Does not |
 |---|---|---|---|
-| Controller | `controller.py` (`Controller`, `legal`, `_MAIN`) | legalność przejść, guard na stan docelowy, CAS wersji joba, zdarzenie `state.transition` | nie czyta tekstu agenta; guard czyta tylko podpisane wyniki |
-| Orkiestracja | `factory.py` (`Factory`) | wykonanie pracy danego stanu (`_step_<state>`), wywołania agentów, routing błędów, checkpointy, halt/resume, cancel, decyzje człowieka | nie omija guardów; `resume` zapisuje stan bezpośrednio, ale tylko po `legal()` (patrz state-machine.md) |
-| Tożsamość i unieważnianie | `identities.py` | `InputIdentity`, `digest` (SHA-256 kanonicznego JSON), `RESULT_DEPENDENCIES`, `stale_fields` | — |
-| Evidence store | `evidence.py` (`EvidenceStore`) | artefakty adresowane treścią, wyniki podpisane HMAC-SHA256, cykl życia findings, `current_pass` | nie czyta eksportów z gałęzi joba jako dowodów |
-| Trusted runner | `runner.py` (`TrustedRunner`) | uruchomienie komend z `factory/checks/default.yaml` w sandboxie, junit, klasyfikacja `GateVerdict`, `CheckEvidence` | nie ufa deklaracji buildera „testy przeszły” |
-| Sandbox | `sandbox.py` | `MacSandbox` (SBPL dla `sandbox-exec`), `BwrapSandbox`, probe przy starcie, scrub env | brak trybu bez sandboxa |
-| Policy | `policy.py` | gate na rzeczywistym diffie (protected paths, file_scope, osłabianie testów), ryzyko i powierzchnie (`ui`, `security`), broker skutków ubocznych `authorize_side_effect` | nie obniża ryzyka |
-| Scheduler | `scheduler.py` | walidacja DAG, `ready_tasks`, dzierżawy z epoką i fencingiem, globalne sloty `agent_process` | brak priorytetów/agingu; zadania w jobie wykonywane sekwencyjnie |
-| Budżet | `budgets.py` | rezerwacja przed każdym płatnym wywołaniem, rozliczenie z `total_cost_usd`, rezerwa na weryfikację, `raise_budget` | agent nie podnosi limitu |
-| Licznik analizy | `analysis.py` | wspólny licznik rund (opcje + spec + dekompozycja), brak postępu, `raise_limit` | nie resetuje się po restarcie ani zmianie modelu |
-| Decyzje | `decisions.py` | scoring opcji wagami z `selection.yaml`, tie-break, dokładnie jeden wybór, weryfikacja wyboru AI | — |
-| Feature | `features.py` | normalizacja wejścia, niezmienny snapshot i rewizje, klasyfikacja ścieżki `trivial/standard/complex` | — |
-| Workspace | `workspaces.py` (`WorkspaceManager`) | worktree `factory/<job-id>` w `data_dir/worktrees`, commit kontrolera, diff, kandydat integracji, push warunkowy, cleanup bez `--force` | nie modyfikuje checkoutu użytkownika |
-| Outbox | `outbox.py` | zamiar efektu w transakcji, `pending/inflight/confirmed/unknown/failed`, rekonsyliacja `lookup` przed ponowieniem | nie obiecuje exactly-once |
-| Recovery | `recovery.py` | `recover_job`: wyniki → git → procesy → leases → outbox → budżet | — |
-| Runtime Claude | `adapters/claude.py` (`ClaudeRuntime`) | `claude -p --output-format stream-json`, sesja, `--json-schema`, `--max-budget-usd`, poll z logu zdarzeń, cancel grupy procesów | nie parsuje prywatnych transkryptów |
-| GitHub | `adapters/github.py` | `GitHubAdapter` (PR/komentarz/merge przez outbox, marker idempotencji), `LocalMergeHandler` (tryb `local`), `StubGitHub` (testy) | `GitHubAdapter` nie jest podłączony w CLI (patrz niżej) |
-| Dashboard | `dashboard/__init__.py` | projekcja SQLite tylko do odczytu, localhost, escaping, CSP | brak akcji zmieniających stan |
-| CLI | `cli.py` | komenda `factory`, exit codes 0/2/3/4, `--json` | — |
-| Eval fabryki | `evals.py` (`run_suite`) | profil `full` vs `single-agent` na świeżych kopiach fixture z lokalnym bare remote; sukces rozstrzygają golden testy dokładane do kopii scratch finalnego drzewa i uruchamiane przez `TrustedRunner` | wyniki pilota: `acceptance-report.md` |
+| Controller | `controller.py` (`Controller`, `legal`, `_MAIN`) | transition legality, guard on the target state, CAS on the job version, `state.transition` event | does not read agent text; the guard reads only signed results |
+| Orchestration | `factory.py` (`Factory`) | performing the work of a given state (`_step_<state>`), agent calls, error routing, checkpoints, halt/resume, cancel, human decisions | does not bypass guards; `resume` writes the state directly, but only after `legal()` (see state-machine.md) |
+| Identity and invalidation | `identities.py` | `InputIdentity`, `digest` (SHA-256 of canonical JSON), `RESULT_DEPENDENCIES`, `stale_fields` | — |
+| Evidence store | `evidence.py` (`EvidenceStore`) | content-addressed artifacts, HMAC-SHA256-signed results, findings lifecycle, `current_pass` | does not read exports from the job branch as evidence |
+| Trusted runner | `runner.py` (`TrustedRunner`) | running commands from `factory/checks/default.yaml` in the sandbox, junit, `GateVerdict` classification, `CheckEvidence` | does not trust the builder's "tests passed" claim |
+| Sandbox | `sandbox.py` | `MacSandbox` (SBPL for `sandbox-exec`), `BwrapSandbox`, probe at startup, env scrubbing | no mode without a sandbox |
+| Policy | `policy.py` | gate on the actual diff (protected paths, file_scope, test weakening), risk and surfaces (`ui`, `security`), side-effect broker `authorize_side_effect` | does not lower risk |
+| Scheduler | `scheduler.py` | DAG validation, `ready_tasks`, leases with epoch and fencing, global `agent_process` slots | no priorities/aging; tasks within a job run sequentially |
+| Budget | `budgets.py` | reservation before every paid call, settlement from `total_cost_usd`, verification reserve, `raise_budget` | the agent does not raise the limit |
+| Analysis counter | `analysis.py` | shared round counter (options + spec + decomposition), no-progress detection, `raise_limit` | does not reset on restart or model change |
+| Decisions | `decisions.py` | option scoring with weights from `selection.yaml`, tie-break, exactly one choice, verification of the AI choice | — |
+| Feature | `features.py` | input normalization, immutable snapshot and revisions, path classification `trivial/standard/complex` | — |
+| Workspace | `workspaces.py` (`WorkspaceManager`) | worktree `factory/<job-id>` in `data_dir/worktrees`, controller commit, diff, integration candidate, conditional push, cleanup without `--force` | does not modify the user's checkout |
+| Outbox | `outbox.py` | effect intent within a transaction, `pending/inflight/confirmed/unknown/failed`, `lookup` reconciliation before retry | does not promise exactly-once |
+| Recovery | `recovery.py` | `recover_job`: results → git → processes → leases → outbox → budget | — |
+| Claude runtime | `adapters/claude.py` (`ClaudeRuntime`) | `claude -p --output-format stream-json`, session, `--json-schema`, `--max-budget-usd`, polling from the event log, process group cancel | does not parse private transcripts |
+| GitHub | `adapters/github.py` | `GitHubAdapter` (PR/comment/merge via outbox, idempotency marker), `LocalMergeHandler` (`local` mode), `StubGitHub` (tests) | `GitHubAdapter` is not wired into the CLI (see below) |
+| Dashboard | `dashboard/__init__.py` | read-only SQLite projection, localhost, escaping, CSP | no state-changing actions |
+| CLI | `cli.py` | `factory` command, exit codes 0/2/3/4, `--json` | — |
+| Factory eval | `evals.py` (`run_suite`) | `full` vs `single-agent` profile on fresh fixture copies with a local bare remote; success is decided by golden tests added to a scratch copy of the final tree and run by `TrustedRunner` | pilot results: `acceptance-report.md` |
 
-## Gdzie żyje stan
+## Where state lives
 
-Katalog danych to `data_dir` z `factory/config.yaml` (domyślnie `~/.local/share/agent-factory`;
-ścieżka względna jest liczona od katalogu nadrzędnego `factory/`; `--data-dir` nadpisuje).
+The data directory is `data_dir` from `factory/config.yaml` (default `~/.local/share/agent-factory`;
+a relative path is resolved from the parent directory of `factory/`; `--data-dir` overrides it).
 
-| Ścieżka w `data_dir` | Zawartość |
+| Path in `data_dir` | Contents |
 |---|---|
-| `state.db` (+ `-wal`, `-shm`) | SQLite w trybie WAL, `busy_timeout=30000`, migracje w `schema_migrations` (obecnie wersja 2). Jedyne źródło prawdy stanu |
-| `artifacts/<aa>/<bb>/<sha256>` | treść adresowana SHA-256: payloady wyników, logi stdout/stderr, checkpointy, odrzucone patche |
-| `keys/evidence.key` | 32-bajtowy klucz HMAC (plik `0600`, katalog `0700`) |
-| `worktrees/<job-id>/` | worktree joba na gałęzi `factory/<job-id>` |
-| `runs/<job-id>/run-<ns>/` | scratch runnera: `home/`, `tmp/`, `stdout.log`, `stderr.log`, `report.xml` |
-| `agent-logs/<run-id>.jsonl`, `.stderr` | strumień `stream-json` i stderr wywołań Claude CLI |
-| `repos.json` | rejestr repo z `factory init` |
-| `holdout/` | tylko blokowany w sandboxie; kod go nie tworzy ani nie czyta |
-| `evals/<suite>-<profile>-<id>/` | przebiegi `factory eval`: osobny `state.db`, `data/`, logi i `report.json` per zadanie |
+| `state.db` (+ `-wal`, `-shm`) | SQLite in WAL mode, `busy_timeout=30000`, migrations in `schema_migrations` (currently version 2). The single source of truth for state |
+| `artifacts/<aa>/<bb>/<sha256>` | SHA-256 content-addressed content: result payloads, stdout/stderr logs, checkpoints, rejected patches |
+| `keys/evidence.key` | 32-byte HMAC key (file `0600`, directory `0700`) |
+| `worktrees/<job-id>/` | the job's worktree on branch `factory/<job-id>` |
+| `runs/<job-id>/run-<ns>/` | runner scratch: `home/`, `tmp/`, `stdout.log`, `stderr.log`, `report.xml` |
+| `agent-logs/<run-id>.jsonl`, `.stderr` | `stream-json` stream and stderr of Claude CLI calls |
+| `repos.json` | repo registry from `factory init` |
+| `holdout/` | only blocked in the sandbox; the code neither creates nor reads it |
+| `evals/<suite>-<profile>-<id>/` | `factory eval` runs: separate `state.db`, `data/`, logs and `report.json` per task |
 
-Tabele SQLite: `features`, `jobs`, `tasks`, `attempts`, `leases`, `events`, `artifacts`, `results`,
+SQLite tables: `features`, `jobs`, `tasks`, `attempts`, `leases`, `events`, `artifacts`, `results`,
 `findings`, `approvals`, `outbox`, `usage`, `budget_reservations`, `resource_allocations`,
-`complexity_assessments`, `analysis_rounds`, `schema_migrations` (`state.py`). Indeks
-`jobs_one_active_per_scope` wymusza jeden aktywny job na `(repo_id, source_id, scope_revision)`.
-Kontekst joba (`spec`, `plan`, digesty, `current_task`, `candidate`, `merge_op`…) to JSON w
-`jobs.context_json`, aktualizowany pod CAS (`Store.update_job_context`).
+`complexity_assessments`, `analysis_rounds`, `schema_migrations` (`state.py`). The index
+`jobs_one_active_per_scope` enforces one active job per `(repo_id, source_id, scope_revision)`.
+The job context (`spec`, `plan`, digests, `current_task`, `candidate`, `merge_op`…) is JSON in
+`jobs.context_json`, updated under CAS (`Store.update_job_context`).
 
-Git jest źródłem prawdy kodu. Kontroler commituje pracę buildera (`WorkspaceManager.commit_all`,
-autor `Agent Factory`, `--no-verify`) i eksportuje spec/plan do
-`openspec/changes/<change-id>/` w worktree (`Factory._write_spec_files`). Eksporty służą tylko do
-odczytu i nigdy nie są czytane jako dowód.
+Git is the source of truth for code. The controller commits the builder's work (`WorkspaceManager.commit_all`,
+author `Agent Factory`, `--no-verify`) and exports the spec/plan to
+`openspec/changes/<change-id>/` in the worktree (`Factory._write_spec_files`). Exports are for
+reading only and are never read as evidence.
 
-## Przepływ jednego joba
+## Flow of a single job
 
-1. `factory submit` → `features.normalize` → `store_feature` (rewizja) → `Factory.submit` tworzy
-   wiersz `jobs` w `FEATURE_RECEIVED` z limitem rund i budżetem z konfiguracji.
-2. `factory run --job` → `Factory.run`: pętla `step()` do stanu terminalnego, zatrzymanego (`HALTED`)
-   albo `READY_TO_MERGE` przy `merge.enabled: false`. Maksymalnie 200 kroków na wywołanie.
-3. `INTAKE`: worktree z `origin/<base>` (`default_branch` nigdy nie zakłada `main`), agent
-   `factory-intake`, zapis `environment_digest` (`checks_digest` jest liczony na żywo z `factory/checks/` i `factory/skills/`).
-4. `COMPLEXITY_ASSESSMENT`: agent `factory-classify-feature`, deterministyczne `features.classify`,
-   wynik `classification`, ścieżka `trivial` → `MICRO_SPEC`, inaczej `ANALYSIS_ROUND`.
-5. Analiza (rundy wspólnego licznika): opcje (`factory-options-review` w trybie
-   `draft-and-critique` w `OPTIONS_DRAFT`) → wybór (`decisions.select` + `verify_ai_choice`) →
-   spec → `factory-spec-evaluate` + strukturalne sprawdzenia kontrolera → plan → walidacja DAG +
-   `factory-decomposition-review`. Ścieżka trivial tworzy jedno zadanie `TASK-01`.
-6. Przed pierwszym buildem: baseline checków na nietkniętej bazie (`baseline_ok`); FAIL → `BLOCKED_ENV`.
-7. `BUILD_TASK` (agent `factory-implement`, zapis w worktree) → commit kontrolera → `CHECKS`
-   (policy gate na diffie buildera, ryzyko z diffu całego joba, runner) → `REVIEW` (wymagane review
-   na zamrożonym HEAD; nieaktualny wynik `gate` cofa do `CHECKS`; po reviewerach worktree musi być
-   czysty) → `TASK_ACCEPTED` → następne gotowe zadanie albo `FEATURE_ACCEPTANCE`.
-8. `FEATURE_ACCEPTANCE`: checki etapu `acceptance` + `factory-product-verify` dla całego feature'a.
-9. `INTEGRATION`: merge świeżej bazy do gałęzi joba (kandydat), checki etapu `integration`,
-   `factory-integration-review`, wynik związany z `candidate_tree_sha`.
-10. `READY_TO_MERGE` → (`AWAITING_HUMAN_MERGE` zależnie od `merge.human_interaction`) → `MERGING`:
-    sprawdzenie, czy baza się nie ruszyła, outbox `local.merge` → `LocalMergeHandler` →
+1. `factory submit` → `features.normalize` → `store_feature` (revision) → `Factory.submit` creates
+   a `jobs` row in `FEATURE_RECEIVED` with the round limit and budget from the configuration.
+2. `factory run --job` → `Factory.run`: a `step()` loop until a terminal state, a halted state (`HALTED`)
+   or `READY_TO_MERGE` with `merge.enabled: false`. At most 200 steps per call.
+3. `INTAKE`: worktree from `origin/<base>` (`default_branch` never assumes `main`), agent
+   `factory-intake`, records `environment_digest` (`checks_digest` is computed live from `factory/checks/` and `factory/skills/`).
+4. `COMPLEXITY_ASSESSMENT`: agent `factory-classify-feature`, deterministic `features.classify`,
+   result `classification`, path `trivial` → `MICRO_SPEC`, otherwise `ANALYSIS_ROUND`.
+5. Analysis (rounds of the shared counter): options (`factory-options-review` in
+   `draft-and-critique` mode in `OPTIONS_DRAFT`) → choice (`decisions.select` + `verify_ai_choice`) →
+   spec → `factory-spec-evaluate` + structural controller checks → plan → DAG validation +
+   `factory-decomposition-review`. The trivial path creates a single task `TASK-01`.
+6. Before the first build: baseline checks on the untouched base (`baseline_ok`); FAIL → `BLOCKED_ENV`.
+7. `BUILD_TASK` (agent `factory-implement`, writes to the worktree) → controller commit → `CHECKS`
+   (policy gate on the builder's diff, risk from the whole job's diff, runner) → `REVIEW` (required reviews
+   on the frozen HEAD; a stale `gate` result goes back to `CHECKS`; after the reviewers the worktree must be
+   clean) → `TASK_ACCEPTED` → next ready task or `FEATURE_ACCEPTANCE`.
+8. `FEATURE_ACCEPTANCE`: `acceptance` stage checks + `factory-product-verify` for the whole feature.
+9. `INTEGRATION`: merge of the fresh base into the job branch (candidate), `integration` stage checks,
+   `factory-integration-review`, result bound to `candidate_tree_sha`.
+10. `READY_TO_MERGE` → (`AWAITING_HUMAN_MERGE` depending on `merge.human_interaction`) → `MERGING`:
+    check that the base has not moved, outbox `local.merge` → `LocalMergeHandler` →
     `git push --force-with-lease=refs/heads/<base>:<tested-base-sha>` → `MERGED` → cleanup.
 
-## Diagram zaimplementowanych stanów
+## Diagram of implemented states
 
-Krawędzie to `_MAIN` z `controller.py`. Stany boczne osiągalne są z każdego nieterminalnego stanu
-(reguła `legal()`); pokazano tylko typowe wejścia.
+The edges are `_MAIN` from `controller.py`. Side states are reachable from every non-terminal state
+(the `legal()` rule); only typical entries are shown.
 
 ```mermaid
 flowchart TD
@@ -96,7 +96,7 @@ flowchart TD
   MS --> SE[AI_SPEC_EVALUATION]
   AR --> OD[OPTIONS_DRAFT] --> OR[AI_OPTION_REVIEW]
   OR -->|spike| OD
-  OR -->|decyzja odrzucona| AR
+  OR -->|decision rejected| AR
   OR --> OS[OPTION_SELECTED] --> SE
   SE -->|trivial PASS| STR[SINGLE_TASK_READY]
   SE -->|PASS| DC[DECOMPOSE]
@@ -109,74 +109,74 @@ flowchart TD
   TGR --> BT
   BT --> CH[CHECKS]
   CH -->|FAIL| BT
-  CH -->|reklasyfikacja| AR
+  CH -->|reclassification| AR
   CH -->|PASS| RV[REVIEW]
   RV -->|CHANGES| BT
-  RV -->|gate nieaktualny| CH
-  RV -->|błąd spec/podziału| AR
-  RV -->|błąd spec, trivial| MS
+  RV -->|stale gate| CH
+  RV -->|spec/decomposition error| AR
+  RV -->|spec error, trivial| MS
   RV --> TA[TASK_ACCEPTED]
-  TA -->|kolejne zadanie| BT
+  TA -->|next task| BT
   TA --> FA[FEATURE_ACCEPTANCE]
   FA -->|FAIL| BT
-  FA -->|błąd spec/podziału| AR
-  FA -->|błąd spec, trivial| MS
+  FA -->|spec/decomposition error| AR
+  FA -->|spec error, trivial| MS
   FA --> INT[INTEGRATION]
-  INT -->|konflikt/FAIL| BT
+  INT -->|conflict/FAIL| BT
   INT --> RTM[READY_TO_MERGE]
   RTM --> AHM[AWAITING_HUMAN_MERGE]
   RTM --> MG[MERGING]
   AHM -->|approve| MG
   AHM -->|rework| BT
   AHM -->|reject| REJ([REJECTED])
-  MG -->|baza się ruszyła| INT
+  MG -->|base moved| INT
   MG --> MD([MERGED])
-  X[każdy nieterminalny] -.-> SIDE[NEEDS_INFO / BLOCKED_ENV / NEEDS_HUMAN / BUDGET_EXHAUSTED / ANALYSIS_LIMIT_REACHED / PAUSED / FAILED / FAILED_NO_FEASIBLE_OPTION / CANCELLING]
+  X[any non-terminal] -.-> SIDE[NEEDS_INFO / BLOCKED_ENV / NEEDS_HUMAN / BUDGET_EXHAUSTED / ANALYSIS_LIMIT_REACHED / PAUSED / FAILED / FAILED_NO_FEASIBLE_OPTION / CANCELLING]
   SIDE -.->|cancel| CC([CANCELLED])
 ```
 
-## Równoległe taski w jobie (pula torów, `lanes.py`)
+## Parallel tasks within a job (lane pool, `lanes.py`)
 
-`execution.max_builders_per_job > 1` włącza pulę: gdy job jest w `BUILD_TASK` i są ≥ 2 gotowe taski
-o rozłącznym zakresie plików (`lanes.scopes_overlap`; ścieżki testów się nie liczą, pusty zakres =
-konflikt), kontroler uruchamia do `max_builders_per_job` torów. Każdy tor: odłączony worktree
-`worktrees/<job>--<task>` z bieżącej głowy joba (agenci toru nie widzą worktree joba ani innych torów),
-własny builder, zaufane checki i recenzenci; wyniki podpisane z tożsamością głowy toru.
+`execution.max_builders_per_job > 1` enables the pool: when the job is in `BUILD_TASK` and there are ≥ 2 ready tasks
+with disjoint file scopes (`lanes.scopes_overlap`; test paths do not count, an empty scope =
+conflict), the controller starts up to `max_builders_per_job` lanes. Each lane: a detached worktree
+`worktrees/<job>--<task>` from the job's current head (lane agents do not see the job's worktree or other lanes),
+its own builder, trusted checks and reviewers; results are signed with the lane head's identity.
 
-Tor, który skończył, jest od razu integrowany w worktree joba (nie czeka na pozostałe): akceptacja
-tylko gdy (1) podpisane wyniki gate i wymaganych review są aktualne dla głowy toru i nie ma otwartych
-blokujących findings, (2) `git merge --no-ff` bez konfliktu, (3) przy innym drzewie niż w torze —
-checki przechodzą na drzewie połączonym. Zwolnione miejsce dostaje następny gotowy task (zakres
-rozłączny z działającymi torami), budowany już na nowszej głowie. Konflikt lub porażka połączonych
-checków → `REWORK` bez zużycia próby. CHANGES/FAIL → zwykłe `REWORK`. Niejednoznaczne recenzje
-(UNKNOWN/BLOCKED ×3) → tor **odłożony** (`refs/factory/parked/<job>/<task>`, `parked_lanes`):
-przy następnym starcie tylko recenzje są powtarzane, bez przebudowy i bez nowej próby; po
-`MAX_PARKS` odłożeniach job czeka w `NEEDS_HUMAN`, a `factory resume` daje recenzjom kolejną szansę.
-Budżet/blokada w torze → próba zwrócona, nowe tory nie startują, działające kończą się i są
-integrowane, potem job się zatrzymuje. Kontroler zabity w trakcie: `_recover_wave` zatrzymuje
-agentów torów, oznacza próby `abandoned`, przywraca taski i usuwa tory.
+A finished lane is integrated into the job's worktree right away (it does not wait for the others): acceptance
+only if (1) the signed gate and required review results are current for the lane head and there are no open
+blocking findings, (2) `git merge --no-ff` has no conflict, (3) when the tree differs from the lane's —
+checks pass on the merged tree. The freed slot gets the next ready task (scope
+disjoint from the running lanes), built on the newer head. A conflict or failure of the merged
+checks → `REWORK` without consuming an attempt. CHANGES/FAIL → a regular `REWORK`. Ambiguous reviews
+(UNKNOWN/BLOCKED ×3) → the lane is **parked** (`refs/factory/parked/<job>/<task>`, `parked_lanes`):
+on the next start only the reviews are repeated, without a rebuild and without a new attempt; after
+`MAX_PARKS` parkings the job waits in `NEEDS_HUMAN`, and `factory resume` gives the reviews another chance.
+Budget/block in a lane → the attempt is refunded, new lanes do not start, running ones finish and are
+integrated, then the job stops. Controller killed mid-run: `_recover_wave` stops the
+lane agents, marks attempts `abandoned`, restores the tasks and removes the lanes.
 
-## Czego nie zaimplementowano (względem blueprintu)
+## What is not implemented (relative to the blueprint)
 
-- **Archiwizacja OpenSpec (§6.4, AF-36)**: brak. Kontroler nie wywołuje CLI `openspec` w ogóle
-  (ani `validate`, ani `archive`); `factory doctor` sprawdza tylko obecność binarki.
-- **Tryby `pr`/`automerge`/`release` w CLI**: `cli.py::_make_factory` podłącza `LocalMergeHandler`
-  wyłącznie dla `policy.mode == "local"`; w innych trybach handler to `None`, więc `MERGING` kończy
-  się `BLOCKED_ENV: no merge handler configured`. Orkiestracja nie tworzy PR (brak kroku
-  `github.create_pr`). `GitHubAdapter` jest testowany tylko na `StubGitHub`, nie na prawdziwym GitHub.
-- **`factory submit --issue`**: nieobsługiwane (odmowa w `offline/local`, w pozostałych trybach
-  komunikat i wymóg `--file/--text`).
-- **Merge queue po stronie serwera**: nieużywana. W trybie `local` atomową kontrolą bazy jest
-  `git push --force-with-lease=<base>:<expected>` w `WorkspaceManager.push_to_base`.
-- **Release/deploy**: brak bytu release; `deploy` istnieje tylko w brokerze (`policy.SIDE_EFFECTS`).
-- **Równoległość między jobami**: `factory run` bez `--job` przetwarza joby po kolei; `max_active_jobs`,
+- **OpenSpec archiving (§6.4, AF-36)**: missing. The controller does not call the `openspec` CLI at all
+  (neither `validate` nor `archive`); `factory doctor` only checks that the binary is present.
+- **`pr`/`automerge`/`release` modes in the CLI**: `cli.py::_make_factory` wires `LocalMergeHandler`
+  only for `policy.mode == "local"`; in other modes the handler is `None`, so `MERGING` ends
+  with `BLOCKED_ENV: no merge handler configured`. Orchestration does not create a PR (no
+  `github.create_pr` step). `GitHubAdapter` is tested only against `StubGitHub`, not against real GitHub.
+- **`factory submit --issue`**: unsupported (refused in `offline/local`, in other modes
+  a message and a requirement for `--file/--text`).
+- **Server-side merge queue**: not used. In `local` mode the atomic base check is
+  `git push --force-with-lease=<base>:<expected>` in `WorkspaceManager.push_to_base`.
+- **Release/deploy**: no release entity; `deploy` exists only in the broker (`policy.SIDE_EFFECTS`).
+- **Parallelism across jobs**: `factory run` without `--job` processes jobs one by one; `max_active_jobs`,
   `max_test_processes`, `max_integration_candidates`, `command_timeout_seconds`, `job_deadline_minutes`
-  są walidowane, ale nieużywane. Egzekwowane są slot `agent_process` (`max_agent_processes`) i
-  `max_builders_per_job` (tory poniżej).
+  are validated but unused. Enforced are the `agent_process` slot (`max_agent_processes`) and
+  `max_builders_per_job` (lanes above).
 
-- **Skille bez wywołania w orkiestracji**: `factory-repo-map` (kontroler robi `git ls-files`),
+- **Skills not called in orchestration**: `factory-repo-map` (the controller does `git ls-files`),
   `factory-test-design`, `factory-evidence-audit`, `factory-recover`, `factory-retrospective`,
-  `factory-release-verify`. `factory/prompts/*.md` nie są ładowane przez kod — system prompt to
+  `factory-release-verify`. `factory/prompts/*.md` are not loaded by the code — the system prompt is
   `skills/_shared/contract.md` + `SKILL.md`.
-- **Holdout (§7.9)**: tylko reguła deny dla `data_dir/holdout`; brak mechanizmu prywatnych scenariuszy.
-- **Porty**: `workspaces.allocate_port` istnieje, ale nie jest wywoływany.
+- **Holdout (§7.9)**: only a deny rule for `data_dir/holdout`; no mechanism for private scenarios.
+- **Ports**: `workspaces.allocate_port` exists but is not called.

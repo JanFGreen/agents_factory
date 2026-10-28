@@ -1,11 +1,11 @@
-# Polityki
+# Policies
 
-Polityka egzekwowana jest kodem (`src/agent_factory/policy.py`) na podstawie `factory/config.yaml`:
+Policy is enforced in code (`src/agent_factory/policy.py`) based on `factory/config.yaml`:
 
-- `policy.mode` i broker skutków ubocznych (`authorize_side_effect`): w trybie `local` brak komentarzy, PR i deploy.
-- `policy.protected_paths`: zmiana tych plików przez buildera daje `FAIL_POLICY` (chronione wejścia oceny).
-- `policy.risk_path_rules` + reguły treści diffu: podnoszą ryzyko; nigdy go nie obniżają.
-- Wykrywanie osłabienia testów: skip/xfail, `assert True`, usunięte testy i asercje, usunięte pliki testów.
+- `policy.mode` and the side-effect broker (`authorize_side_effect`): in `local` mode there are no comments, PRs or deploys.
+- `policy.protected_paths`: a change to these files by the builder yields `FAIL_POLICY` (protected evaluation inputs).
+- `policy.risk_path_rules` + diff content rules: raise risk; they never lower it.
+- Test-weakening detection: skip/xfail, `assert True`, removed tests and assertions, removed test files.
 
-Zmiana polityki to osobna zmiana kontrolera (operator, testy, review). Zmienia `policy_digest`,
-więc wszystkie zależne wyniki trwających jobów stają się nieaktualne.
+A policy change is a separate controller change (operator, tests, review). It changes `policy_digest`,
+so all dependent results of running jobs become stale.

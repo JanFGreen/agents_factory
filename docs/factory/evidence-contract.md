@@ -1,34 +1,34 @@
-# Kontrakt dowodów
+# Evidence contract
 
-Źródła: `src/agent_factory/schemas/__init__.py`, `identities.py`, `evidence.py`, `runner.py`.
+Sources: `src/agent_factory/schemas/__init__.py`, `identities.py`, `evidence.py`, `runner.py`.
 
-## 1. Koperta agenta (`AgentEnvelope`)
+## 1. Agent envelope (`AgentEnvelope`)
 
-Każde wywołanie skilla musi zwrócić jedną kopertę JSON. Adapter Claude przekazuje
-`AgentEnvelope.model_json_schema()` jako `--json-schema`; gdy CLI zwróci `structured_output`, jest on
-używany, w przeciwnym razie `extract_json_object` bierze ostatni blok ```` ```json ```` (albo cały tekst,
-jeśli to goły obiekt). Wszystkie modele mają `extra="forbid"`.
+Every skill invocation must return a single JSON envelope. The Claude adapter passes
+`AgentEnvelope.model_json_schema()` as `--json-schema`; when the CLI returns `structured_output`, it is
+used, otherwise `extract_json_object` takes the last ```` ```json ```` block (or the whole text,
+if it is a bare object). All models have `extra="forbid"`.
 
-| Pole | Typ / ograniczenie |
+| Field | Type / constraint |
 |---|---|
 | `schema_version` | `"1"` |
-| `kind` | ≤ 60 znaków; musi równać się nazwie skilla bez prefiksu `factory-` (inaczej `ContractError`) |
+| `kind` | ≤ 60 characters; must equal the skill name without the `factory-` prefix (otherwise `ContractError`) |
 | `verdict` | `PASS` \| `CHANGES` \| `BLOCKED` \| `UNKNOWN` |
-| `summary` | ≤ 8000 znaków |
-| `findings` | lista `Finding` |
-| `checked_criteria`, `limitations` | listy tekstów |
-| `payload` | obiekt; walidowany modelem z `PAYLOADS` tylko dla `PASS`/`CHANGES` |
+| `summary` | ≤ 8000 characters |
+| `findings` | list of `Finding` |
+| `checked_criteria`, `limitations` | lists of strings |
+| `payload` | object; validated by the model from `PAYLOADS` only for `PASS`/`CHANGES` |
 
-Reguła: `PASS` z otwartym blokującym findingiem jest niezgodny z kontraktem (walidator modelu).
-Błąd kontraktu → jedna próba naprawy z komunikatem walidatora, potem `NEEDS_HUMAN`.
+Rule: `PASS` with an open blocking finding violates the contract (model validator).
+Contract error → one repair attempt with the validator message, then `NEEDS_HUMAN`.
 
 `Finding`: `id` (`^[A-Za-z0-9_.-]{1,40}$`), `severity` (`low|medium|high|critical`), `blocking`,
-`requirement_ids`, `location {path (względna, bez ..), line ≥ 1}`, `problem` (1–4000), `evidence_ids`,
-`expected_fix`, `status` (`open|fixed|disputed|accepted-risk`, domyślnie `open`).
+`requirement_ids`, `location {path (relative, no ..), line ≥ 1}`, `problem` (1–4000), `evidence_ids`,
+`expected_fix`, `status` (`open|fixed|disputed|accepted-risk`, default `open`).
 
-### Payloady (`PAYLOADS`)
+### Payloads (`PAYLOADS`)
 
-| `kind` | Model | Kluczowe pola |
+| `kind` | Model | Key fields |
 |---|---|---|
 | `intake` | `IntakePayload` | `goal`, `acceptance_criteria`, `constraints`, `open_questions`, `future_directions` |
 | `classify-feature` | `ClassificationPayload` | `dimensions{name: {score 0–2 \| null, evidence}}`, `risk`, `single_atomic_task`, `known_pattern`, `new_trust_boundary`, `forced_complex_reasons` |
@@ -37,52 +37,52 @@ Błąd kontraktu → jedna próba naprawy z komunikatem walidatora, potem `NEEDS
 | `spec-evaluate` | `SpecEvaluationPayload` | `dimensions{name: PASS\|CHANGES}`, `counterexample`, `uncovered_requirements` |
 | `plan` | `PlanPayload` | `tasks[TaskSpec]`, `future_needs[{description, status: required_now\|committed_next\|hypothetical}]` |
 | `decomposition-review` | `DecompositionPayload` | `requirements_map{REQ: [TASK]}`, `per_task`, `dag_ok` |
-| `implement` | `ImplementPayload` | `changed_files`, `tests_added`, `handoff`, `claimed_checks` (deklaracje, nie dowód) |
+| `implement` | `ImplementPayload` | `changed_files`, `tests_added`, `handoff`, `claimed_checks` (claims, not evidence) |
 
 `TaskSpec`: `task_id` (`TASK-*`), `requirement_ids`, `depends_on`, `inputs`, `outputs`, `file_scope`,
 `risk`, `estimated_minutes`, `acceptance`, `verification`, `parallel_safe_with`,
 `future_constraints`, `parent`.
 
-Skille review (`code-review`, `security-review`, `ui-review`, `product-verify`, `test-adequacy`,
-`integration-review`, `root-cause`) nie mają modelu payloadu; kontroler czyta z `payload` jedynie
-`error_class` (`spec`/`decomposition` → powrót do analizy) i `owner_task_id` (akceptacja feature'a).
+Review skills (`code-review`, `security-review`, `ui-review`, `product-verify`, `test-adequacy`,
+`integration-review`, `root-cause`) have no payload model; the controller reads from `payload` only
+`error_class` (`spec`/`decomposition` → back to analysis) and `owner_task_id` (feature acceptance).
 
-Kontroler dokłada deterministyczne sprawdzenia, które mogą zmienić `PASS` na `CHANGES`:
-`spec_structure_problems` (śledzenie REQ ↔ intencja ↔ kryteria), wymagane wymiary spec
-(`workflow.spec_evaluation.mandatory_dimensions`), niepusty `counterexample`, `validate_dag` i mapa
-wymagań reviewera dekompozycji.
+The controller adds deterministic checks that can change `PASS` to `CHANGES`:
+`spec_structure_problems` (tracing REQ ↔ intent ↔ criteria), required spec dimensions
+(`workflow.spec_evaluation.mandatory_dimensions`), a non-empty `counterexample`, `validate_dag` and the
+decomposition reviewer's requirements map.
 
-## 2. Tożsamość wejść (`InputIdentity`)
+## 2. Input identity (`InputIdentity`)
 
-Model zamrożony, `extra="forbid"`; pola nieaplikowalne to jawne `None`.
+Frozen model, `extra="forbid"`; non-applicable fields are explicit `None`.
 
-| Pole | Jak wypełnia `Controller.identity` |
+| Field | How `Controller.identity` fills it |
 |---|---|
-| `repo_id`, `job_id`, `task_id` | z joba / argumentu |
-| `attempt_id` | nie ustawiane |
-| `base_sha` | `jobs.base_sha`; dla kandydata integracji (`candidate.sha == HEAD`) — `candidate.base_sha` |
-| `head_sha` | `git rev-parse HEAD` worktree |
-| `candidate_tree_sha` | `HEAD^{tree}` tylko, gdy HEAD jest kandydatem integracji |
+| `repo_id`, `job_id`, `task_id` | from the job / argument |
+| `attempt_id` | not set |
+| `base_sha` | `jobs.base_sha`; for an integration candidate (`candidate.sha == HEAD`) — `candidate.base_sha` |
+| `head_sha` | `git rev-parse HEAD` of the worktree |
+| `candidate_tree_sha` | `HEAD^{tree}` only when HEAD is an integration candidate |
 | `feature_revision` | `jobs.scope_revision` |
-| `complexity_digest`, `scope_digest`, `spec_digest`, `decision_digest`, `plan_digest` | z `context_json` (digest treści) |
-| `decomposition_digest`, `analysis_round_id` | nie ustawiane (runda trafia do `results.analysis_round`) |
-| `policy_digest` | `LoadedConfig.policy_digest` (digest `config.yaml` + `workflow.yaml` + `selection.yaml`) |
-| `checks_digest` | na żywo: `Controller.checks_digest()` = digest manifestów katalogów `factory/checks/` i `factory/skills/` (`directory_manifest`) |
-| `environment_digest` | z kontekstu, zapisany przy `INTAKE` (wersja Pythona + nazwa sandboxa) |
-| `acceptance_suite_digest` | digest `[acceptance_criteria spec, ChecksManifest.digest()]` zapisany w kontekście przy autorstwie spec |
-| `runtime_version`, `model_id`, `prompt_digest`, `skill_digests`, `grader_version` | nie ustawiane |
+| `complexity_digest`, `scope_digest`, `spec_digest`, `decision_digest`, `plan_digest` | from `context_json` (content digest) |
+| `decomposition_digest`, `analysis_round_id` | not set (the round goes to `results.analysis_round`) |
+| `policy_digest` | `LoadedConfig.policy_digest` (digest of `config.yaml` + `workflow.yaml` + `selection.yaml`) |
+| `checks_digest` | live: `Controller.checks_digest()` = digest of the manifests of the `factory/checks/` and `factory/skills/` directories (`directory_manifest`) |
+| `environment_digest` | from the context, recorded at `INTAKE` (Python version + sandbox name) |
+| `acceptance_suite_digest` | digest of `[acceptance_criteria spec, ChecksManifest.digest()]` recorded in the context at spec authoring |
+| `runtime_version`, `model_id`, `prompt_digest`, `skill_digests`, `grader_version` | not set |
 
-`digest()` = SHA-256 kanonicznego JSON (`sort_keys`, bez spacji). `tasks.md` ma digest planu z
-wyzerowanymi checkboxami (`tasks_plan_digest`), więc odhaczenie postępu nie unieważnia oceny.
-`validate_real()` odrzuca wartości, które nie są 40-znakowym SHA Git / 64-znakowym SHA-256.
+`digest()` = SHA-256 of canonical JSON (`sort_keys`, no spaces). `tasks.md` has a plan digest with
+checkboxes zeroed (`tasks_plan_digest`), so ticking off progress does not invalidate the evaluation.
+`validate_real()` rejects values that are not a 40-character Git SHA / 64-character SHA-256.
 
-## 3. Macierz unieważniania (`RESULT_DEPENDENCIES`)
+## 3. Invalidation matrix (`RESULT_DEPENDENCIES`)
 
-Wynik jest aktualny, gdy każde pole z jego wiersza równa się bieżącej tożsamości (`stale_fields`).
-Skróty: ANALYSIS = `feature_revision, scope_digest, policy_digest`;
+A result is current when every field in its row equals the current identity (`stale_fields`).
+Abbreviations: ANALYSIS = `feature_revision, scope_digest, policy_digest`;
 CODE = `head_sha, spec_digest, plan_digest, policy_digest, checks_digest`.
 
-| `ResultKind` | Zależy od |
+| `ResultKind` | Depends on |
 |---|---|
 | `classification` | ANALYSIS |
 | `option-selection` | ANALYSIS + `complexity_digest` |
@@ -98,68 +98,68 @@ CODE = `head_sha, spec_digest, plan_digest, policy_digest, checks_digest`.
 | `integration` | CODE + `base_sha`, `candidate_tree_sha`, `acceptance_suite_digest` |
 | `human-approval` | `head_sha, base_sha, spec_digest, policy_digest` |
 
-`invalidated_kinds(ChangeKind)` daje widok „co unieważnia zmiana”: `scope`, `plan`, `code`, `base`,
-`policy`, `formatting-only` (domyślnie unieważnia jak zmiana spec; brak zdarzenia równoważności).
-`human-approval` nie jest zapisywany jako wynik — zgoda człowieka jest w tabeli `approvals` i
-porównywana przez `criteria_digest` (`{head, base, spec, policy}`).
+`invalidated_kinds(ChangeKind)` gives the "what a change invalidates" view: `scope`, `plan`, `code`, `base`,
+`policy`, `formatting-only` (by default invalidates like a spec change; there is no equivalence event).
+`human-approval` is not recorded as a result — human approval lives in the `approvals` table and
+is compared via `criteria_digest` (`{head, base, spec, policy}`).
 
-## 4. Podpis i weryfikacja (`EvidenceStore`)
+## 4. Signing and verification (`EvidenceStore`)
 
-Zapis (`record_result`):
+Write (`record_result`):
 
-1. Producent musi być w `TRUSTED_PRODUCERS` = `trusted-runner`, `agent-adapter`, `controller`, `operator`.
-2. `identity.validate_real()` musi być puste.
-3. Payload → artefakt `result:<kind>` (SHA-256 treści, ścieżka `artifacts/aa/bb/<sha>`).
-4. Ciało `{result_id, job_id, task_id, kind, verdict, identity, producer, payload_artifact_id,
-   payload_sha256}` (`payload_sha256` = `artifacts.sha256` payloadu) → HMAC-SHA256 kluczem `data_dir/keys/evidence.key` (32 bajty z `os.urandom`, plik `0600`).
-5. W tej samej transakcji: wiersz `results`, aktualizacja findings, zdarzenie `result.recorded`.
+1. The producer must be in `TRUSTED_PRODUCERS` = `trusted-runner`, `agent-adapter`, `controller`, `operator`.
+2. `identity.validate_real()` must be empty.
+3. Payload → artifact `result:<kind>` (SHA-256 of the content, path `artifacts/aa/bb/<sha>`).
+4. Body `{result_id, job_id, task_id, kind, verdict, identity, producer, payload_artifact_id,
+   payload_sha256}` (`payload_sha256` = the payload's `artifacts.sha256`) → HMAC-SHA256 with the key `data_dir/keys/evidence.key` (32 bytes from `os.urandom`, file `0600`).
+5. In the same transaction: the `results` row, findings update, the `result.recorded` event.
 
-Odczyt (`_row_to_result`): ponowne obliczenie HMAC (z `payload_sha256` odczytanym z `artifacts`) i
-`hmac.compare_digest`; producent zaufany; payload czytany przez `EvidenceStore.read`, który porównuje
-SHA-256 pliku z `artifacts.sha256`. Podmiana pliku payloadu albo wiersza `artifacts` unieważnia więc
-wynik.
-`current_pass` bierze **najnowszy** wiersz danego `kind` (i `task_id`) — starszy PASS nie ratuje
-nowszego FAIL. `factory verify <id>` i `recover` weryfikują wszystkie wyniki joba.
+Read (`_row_to_result`): HMAC recomputed (with `payload_sha256` read from `artifacts`) and
+`hmac.compare_digest`; producer trusted; payload read through `EvidenceStore.read`, which compares the
+file's SHA-256 with `artifacts.sha256`. Replacing the payload file or the `artifacts` row therefore invalidates
+the result.
+`current_pass` takes the **newest** row of a given `kind` (and `task_id`) — an older PASS does not rescue
+a newer FAIL. `factory verify <id>` and `recover` verify all results of the job.
 
-Producenci w praktyce: `trusted-runner/gate` (checki), `agent-adapter/<rola>` z `runtime_run_id` i
-`model_id` (oceny agentów), `controller/controller` (np. `FAIL_POLICY` z policy gate, PASS
-klasyfikacji, „not applicable” dekompozycji na ścieżce trivial).
+Producers in practice: `trusted-runner/gate` (checks), `agent-adapter/<role>` with `runtime_run_id` and
+`model_id` (agent evaluations), `controller/controller` (e.g. `FAIL_POLICY` from the policy gate, classification
+PASS, decomposition "not applicable" on the trivial path).
 
-## 5. Dowód runnera (`CheckEvidence`)
+## 5. Runner evidence (`CheckEvidence`)
 
-Jeden rekord na komendę z manifestu (`factory/checks/default.yaml`, `ChecksManifest`):
+One record per command from the manifest (`factory/checks/default.yaml`, `ChecksManifest`):
 
-| Pole | Znaczenie |
+| Field | Meaning |
 |---|---|
-| `name`, `argv` | nazwa checku i argv po podstawieniu `{python}`, `{report}`, `{worktree}` |
-| `cwd`, `env_keys`, `sandbox` | worktree, nazwy zmiennych środowiska (bez wartości), nazwa sandboxa |
-| `started_at`, `ended_at` | czasy epoch |
-| `exit_code`, `signal`, `timed_out` | wynik procesu; timeout zabija grupę procesów (SIGTERM, po 3 s SIGKILL) |
-| `stdout_artifact`, `stderr_artifact`, `stdout_sha256`, `stderr_sha256` | pełne logi (do 2 MB) jako artefakty i ich digest |
-| `excerpt` | końcówka stdout+stderr (~4 KB) do kontekstu agentów |
-| `tests` | `{collected, failed, errors, skipped}` z junit (dla `report: junit`) |
-| `verdict`, `reason` | `GateVerdict` i powód |
-| `head_sha`, `tree_sha` | snapshot, na którym uruchomiono |
+| `name`, `argv` | check name and argv after substituting `{python}`, `{report}`, `{worktree}` |
+| `cwd`, `env_keys`, `sandbox` | worktree, environment variable names (no values), sandbox name |
+| `started_at`, `ended_at` | epoch times |
+| `exit_code`, `signal`, `timed_out` | process result; a timeout kills the process group (SIGTERM, SIGKILL after 3 s) |
+| `stdout_artifact`, `stderr_artifact`, `stdout_sha256`, `stderr_sha256` | full logs (up to 2 MB) as artifacts and their digest |
+| `excerpt` | tail of stdout+stderr (~4 KB) for agent context |
+| `tests` | `{collected, failed, errors, skipped}` from junit (for `report: junit`) |
+| `verdict`, `reason` | `GateVerdict` and reason |
+| `head_sha`, `tree_sha` | snapshot it ran on |
 
-Klasyfikacja (`_classify`): timeout → `TIMEOUT`; sygnał → `CANCELLED` (TERM/INT) lub `UNKNOWN`; exit 127
-/ „command not found” / „No module named” → `ERROR_ENV`; junit: brak raportu → `ERROR_ENV`, 0 lub mniej
-niż `min_tests` wykonanych → `FAIL_POLICY`, porażki/błędy/exit ≠ 0 → `FAIL_CODE`; bez raportu exit ≠ 0
-→ `FAIL_CODE`. Brak narzędzia w `PATH` przed startem → `ERROR_ENV`.
+Classification (`_classify`): timeout → `TIMEOUT`; signal → `CANCELLED` (TERM/INT) or `UNKNOWN`; exit 127
+/ "command not found" / "No module named" → `ERROR_ENV`; junit: no report → `ERROR_ENV`, 0 or fewer
+than `min_tests` executed → `FAIL_POLICY`, failures/errors/exit ≠ 0 → `FAIL_CODE`; without a report exit ≠ 0
+→ `FAIL_CODE`. Tool missing from `PATH` before start → `ERROR_ENV`.
 
-Bramka (`run_gate`): brak wymaganych checków → `FAIL_POLICY`; inaczej pierwszy występujący werdykt
-w kolejności `ERROR_ENV > TIMEOUT > FAIL_POLICY > FAIL_CODE > CANCELLED > UNKNOWN`, w przeciwnym razie
-`PASS`. Etapy: `task` (checki `task`), `acceptance` (`task`+`acceptance`), `integration` (wszystkie).
-Obecny manifest ma jeden check `unit` (pytest, junit, `min_tests: 1`, sieć `localhost`, 600 s).
+Gate (`run_gate`): missing required checks → `FAIL_POLICY`; otherwise the first verdict present
+in the order `ERROR_ENV > TIMEOUT > FAIL_POLICY > FAIL_CODE > CANCELLED > UNKNOWN`, otherwise
+`PASS`. Stages: `task` (`task` checks), `acceptance` (`task`+`acceptance`), `integration` (all).
+The current manifest has one check, `unit` (pytest, junit, `min_tests: 1`, network `localhost`, 600 s).
 
-## 6. Cykl życia findings
+## 6. Findings lifecycle
 
-- Klucz `finding_key = <job_id>:<task_id lub '-'>:<kind>:<finding.id>`; zapis w tej samej transakcji
-  co wynik. Te same identyfikatory w różnych zadaniach nie kolidują.
-- Nowy wynik danego `kind` dla danego `task_id` oznacza jako `fixed` wszystkie otwarte findings tego
-  `kind`/`task_id`, których evaluator nie zgłosił ponownie (gdy nowy wynik nie ma żadnych findings —
-  wszystkie). Zamknięcie potwierdza więc nowe uruchomienie evaluatora, nigdy builder.
-- Findings zgłoszone ponownie są upsertowane (status, `result_id`, `updated_at`).
-- Guard `TASK_ACCEPTED` wymaga braku otwartych blokujących findings zadania; otwarte findings zadania
-  (i bez zadania) trafiają do wejścia buildera.
-- Statusy `disputed`/`accepted-risk` może ustawić tylko evaluator w kopercie; brak komendy operatora
-  ani assessora sporów (prompt `factory/prompts/decision-assessor.v1.md` nie jest używany przez kod).
+- Key `finding_key = <job_id>:<task_id or '-'>:<kind>:<finding.id>`; written in the same transaction
+  as the result. The same identifiers in different tasks do not collide.
+- A new result of a given `kind` for a given `task_id` marks as `fixed` all open findings of that
+  `kind`/`task_id` that the evaluator did not report again (when the new result has no findings —
+  all of them). Closure is therefore confirmed by a new evaluator run, never by the builder.
+- Findings reported again are upserted (status, `result_id`, `updated_at`).
+- The `TASK_ACCEPTED` guard requires no open blocking findings for the task; open findings of the task
+  (and those without a task) go into the builder's input.
+- The `disputed`/`accepted-risk` statuses can be set only by the evaluator in the envelope; there is no operator command
+  and no dispute assessor (the prompt `factory/prompts/decision-assessor.v1.md` is not used by the code).

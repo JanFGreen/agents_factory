@@ -1,4 +1,4 @@
-# Zaufany manifest komend. Przechowywany w kontrolerze, nie w gałęzi joba.
+# Trusted command manifest. Stored in the controller, not in the job branch.
 schema_version: 1
 checks:
   - name: unit

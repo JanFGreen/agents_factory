@@ -1,58 +1,58 @@
-# Routing modeli
+# Model routing
 
-**Przypisania modeli w `factory/models.yaml` to wybór operatora, nie wynik benchmarku.** Blueprint
-(§3 pkt 6, §13.2) wymaga małego benchmarku ról. `factory eval` (`evals.py`) porównuje całą fabrykę z
-pojedynczym agentem, ale nie porównuje modeli per rola; benchmark ról nie został wykonany. Wyniki
-pilota eval są w `acceptance-report.md`. Traktuj poniższe wartości jako punkt startowy.
+**The model assignments in `factory/models.yaml` are an operator choice, not a benchmark result.** The blueprint
+(§3 item 6, §13.2) requires a small role benchmark. `factory eval` (`evals.py`) compares the whole factory with
+a single agent, but does not compare models per role; the role benchmark has not been run. The eval pilot
+results are in `acceptance-report.md`. Treat the values below as a starting point.
 
-## Plik `factory/models.yaml`
+## The `factory/models.yaml` file
 
-Jedyne miejsce wyboru modeli; `config.yaml` ich nie zawiera (wpis modelu w `config.yaml` →
-`ConfigError`). Kontroler wstawia go w te same pola konfiguracji co wcześniej, więc działanie się nie
-zmienia. Sekcje:
+The only place where models are chosen; `config.yaml` does not contain them (a model entry in `config.yaml` →
+`ConfigError`). The controller inserts it into the same configuration fields as before, so behavior does not
+change. Sections:
 
-| Sekcja | Co ustawia | Pole w konfiguracji |
+| Section | What it sets | Configuration field |
 |---|---|---|
-| `runtimes` | jak uruchamiany jest agent: `binary`, `min_cli_version`, `api_key_env` (nazwa zmiennej, nie klucz), `base_url` | `runtime.runtimes`, `runtime.claude_binary` |
-| `roles` | runtime, model, `effort`, narzędzia każdej roli | `runtime.roles` |
-| `routing` | model buildera wg trudności taska, eskalacja, model ścieżki trivial | `routing` |
-| `review_models` | tańsi recenzenci tasków (`for_risk`, `models`); model przeglądu bezpieczeństwa baseline (`security_baseline`) | `review.cheaper_models*`, `review.security.baseline_model` |
-| `decision_model` | opcjonalny Jev | `decision_model` |
+| `runtimes` | how the agent is launched: `binary`, `min_cli_version`, `api_key_env` (variable name, not the key), `base_url` | `runtime.runtimes`, `runtime.claude_binary` |
+| `roles` | runtime, model, `effort`, tools of each role | `runtime.roles` |
+| `routing` | builder model by task difficulty, escalation, trivial path model | `routing` |
+| `review_models` | cheaper task reviewers (`for_risk`, `models`); baseline security review model (`security_baseline`) | `review.cheaper_models*`, `review.security.baseline_model` |
+| `decision_model` | optional Jev | `decision_model` |
 
-**Inni dostawcy (adaptery `adapters/codex.py`, `adapters/opencode.py`).** `runtime` roli:
-`claude | codex | opencode`. Każde wywołanie idzie przez `RuntimeRouter` do adaptera z wiązania
-roli; nazwa runtime jest w uchwycie przebiegu, więc recovery po restarcie trafia do właściwego.
+**Other providers (adapters `adapters/codex.py`, `adapters/opencode.py`).** A role's `runtime`:
+`claude | codex | opencode`. Every call goes through `RuntimeRouter` to the adapter from the role
+binding; the runtime name is in the run handle, so recovery after a restart reaches the right one.
 
-| Runtime | Modele | Wynik | Koszt | Uwagi |
+| Runtime | Models | Result | Cost | Notes |
 |---|---|---|---|---|
-| `claude` | Claude (CLI) | `--json-schema`, `structured_output` | z CLI, cap `--max-budget-usd` | domyślny |
-| `codex` | OpenAI (`codex exec --json`, logowanie ChatGPT albo `OPENAI_API_KEY`) | koperta z tekstu (ostatni blok ```json) | tokeny; koszt z `prices`, bez ceny = pełna rezerwacja | własny sandbox Codex nie startuje w sandboxie fabryki, więc działa z `--dangerously-bypass-approvals-and-sandbox` (flaga dla środowisk z zewnętrznym sandboxem); granicą jest sandbox fabryki |
-| `opencode` | `dostawca/model` (Gemini, OpenAI, Anthropic API) albo model z `endpoints` | koperta z tekstu | z opencode (`step_finish.cost`; lokalnie 0) | konfiguracja per wywołanie (`OPENCODE_CONFIG`: instrukcje skilla, uprawnienia `edit`/`bash`, provider endpointu), izolowane `XDG_*`: prywatna konfiguracja i logowania operatora nie są czytane |
+| `claude` | Claude (CLI) | `--json-schema`, `structured_output` | from the CLI, cap `--max-budget-usd` | default |
+| `codex` | OpenAI (`codex exec --json`, ChatGPT login or `OPENAI_API_KEY`) | envelope from text (last ```json block) | tokens; cost from `prices`, no price = full reservation | Codex's own sandbox does not start inside the factory sandbox, so it runs with `--dangerously-bypass-approvals-and-sandbox` (a flag for environments with an external sandbox); the boundary is the factory sandbox |
+| `opencode` | `provider/model` (Gemini, OpenAI, Anthropic API) or a model from `endpoints` | envelope from text | from opencode (`step_finish.cost`; 0 locally) | per-call configuration (`OPENCODE_CONFIG`: skill instructions, `edit`/`bash` permissions, endpoint provider), isolated `XDG_*`: the operator's private configuration and logins are not read |
 
-Codex i opencode nie mają limitu kosztu po stronie CLI; obowiązuje timeout, wykrywanie zawieszenia i
-budżet joba. Narzędzia nie są ograniczane listą jak w Claude: recenzent tylko do odczytu jest
-wymuszany sandboxem (worktree bez zapisu).
+Codex and opencode have no CLI-side cost limit; the timeout, stall detection and the job budget
+apply. Tools are not restricted by a list as in Claude: a read-only reviewer is
+enforced by the sandbox (worktree without write access).
 
-- **`pass_env`** (`runtimes.<nazwa>`): `{zmienna w agencie: zmienna u operatora}`. Tylko te zmienne
-  trafiają do agenta; agent może je odczytać. Dla współdzielonych kluczy lepsze jest proxy.
-- **`endpoints`**: serwery zgodne z API OpenAI (Ollama, LM Studio, llama.cpp, vLLM), lokalne albo w
-  sieci (`base_url`, `models`, `max_concurrent`, opcjonalnie `key_env`). Rola z
-  `endpoints: [a, b]` (tylko `runtime: opencode`, `model` = nazwa z `models`) dostaje losowo wybrany
-  osiągalny (`GET /models`, wynik cache'owany 30 s) i wolny (`slot:endpoint:<nazwa>`) serwer.
-- **`fallback`** (`roles.<rola>.fallback: {runtime, model}`): gdy runtime nie jest zainstalowany albo
-  żaden endpoint nie jest wolny i osiągalny (zdarzenie `runtime.fallback`). Bez `fallback` →
-  `BLOCKED_ENV` z powodem.
-- **`prices`**: `{model: {input_per_mtok, output_per_mtok}}` dla runtime bez raportu kosztu (codex).
-- `routing` i `review_models` podają modele Claude i działają tylko dla ról na `claude`; rola na
-  innym runtime zawsze używa swojego `model`.
-- `factory doctor`: `runtimes` (zainstalowany, zmienne z `pass_env`, role) i `endpoints`
-  (osiągalność, brakujące modele, ostrzeżenie dla `http://` na inną maszynę).
+- **`pass_env`** (`runtimes.<name>`): `{variable in the agent: variable on the operator side}`. Only these variables
+  reach the agent; the agent can read them. For shared keys a proxy is better.
+- **`endpoints`**: OpenAI API-compatible servers (Ollama, LM Studio, llama.cpp, vLLM), local or on the
+  network (`base_url`, `models`, `max_concurrent`, optionally `key_env`). A role with
+  `endpoints: [a, b]` (only `runtime: opencode`, `model` = a name from `models`) gets a randomly chosen
+  server that is reachable (`GET /models`, result cached for 30 s) and free (`slot:endpoint:<name>`).
+- **`fallback`** (`roles.<role>.fallback: {runtime, model}`): used when the runtime is not installed or
+  no endpoint is free and reachable (event `runtime.fallback`). Without `fallback` →
+  `BLOCKED_ENV` with a reason.
+- **`prices`**: `{model: {input_per_mtok, output_per_mtok}}` for runtimes without a cost report (codex).
+- `routing` and `review_models` specify Claude models and apply only to roles on `claude`; a role on
+  another runtime always uses its own `model`.
+- `factory doctor`: `runtimes` (installed, variables from `pass_env`, roles) and `endpoints`
+  (reachability, missing models, a warning for `http://` to another machine).
 
 ## Role → model (`roles`)
 
-Rola skilla wynika z `factory.py::SKILL_ROLE`; brak wpisu roli → binding `default`.
+A skill's role comes from `factory.py::SKILL_ROLE`; no role entry → the `default` binding.
 
-| Rola | Skille | Model | `effort` | Narzędzia |
+| Role | Skills | Model | `effort` | Tools |
 |---|---|---|---|---|
 | `default` | (fallback) | `claude-sonnet-5-5` | medium | Read, Glob, Grep |
 | `intake` | factory-intake, (factory-repo-map) | `claude-haiku-5-5` | — | Read, Glob, Grep |
@@ -66,92 +66,92 @@ Rola skilla wynika z `factory.py::SKILL_ROLE`; brak wpisu roli → binding `defa
 | `code_reviewer` | factory-code-review | `claude-opus-5-5` | medium | Read, Glob, Grep |
 | `security_reviewer` | factory-security-review | `claude-opus-5-5` | high | Read, Glob, Grep |
 | `ui_reviewer` | factory-ui-review | `claude-sonnet-5-5` | medium | Read, Glob, Grep |
-| `product_evaluator` | factory-product-verify (review zadania i akceptacja feature'a) | `claude-sonnet-5-5` | medium | Read, Glob, Grep, Bash |
+| `product_evaluator` | factory-product-verify (task review and feature acceptance) | `claude-sonnet-5-5` | medium | Read, Glob, Grep, Bash |
 | `test_reviewer` | factory-test-adequacy | `claude-sonnet-5-5` | medium | Read, Glob, Grep |
 | `integration_evaluator` | factory-integration-review | `claude-opus-5-5` | medium | Read, Glob, Grep |
 
-Szczegóły mapowania na CLI (`adapters/claude.py::_argv`): `--model <model>`, `--effort <effort>`
-(jeśli ustawiony), `--tools` i `--allowedTools` z listy. Dla wywołań bez zapisu
-(`writable=False`, czyli wszystko poza `factory-implement`) lista jest dodatkowo filtrowana do
-`Read, Glob, Grep, Bash` (`factory.py::READ_ONLY_TOOLS + ["Bash"]`), a `factory-root-cause` jest
-wywoływany jako read-only mimo roli `builder`. Pole `max_turns` jest przyjmowane w konfiguracji i
-przekazywane w `AgentRequest`, ale adapter go **nie** przekazuje do CLI. Timeout każdego wywołania
-(także buildera) to `execution.reviewer_timeout_seconds` (900 s).
-Niezależnie od tego `execution.agent_stall_seconds` (300 s) przerywa wywołanie, którego strumień nie
-wysłał nowego zdarzenia; jeśli CLI zdążyło zatwierdzić wynik narzędziem StructuredOutput, wynik jest
-odzyskiwany (koszt nieznany, liczony jako pełna rezerwacja), inaczej kontroler ponawia wywołanie.
-Każde wywołanie dostaje schemat koperty z dokładnym schematem `payload` swojego skilla.
+Details of the CLI mapping (`adapters/claude.py::_argv`): `--model <model>`, `--effort <effort>`
+(if set), `--tools` and `--allowedTools` from the list. For calls without write access
+(`writable=False`, i.e. everything except `factory-implement`) the list is additionally filtered to
+`Read, Glob, Grep, Bash` (`factory.py::READ_ONLY_TOOLS + ["Bash"]`), and `factory-root-cause` is
+called as read-only despite the `builder` role. The `max_turns` field is accepted in the configuration and
+passed in `AgentRequest`, but the adapter does **not** pass it to the CLI. The timeout of every call
+(including the builder) is `execution.reviewer_timeout_seconds` (900 s).
+Independently of that, `execution.agent_stall_seconds` (300 s) aborts a call whose stream has not
+sent a new event; if the CLI managed to commit the result with the StructuredOutput tool, the result is
+recovered (cost unknown, counted as a full reservation), otherwise the controller retries the call.
+Every call gets an envelope schema with the exact `payload` schema of its skill.
 
-Model faktycznie użyty jest odczytywany z eventu `system/init` strumienia i zapisywany w
-`attempts.model_id`, `usage.model_id` oraz `producer.model_id` wyniku. Live smoke
-(`tests/live/test_live_claude.py`) używa domyślnie `claude-haiku-5-5` (`AGENT_FACTORY_LIVE_MODEL`).
+The model actually used is read from the stream's `system/init` event and stored in
+`attempts.model_id`, `usage.model_id` and the result's `producer.model_id`. The live smoke
+(`tests/live/test_live_claude.py`) uses `claude-haiku-5-5` by default (`AGENT_FACTORY_LIVE_MODEL`).
 
-## Ceny i budżet
+## Prices and budget
 
-Fabryka nie trzyma cennika. Koszt pochodzi z dostawcy:
+The factory keeps no price list. Cost comes from the provider:
 
-- Przed każdym wywołaniem (także każdym ponowieniem i naprawą JSON) `budgets.reserve` rezerwuje
-  `budget.max_cost_per_agent_call` (1,50 USD). Ta sama wartość idzie do CLI jako `--max-budget-usd`
-  (cap po stronie CLI).
-- Po wywołaniu `budgets.settle` rozlicza `total_cost_usd` z eventu `result`. Tokeny wejścia =
+- Before every call (including every retry and JSON repair) `budgets.reserve` reserves
+  `budget.max_cost_per_agent_call` (USD 1.50). The same value goes to the CLI as `--max-budget-usd`
+  (CLI-side cap).
+- After the call `budgets.settle` settles `total_cost_usd` from the `result` event. Input tokens =
   `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`.
-- **Nieznany koszt** (brak `total_cost_usd`) jest liczony jako pełna rezerwacja (`usage.cost_known=0`).
-- Koszt wyższy od rezerwacji jest księgowany w całości i daje zdarzenie `budget.overrun`.
-- Rezerwa na weryfikację: cele `analysis` i `build` mogą zająć najwyżej `(1 − 0,25) × limit`;
-  `review`, `acceptance`, `integration` mogą sięgać pełnego limitu.
-- `budget.warning` przy ≥ 70% limitu; przekroczenie → `BUDGET_EXHAUSTED`.
-- `budget.unknown_price_policy` jest walidowane, ale nieużywane w kodzie.
+- **Unknown cost** (no `total_cost_usd`) is counted as a full reservation (`usage.cost_known=0`).
+- A cost higher than the reservation is booked in full and produces the event `budget.overrun`.
+- Verification reserve: the `analysis` and `build` purposes may take at most `(1 − 0.25) × limit`;
+  `review`, `acceptance`, `integration` may reach the full limit.
+- `budget.warning` at ≥ 70% of the limit; exceeding it → `BUDGET_EXHAUSTED`.
+- `budget.unknown_price_policy` is validated but unused in the code.
 
-## Jak zmienić model
+## How to change a model
 
-1. Zmień `model` (i ewentualnie `effort`) roli w `factory/models.yaml` jako osobną zmianę fabryki.
-2. `uv run factory doctor` (walidacja), `uv run pytest`, a dla nowego modelu live smoke:
+1. Change the role's `model` (and possibly `effort`) in `factory/models.yaml` as a separate factory change.
+2. `uv run factory doctor` (validation), `uv run pytest`, and for a new model the live smoke:
    `AGENT_FACTORY_LIVE=1 AGENT_FACTORY_LIVE_MODEL=<model> uv run pytest tests/live`.
-3. Zapisz w commicie, dlaczego zmieniasz (wynik porównania, koszt).
+3. Record in the commit why you are changing it (comparison result, cost).
 
-Skutki dla trwających jobów:
+Effects on running jobs:
 
-- Zmiana modelu **nie resetuje liczników**: rundy analizy (`analysis_rounds`), próby zadań i feature'a
-  oraz wydany budżet są w SQLite per job (`workflow.yaml: reset_on_model_switch: false`; konfiguracja
-  z wartością `true` jest odrzucana).
-- Ponieważ `policy_digest` obejmuje całą treść `config.yaml` i `models.yaml`, zmiana modelu unieważnia wszystkie
-  wyniki zależne od `policy_digest` w trwających jobach — oceny muszą powstać ponownie (patrz znany
-  problem w `state-machine.md`). Sam `model_id` nie jest polem tożsamości wyniku.
+- A model change **does not reset counters**: analysis rounds (`analysis_rounds`), task and feature attempts
+  and the spent budget are stored in SQLite per job (`workflow.yaml: reset_on_model_switch: false`; a configuration
+  with the value `true` is rejected).
+- Because `policy_digest` covers the whole contents of `config.yaml` and `models.yaml`, a model change invalidates all
+  results that depend on `policy_digest` in running jobs — the assessments have to be produced again (see the known
+  issue in `state-machine.md`). `model_id` alone is not a result identity field.
 
-## Odrzucone żądania API (fail fast)
+## Rejected API requests (fail fast)
 
-Gdy CLI dostaje od API trwały błąd (`API Error: 400/401/403/404`, np. „Claude Code 2.1.74 does not
-support this model; version 2.1.280 or newer is required”), raportuje go jako syntetyczną wiadomość
-asystenta i potrafi kręcić się w pętli hooka StructuredOutput aż do własnego limitu (live: 1756 tur,
-10 min, na końcu mylące „Prompt is too long”). `ClaudeRuntime.poll` wykrywa taki błąd w strumieniu,
-przerywa proces i zwraca `failed` z `retryable=False`; kontroler nie ponawia wywołania i od razu
-przechodzi do `BLOCKED_ENV` z treścią błędu. 429/5xx pozostają błędami przejściowymi. Modele 5.5
-wymagają Claude CLI ≥ 2.1.280 (`claude --version` w `factory doctor`).
+When the CLI gets a permanent error from the API (`API Error: 400/401/403/404`, e.g. "Claude Code 2.1.74 does not
+support this model; version 2.1.280 or newer is required"), it reports it as a synthetic assistant
+message and can spin in the StructuredOutput hook loop up to its own limit (live: 1756 turns,
+10 min, ending with a misleading "Prompt is too long"). `ClaudeRuntime.poll` detects such an error in the stream,
+kills the process and returns `failed` with `retryable=False`; the controller does not retry the call and immediately
+moves to `BLOCKED_ENV` with the error text. 429/5xx remain transient errors. The 5.5 models
+require Claude CLI ≥ 2.1.280 (`claude --version` in `factory doctor`).
 
-## Trudność tasków i model buildera (`routing`, `decision_model`)
+## Task difficulty and builder model (`routing`, `decision_model`)
 
-Każdy task planu dostaje `difficulty` (`easy | medium | hard`). Ocena końcowa to maksimum z:
+Every plan task gets a `difficulty` (`easy | medium | hard`). The final rating is the maximum of:
 
-1. etykiety planera (`difficulty`, brak = `medium`) z uzasadnieniem w `difficulty_reasons`;
-2. dolnej granicy kontrolera z rekordu taska (`difficulty.structural_floor`): foldery/globy w
-   `file_scope` lub > 3 pliki produkcyjne → medium, > 6 → hard; ryzyko > low, > 3 wymagania,
-   > 2 kontrakty wyjściowe → medium; testy się nie liczą;
-3. opcjonalnie modelu decyzyjnego Jev (TypeSafe AI), gdy `decision_model.provider: jev` i ustawiony
-   jest `TYPESAFE_API_KEY`. Pytanie typu `choice` z rubryką z `difficulty.CRITERIA`; odpowiedź liczy
-   się tylko przy `confidence ≥ min_confidence` (0.6) i może ocenę tylko podnieść. Błąd, timeout
-   lub brak klucza → krok pominięty, bez wpływu na job. Klucz czyta tylko kontroler (agenci go nie
-   dostają). Koszt (~$0.00004 za task) jest w zdarzeniu `plan.difficulty` (`decider_usd`).
+1. the planner's label (`difficulty`, missing = `medium`) with a justification in `difficulty_reasons`;
+2. the controller's lower bound from the task record (`difficulty.structural_floor`): folders/globs in
+   `file_scope` or > 3 production files → medium, > 6 → hard; risk > low, > 3 requirements,
+   > 2 output contracts → medium; tests do not count;
+3. optionally the Jev decision model (TypeSafe AI), when `decision_model.provider: jev` and
+   `TYPESAFE_API_KEY` is set. A `choice` question with a rubric from `difficulty.CRITERIA`; the answer counts
+   only with `confidence ≥ min_confidence` (0.6) and can only raise the rating. An error, timeout
+   or missing key → step skipped, with no effect on the job. Only the controller reads the key (agents do not
+   get it). The cost (~$0.00004 per task) is in the `plan.difficulty` event (`decider_usd`).
 
-Ocena jest liczona raz na rewizję planu (`ctx.task_difficulty`), przekazywana do decomposition
-review (`controller_difficulty`), a task `hard` bez `difficulty_reasons: ["indivisible: …"]` jest
-problemem kontrolera: planer musi go podzielić. Kryteria atomowości są w
+The rating is computed once per plan revision (`ctx.task_difficulty`), passed to the decomposition
+review (`controller_difficulty`), and a `hard` task without `difficulty_reasons: ["indivisible: …"]` is
+a controller problem: the planner must split it. The atomicity criteria are in
 `factory-plan/references/task-schema.md`.
 
-Model buildera: `routing.builder_models[poziom]` (easy i medium: Sonnet, hard: Opus). Haiku tylko
-dla pierwszej próby feature'a ze ścieżki trivial (`routing.trivial_path_model`: atomowa zmiana,
-niskie ryzyko, znany wzorzec); kolejna próba idzie już według mapy. Zasada: lepiej zapłacić za
-Sonnet od razu niż za poprawki; przy `escalate_on_retry` każda kolejna próba
-taska idzie o poziom wyżej (easy → medium → hard). Zdarzenie `task.routed` zapisuje poziom i
-model każdej próby. Pusta mapa `builder_models` zostawia wiązanie roli `builder`.
-`factory doctor` pokazuje `routing` i czy model decyzyjny jest aktywny; `factory status` pokazuje
-trudność każdego taska.
+Builder model: `routing.builder_models[level]` (easy and medium: Sonnet, hard: Opus). Haiku only
+for the first feature attempt on the trivial path (`routing.trivial_path_model`: atomic change,
+low risk, known pattern); the next attempt already follows the map. Principle: better to pay for
+Sonnet up front than for fixes; with `escalate_on_retry` each subsequent attempt of a
+task goes one level higher (easy → medium → hard). The `task.routed` event records the level and
+model of each attempt. An empty `builder_models` map keeps the `builder` role binding.
+`factory doctor` shows `routing` and whether the decision model is active; `factory status` shows
+the difficulty of each task.

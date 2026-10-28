@@ -1,11 +1,11 @@
 # factory/prompts — versioned role prompts
 
-Każdy plik to krótki prompt jednej logicznej roli z §10.1 blueprintu
-(`<role>.v<N>.md`). Prompt nie powtarza logiki procesu: wskazuje skill(e) w
-`factory/skills/<name>/SKILL.md` oraz wspólny kontrakt
+Each file is a short prompt for one logical role from §10.1 of the blueprint
+(`<role>.v<N>.md`). A prompt does not repeat process logic: it points to the skill(s) in
+`factory/skills/<name>/SKILL.md` and the shared contract
 `factory/skills/_shared/contract.md`.
 
-## Pliki
+## Files
 
 | Role prompt | Skills |
 |---|---|
@@ -22,19 +22,19 @@ Każdy plik to krótki prompt jednej logicznej roli z §10.1 blueprintu
 | `product-evaluator.v1.md` | factory-product-verify, factory-ui-review, factory-release-verify |
 | `integration-evaluator.v1.md` | factory-integration-review |
 | `decision-assessor.v1.md` | factory-evidence-audit |
-| `operations-analyst.v1.md` | factory-recover, factory-retrospective (rola pomocnicza spoza tabeli §10.1) |
+| `operations-analyst.v1.md` | factory-recover, factory-retrospective (auxiliary role outside the §10.1 table) |
 
-## Wersjonowanie
+## Versioning
 
-1. **Zmiana promptu ⇒ nowy plik wersji** (`builder.v2.md`). Nigdy nie edytuj
-   istniejącej wersji w miejscu: trwające joby mają w `input_identity` zapisany
-   `prompt_digest` i `skill_digests` (§5) i muszą dokończyć pracę na tej samej treści.
-2. Frontmatter (`role`, `version`, `skills`) musi zgadzać się z nazwą pliku.
-3. Nowa wersja nie staje się automatycznie aktywna. Aktywację wykonuje operator
-   przez konfigurację fabryki po przejściu evali (§10.3, §14.3); stare wersje
-   zostają w repo, dopóki istnieje job, który ich używa.
-4. Zmiana `SKILL.md` lub `_shared/contract.md` jest traktowana tak samo: zmienia
-   `skill_digests`, unieważnia zależne wyniki nowych uruchomień i wymaga evalu.
-   Kontroler nie podmienia promptu ani skilla w trwającym jobie.
-5. Literówka bez zmiany znaczenia też dostaje nową wersję — kontroler nie zgaduje
-   równoważności treści.
+1. **A prompt change ⇒ a new version file** (`builder.v2.md`). Never edit
+   an existing version in place: running jobs have the `prompt_digest` and
+   `skill_digests` (§5) recorded in `input_identity` and must finish on the same content.
+2. The frontmatter (`role`, `version`, `skills`) must match the file name.
+3. A new version does not become active automatically. The operator activates it
+   through the factory configuration after the evals pass (§10.3, §14.3); old versions
+   stay in the repo as long as some job uses them.
+4. A change to `SKILL.md` or `_shared/contract.md` is treated the same way: it changes
+   `skill_digests`, invalidates dependent results of new runs and requires an eval.
+   The controller does not swap the prompt or skill in a running job.
+5. A typo fix that does not change meaning also gets a new version — the controller does not guess
+   content equivalence.

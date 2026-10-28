@@ -1,30 +1,30 @@
-# ADR-001: Stack kontrolera i runtime agentów
+# ADR-001: Controller stack and agent runtime
 
-Status: przyjęte (stan zaimplementowany). Data: 2026-10-26.
+Status: accepted (implemented state). Date: 2026-10-26.
 
-## Kontekst
+## Context
 
-Blueprint (§3 pkt 2–4) zaleca kontroler w Pythonie 3.11+ z SQLite, Pydantic 2, pytest i CLI, bez
-Redis/Kubernetes na jednym hoście, oraz pierwszy runtime Claude przez oficjalne SDK albo
-udokumentowany tryb programistyczny CLI. Docelowego repo nie wskazano; host to macOS arm64 bez
-działającego daemona Dockera (`environment-report.md`).
+The blueprint (§3 items 2–4) recommends a controller in Python 3.11+ with SQLite, Pydantic 2, pytest and a CLI, without
+Redis/Kubernetes on a single host, and a first Claude runtime via the official SDK or the
+documented programmatic mode of the CLI. No target repo was specified; the host is macOS arm64 without a
+running Docker daemon (`environment-report.md`).
 
-## Decyzja
+## Decision
 
-| Obszar | Wybór | Wersja (uv.lock) |
+| Area | Choice | Version (uv.lock) |
 |---|---|---|
-| Język | Python 3.12 (`requires-python >=3.12`, `.python-version`) | 3.12.12 |
-| Zależności i lock | uv + `uv.lock`, backend `uv_build` | uv 0.13.0 |
-| Walidacja kontraktów | Pydantic 2 (`extra="forbid"`, `strict` dla manifestów) | pydantic 2.14.1 |
-| Konfiguracja | PyYAML | 6.0.3 |
-| Stan | SQLite z biblioteki standardowej: WAL, `busy_timeout=30000`, `BEGIN IMMEDIATE`, CAS na `jobs.version`, migracje w `state.py` | — |
-| Testy | pytest + hypothesis (testy własności maszyny stanów, `tests/unit/test_state_machine.py`) | pytest 8.4.2, hypothesis 6.170.12 |
-| Orkiestracja | własna maszyna stanów (`controller.py`) + pętla `Factory.run`; brak Temporal/LangGraph/Celery | — |
-| Runtime agenta | Claude Code CLI w trybie programistycznym | testowane z 2.1.74 |
-| Sandbox | `sandbox-exec` (SBPL) na macOS, `bwrap` na Linuksie; fail-closed | — |
-| Spec | OpenSpec CLI przypięty lokalnie w `tools/openspec` | 1.15.0 |
+| Language | Python 3.12 (`requires-python >=3.12`, `.python-version`) | 3.12.12 |
+| Dependencies and lock | uv + `uv.lock`, `uv_build` backend | uv 0.13.0 |
+| Contract validation | Pydantic 2 (`extra="forbid"`, `strict` for manifests) | pydantic 2.14.1 |
+| Configuration | PyYAML | 6.0.3 |
+| State | SQLite from the standard library: WAL, `busy_timeout=30000`, `BEGIN IMMEDIATE`, CAS on `jobs.version`, migrations in `state.py` | — |
+| Tests | pytest + hypothesis (state machine property tests, `tests/unit/test_state_machine.py`) | pytest 8.4.2, hypothesis 6.170.12 |
+| Orchestration | own state machine (`controller.py`) + the `Factory.run` loop; no Temporal/LangGraph/Celery | — |
+| Agent runtime | Claude Code CLI in programmatic mode | tested with 2.1.74 |
+| Sandbox | `sandbox-exec` (SBPL) on macOS, `bwrap` on Linux; fail-closed | — |
+| Spec | OpenSpec CLI pinned locally in `tools/openspec` | 1.15.0 |
 
-Wywołanie agenta (`adapters/claude.py::_argv`):
+Agent invocation (`adapters/claude.py::_argv`):
 
 ```text
 claude -p <prompt> --output-format stream-json --verbose --model <model>
@@ -34,32 +34,32 @@ claude -p <prompt> --output-format stream-json --verbose --model <model>
   [--effort <e>] --json-schema <AgentEnvelope schema> --max-budget-usd <cap>
 ```
 
-Cały proces (z potomkami) jest opakowany przez `Sandbox.wrap`. Stan runu adapter odczytuje z pliku
-JSONL strumienia: event `system/init` (model), event `result` (`structured_output`, `result`,
-`usage`, `total_cost_usd`, `is_error`, `subtype`). Anulowanie: SIGTERM/SIGKILL grupy procesów.
+The whole process (with descendants) is wrapped by `Sandbox.wrap`. The adapter reads the run state from the
+JSONL stream file: the `system/init` event (model), the `result` event (`structured_output`, `result`,
+`usage`, `total_cost_usd`, `is_error`, `subtype`). Cancellation: SIGTERM/SIGKILL of the process group.
 
-## Uzasadnienie
+## Rationale
 
-- **CLI zamiast Agent SDK**: CLI jest już zainstalowane i zalogowane u operatora (auth w keychain,
-  brak klucza API w env), daje udokumentowane flagi dla sesji, schematu wyjścia i limitu kosztu, a
-  proces da się w całości umieścić w sandboxie systemowym i zabić jako grupę. Adapter mapuje to na
-  własny kontrakt `AgentRuntime` (`adapters/protocol.py`), więc SDK można dodać jako drugi adapter.
-  `capabilities()` wykrywa obsługę flag z `claude --help`.
-- **SQLite**: jeden host, krótkie transakcje, brak dodatkowej usługi; WAL pozwala czytać dashboardowi
-  w trakcie pracy kontrolera.
-- **Własna maszyna stanów zamiast Temporal/LangGraph**: trwałość zapewnia SQLite + idempotentne kroki
-  + outbox; druga orkiestracja dodałaby osobny magazyn stanu bez wykazanej potrzeby (blueprint §3 pkt 4).
-- **sandbox-exec/bwrap zamiast kontenera**: Docker daemon niedostępny na hoście; sandbox systemowy
-  jest egzekwowany przez jądro i weryfikowany probe przy starcie.
+- **CLI instead of the Agent SDK**: the CLI is already installed and logged in on the operator's machine (auth in the keychain,
+  no API key in env), provides documented flags for sessions, output schema and cost limit, and
+  the process can be placed entirely in the system sandbox and killed as a group. The adapter maps this onto
+  its own `AgentRuntime` contract (`adapters/protocol.py`), so the SDK can be added as a second adapter.
+  `capabilities()` detects flag support from `claude --help`.
+- **SQLite**: one host, short transactions, no additional service; WAL lets the dashboard read
+  while the controller is working.
+- **Own state machine instead of Temporal/LangGraph**: durability is provided by SQLite + idempotent steps
+  + outbox; a second orchestration would add a separate state store without a demonstrated need (blueprint §3 item 4).
+- **sandbox-exec/bwrap instead of a container**: Docker daemon unavailable on the host; the system sandbox
+  is enforced by the kernel and verified by a probe at startup.
 
-## Konsekwencje
+## Consequences
 
-- Zależność od zachowania i formatu `stream-json` konkretnej wersji Claude CLI; zmiana CLI wymaga
-  ponownego live smoke. Adapter nie parsuje prywatnych transkryptów.
-- Agent wymaga sieci do API, więc profil sandboxa agenta ma `network="full"` (ryzyko w
-  `threat-model.md`). SDK z brokerem po stronie kontrolera mógłby to zawęzić — niezrealizowane.
-- `--max-turns` nie jest przekazywane (pole `max_turns` w konfiguracji jest martwe).
-- `sandbox-exec` jest przez Apple oznaczony jako deprecated; brak alternatywy bez VM/kontenera.
-- SQLite ogranicza fabrykę do jednego hosta; wiele hostów wymagałoby migracji (np. Postgres).
-- Blueprint dopuszcza Python 3.11, ale projekt wymaga 3.12 (`StrEnum`, `datetime.UTC` są dostępne
-  od 3.11; wybór 3.12 to decyzja pinu, nie wymóg języka).
+- Dependence on the behavior and `stream-json` format of a specific Claude CLI version; a CLI change requires
+  a repeated live smoke. The adapter does not parse private transcripts.
+- The agent needs network access to the API, so the agent's sandbox profile has `network="full"` (risk in
+  `threat-model.md`). An SDK with a controller-side broker could narrow this — not implemented.
+- `--max-turns` is not passed (the `max_turns` field in the configuration is dead).
+- `sandbox-exec` is marked deprecated by Apple; there is no alternative without a VM/container.
+- SQLite limits the factory to one host; multiple hosts would require a migration (e.g. Postgres).
+- The blueprint allows Python 3.11, but the project requires 3.12 (`StrEnum`, `datetime.UTC` are available
+  since 3.11; choosing 3.12 is a pinning decision, not a language requirement).
