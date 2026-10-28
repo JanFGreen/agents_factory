@@ -72,5 +72,19 @@
    "step_finish",
    "error"
   ]
+ },
+ "semgrep": {
+  "package": "semgrep (PyPI)",
+  "version": "1.180.0",
+  "released": "2026-10-07",
+  "installed_at": "tools/semgrep",
+  "binary": "tools/semgrep/.venv/bin/semgrep",
+  "install": "uv sync --project tools/semgrep (uv.lock pins every dependency)",
+  "rules": "factory/checks/semgrep/security.yml (local, offline; no registry rules, --metrics=off)",
+  "sandbox": "runs as the trusted `sast` check with network none; --baseline-commit {base_sha} reports only new code",
+  "verified_commands": [
+   "semgrep --version",
+   "semgrep scan --config <rules> --baseline-commit <sha> --error --metrics=off --disable-version-check --quiet ."
+  ]
  }
 }

@@ -1,0 +1,157 @@
+# Local semgrep rules for the trusted `sast` check: offline (no registry), only high-signal patterns.
+# Every rule is ERROR: a hit on a line the change adds fails the gate (`--baseline-commit` hides old code).
+rules:
+  # --- JavaScript / TypeScript ------------------------------------------------------
+  - id: js-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "eval/new Function on a value: code injection. Parse the data instead."
+    pattern-either:
+      - pattern: eval($X)
+      - pattern: new Function(...)
+      - pattern: setTimeout("...", ...)
+  - id: js-child-process-shell
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Shell command built from a value: command injection. Use execFile/spawn with an argument array."
+    pattern-either:
+      - pattern: $CP.exec(`...${$X}...`, ...)
+      - pattern: $CP.execSync(`...${$X}...`, ...)
+      - pattern: $CP.exec($A + $B, ...)
+      - pattern: $CP.execSync($A + $B, ...)
+      - pattern: '$CP.spawn($CMD, $ARGS, {..., shell: true, ...})'
+  - id: js-html-sink
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Raw HTML from a value: XSS. Render text, or sanitize with a vetted library."
+    pattern-either:
+      - pattern: $EL.innerHTML = $X
+      - pattern: $EL.outerHTML = $X
+      - pattern: document.write($X)
+      - pattern: <$C dangerouslySetInnerHTML={...} />
+  - id: js-sql-concat
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "SQL built by string interpolation: SQL injection. Use parameters/placeholders."
+    pattern-either:
+      - pattern: $DB.query(`...${$X}...`, ...)
+      - pattern: $DB.execute(`...${$X}...`, ...)
+      - pattern: $DB.run(`...${$X}...`, ...)
+      - pattern: $DB.prepare(`...${$X}...`)
+      - pattern: $DB.exec(`...${$X}...`)
+      - pattern: $DB.$queryRawUnsafe(...)
+      - pattern: $DB.$executeRawUnsafe(...)
+  - id: js-insecure-random-secret
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Math.random() for a token/id/secret is predictable. Use crypto.randomUUID()/getRandomValues()."
+    patterns:
+      - pattern: $V = <... Math.random() ...>
+      - metavariable-regex:
+          metavariable: $V
+          regex: (?i).*(token|secret|password|nonce|salt|session|otp|code).*
+  - id: js-weak-hash-password
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "md5/sha1 is not a password hash. Use bcrypt, scrypt or argon2."
+    pattern-either:
+      - pattern: crypto.createHash("md5")
+      - pattern: crypto.createHash("sha1")
+  - id: js-jwt-unverified
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "JWT decoded without verification, or with the 'none' algorithm."
+    pattern-either:
+      - pattern: jwt.decode(...)
+      - pattern: 'jwt.verify($T, $K, {..., algorithms: [..., "none", ...], ...})'
+  - id: js-tls-verify-off
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "TLS certificate verification disabled."
+    pattern-either:
+      - pattern: "{..., rejectUnauthorized: false, ...}"
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+  - id: js-cors-any-with-credentials
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "CORS allows any origin together with credentials."
+    pattern: 'cors({..., origin: true, credentials: true, ...})'
+  - id: js-open-redirect
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Redirect to a URL taken from the request: open redirect. Allow-list targets."
+    pattern-either:
+      - pattern: $RES.redirect($REQ.query.$P)
+      - pattern: $RES.redirect($REQ.body.$P)
+      - pattern: $RES.redirect($REQ.params.$P)
+
+  # --- Python -----------------------------------------------------------------------
+  - id: py-subprocess-shell
+    languages: [python]
+    severity: ERROR
+    message: "shell=True or os.system with a value: command injection. Pass an argument list."
+    pattern-either:
+      - pattern: subprocess.$F(..., shell=True, ...)
+      - pattern: os.system($X)
+      - pattern: os.popen($X)
+  - id: py-eval
+    languages: [python]
+    severity: ERROR
+    message: "eval/exec on a value: code injection."
+    pattern-either:
+      - pattern: eval($X)
+      - pattern: exec($X)
+  - id: py-unsafe-deserialization
+    languages: [python]
+    severity: ERROR
+    message: "Unsafe deserialization (pickle/marshal/yaml.load): code execution on untrusted input."
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: marshal.loads(...)
+      - patterns:
+          - pattern: yaml.load(...)
+          - pattern-not: yaml.load(..., Loader=yaml.SafeLoader)
+  - id: py-sql-format
+    languages: [python]
+    severity: ERROR
+    message: "SQL built by string formatting: SQL injection. Use query parameters."
+    pattern-either:
+      - pattern: $C.execute(f"...", ...)
+      - pattern: $C.execute("..." % $X, ...)
+      - pattern: $C.execute("...".format(...), ...)
+      - pattern: $C.execute("..." + $X, ...)
+      - pattern: $C.executemany(f"...", ...)
+  - id: py-tls-verify-off
+    languages: [python]
+    severity: ERROR
+    message: "TLS certificate verification disabled."
+    pattern-either:
+      - pattern: requests.$F(..., verify=False, ...)
+      - pattern: httpx.$F(..., verify=False, ...)
+      - pattern: ssl._create_unverified_context(...)
+  - id: py-weak-hash-password
+    languages: [python]
+    severity: ERROR
+    message: "md5/sha1 is not a password hash. Use bcrypt, scrypt or argon2 (hashlib.scrypt)."
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5($X)
+          - pattern: hashlib.sha1($X)
+      - metavariable-regex:
+          metavariable: $X
+          regex: (?i).*pass.*
+  - id: py-insecure-random-secret
+    languages: [python]
+    severity: ERROR
+    message: "random module for a token/secret is predictable. Use the secrets module."
+    patterns:
+      - pattern: $V = <... random.$F(...) ...>
+      - metavariable-regex:
+          metavariable: $V
+          regex: (?i).*(token|secret|password|nonce|salt|session|otp).*
+  - id: py-flask-debug
+    languages: [python]
+    severity: ERROR
+    message: "Flask debug mode exposes an interactive debugger (remote code execution)."
+    pattern: $APP.run(..., debug=True, ...)

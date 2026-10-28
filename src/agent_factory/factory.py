@@ -8,6 +8,7 @@ resetting the analysis counter, attempts or budget.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import os
 import random
@@ -38,11 +39,12 @@ from .evidence import EvidenceStore, Producer
 from .features import NormalizedFeature, classify, load_feature, path_rank, record_classification, store_feature
 from .identities import InputIdentity, ResultKind, digest
 from .lanes import ParallelLanes
-from .policy import evaluate_diff, max_risk
+from .policy import RISK_ORDER, evaluate_diff, max_risk, security_triggers
 from .preview import PreviewServer
 from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
-from .scheduler import LeaseLost, NoSlot, acquire_lease, acquire_slot, check_fence, heartbeat, ready_tasks, release_allocation, release_lease, validate_dag
+from .scheduler import (LeaseLost, NoSlot, acquire_lease, acquire_slot, check_fence, heartbeat, ready_tasks, release_allocation,
+                        release_lease, validate_dag, wait_for_slot)
 from .schemas import (HEURISTICS, VISUAL_ASPECTS, ContractError, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, UiReviewPayload,
                       envelope_json_schema, parse_envelope)
 from .state import Store, new_id, now
@@ -122,7 +124,7 @@ class Factory(ParallelLanes):
         self.runtime = runtime
         self.sandbox = sandbox
         self.workspaces = WorkspaceManager(store, self.data_dir)
-        self.runner = TrustedRunner(sandbox, self.evidence, self.data_dir / "runs")
+        self.runner = TrustedRunner(sandbox, self.evidence, self.data_dir / "runs", factory_root=cfg.factory_dir.parent.absolute())
         self.merge_handler = merge_handler
         self.checks_path = checks_path or cfg.factory_dir / "checks" / "default.yaml"
         self.owner_id = owner_id or f"controller-{os.getpid()}-{uuid.uuid4().hex[:6]}"
@@ -254,7 +256,7 @@ class Factory(ParallelLanes):
 
     def _gate(self, job_id: str, stage: str, wt: Path, head_sha: str | None, tree_sha: str | None):
         return self.runner.run_gate(self._checks(job_id).for_stage(stage), wt, job_id=job_id, head_sha=head_sha,
-                                    tree_sha=tree_sha, extra_env=self._toolchain_env(job_id))
+                                    tree_sha=tree_sha, extra_env=self._toolchain_env(job_id), base_sha=self._job(job_id)["base_sha"])
 
     def _checks(self, job_id: str) -> ChecksManifest:
         """The operator's manifest for the job's repo (fixed at submit), else the factory default."""
@@ -424,7 +426,12 @@ class Factory(ParallelLanes):
         lease = acquire_lease(self.store, lease_key, self.owner_id, self.cfg.factory.execution.lease_ttl_seconds)
         if lease is None:
             raise StageBlocked(S.NEEDS_HUMAN, f"another worker holds lease {lease_key}")
-        slot = acquire_slot(self.store, "agent_process", self.cfg.factory.execution.max_agent_processes, job_id, self.owner_id)
+        try:  # parallel lanes and their reviews share the slots: wait for one rather than fail the lane
+            slot = wait_for_slot(self.store, "agent_process", self.cfg.factory.execution.max_agent_processes, job_id, self.owner_id,
+                                 timeout=self.cfg.factory.execution.reviewer_timeout_seconds)
+        except NoSlot as exc:
+            release_lease(self.store, lease)
+            raise StageBlocked(S.BLOCKED_ENV, f"no agent process slot within {self.cfg.factory.execution.reviewer_timeout_seconds}s: {exc}") from exc
         attempt_id = new_id("att")
         own = lane or (Path(job["worktree"]) if job["worktree"] else None)
         denied = tuple(default_denied_reads(self.data_dir, own))
@@ -1342,9 +1349,9 @@ class Factory(ParallelLanes):
             required.append("ui-review")
         return required
 
-    @staticmethod
-    def _security_depth(risk: str, surfaces: list[str]) -> str:
-        return "full" if risk == "high" or "security" in surfaces else "baseline"
+    def _security_depth(self, risk: str, surfaces: list[str]) -> str:
+        """Per task the baseline review; the full threat analysis runs once per feature (review.security)."""
+        return "full" if risk in self.cfg.factory.review.security.full_per_task_for_risk else "baseline"
 
     def _route_reviews(self, job_id: str, task_id: str, task: TaskSpec, surfaces: list[str], risk: str, diff) -> None:
         ctx = self._ctx(job_id)
@@ -1385,6 +1392,7 @@ class Factory(ParallelLanes):
         ctx = self._ctx(job_id)
         frozen_head = WorkspaceManager.head(wt)
         diff_text = git(wt, "diff", f"{self._job(job_id)['base_sha']}..HEAD", "--", ".", ":(exclude)openspec")
+        files = [d for d in WorkspaceManager.diff(wt, self._job(job_id)["base_sha"]) if not d.path.startswith("openspec/")]
         gate = self.evidence.latest(job_id, ResultKind.GATE, task_id)
         verdicts: dict[str, str] = {}
         error_class = None
@@ -1407,8 +1415,10 @@ class Factory(ParallelLanes):
                 "security_depth": security_depth, "surfaces": surfaces,
                 "spec_advisories": ctx.get("spec_advisories", []), **self._verification_context(job_id, "task", browser),
                 **({"design": self._design_context(job_id, with_text=True)} if review == "ui-review" else {}),
+                **(self._security_inputs(job_id, task_id, files) if review == "security-review" else {}),
                 **({"controller_note": notes[review]} if notes.get(review) else {}),
-            }, task_id=task_id, purpose="review", browser=browser)
+            }, task_id=task_id, purpose="review", browser=browser,
+                model=self.cfg.factory.review.security.baseline_model if review == "security-review" and security_depth == "baseline" else None)
             if WorkspaceManager.head(wt) != frozen_head or git(wt, "status", "--porcelain", "--", ".", *GENERATED_EXCLUDES):
                 raise StageBlocked(S.NEEDS_HUMAN, "worktree changed while reviewers were running (reviewers are read-only)")
             verdict, findings = res.envelope.verdict, self._findings(res.envelope)
@@ -1419,11 +1429,113 @@ class Factory(ParallelLanes):
                 if problem:
                     payload["controller"] = {"verdict": verdict, "problem": problem}
                 self._set_review_note(job_id, task_id, review, problem)
+            if review == "security-review":
+                verdict, findings = self._triage_security(job_id, task_id, verdict, findings, {d.path for d in files})
             self._record(job_id, kind, verdict, payload, ident=ident,
                          producer=self._agent_producer(res, skill), task_id=task_id, findings=findings)
             verdicts[review] = verdict
             error_class = error_class or res.envelope.payload.get("error_class")
         return verdicts, error_class
+
+    # --- security review: triggers, known findings, triage -----------------------------
+
+    def _security_inputs(self, job_id: str, task_id: str | None, files) -> dict[str, Any]:
+        return {"security_triggers": security_triggers(files, self.cfg.factory.policy),
+                "known_findings": self._known_security_findings(job_id, task_id)}
+
+    def _known_security_findings(self, job_id: str, task_id: str | None) -> list[dict]:
+        """Security findings already on record for this feature, so a reviewer does not report them again."""
+        rows = self.store.all("SELECT finding_id, task_id, severity, blocking, status, problem, location_json FROM findings"
+                              " WHERE job_id = ? AND kind = 'security-review' AND task_id IS NOT ?", (job_id, task_id))
+        return [{"id": r["finding_id"], "task_id": r["task_id"], "severity": r["severity"], "status": r["status"],
+                 "path": (json.loads(r["location_json"] or "null") or {}).get("path"), "problem": r["problem"][:300]} for r in rows]
+
+    @staticmethod
+    def _words(text: str) -> set[str]:
+        return set(re.findall(r"[a-z]{3,}", text.lower()))
+
+    def _triage_security(self, job_id: str, task_id: str | None, verdict: str, findings: list[dict],
+                         changed: set[str]) -> tuple[str, list[dict]]:
+        """Out-of-diff findings never block; a finding another task already reported is dropped.
+
+        A CHANGES whose blocking findings were all outside the diff or duplicates becomes PASS.
+        """
+        known = self._known_security_findings(job_id, task_id)
+        kept, outside, duplicates = [], [], []
+        for finding in findings:
+            path = (finding.get("location") or {}).get("path")
+            words = self._words(finding["problem"])
+            if any(k["status"] != "fixed" and k["path"] == path and len(words & self._words(k["problem"])) >= 0.6 * max(len(words), 1)
+                   for k in known):
+                duplicates.append(finding["id"])
+                continue
+            if path and path not in changed and finding["blocking"]:
+                finding = {**finding, "blocking": False, "problem": f"[outside this diff] {finding['problem']}"[:4000]}
+                outside.append(finding["id"])
+            kept.append(finding)
+        if outside or duplicates:
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "security.findings_triaged",
+                                 {"task_id": task_id, "outside_diff": outside, "duplicates": duplicates})
+        if verdict == "CHANGES" and (outside or duplicates) and not any(f["blocking"] for f in kept):
+            verdict = "PASS"
+        return verdict, kept
+
+    def _feature_security_due(self, job_id: str, files) -> bool:
+        mode = self.cfg.factory.review.security.feature_review
+        if mode == "off":
+            return False
+        risk = self._job(job_id)["risk"] or "low"
+        return mode == "always" or RISK_ORDER[risk] >= RISK_ORDER["high"] or bool(security_triggers(files, self.cfg.factory.policy))
+
+    def _feature_security_review(self, job_id: str, wt: Path, head: str, gate) -> bool:
+        """One full threat analysis of the whole feature diff. Returns True when acceptance may continue."""
+        files = [d for d in WorkspaceManager.diff(wt, self._job(job_id)["base_sha"]) if not d.path.startswith("openspec/")]
+        due = self._feature_security_due(job_id, files)
+        self._set_ctx(job_id, feature_security_required=due)
+        if not due:
+            return True
+        ok, _ = self.evidence.current_pass(job_id, ResultKind.SECURITY_REVIEW, self._identity(job_id), job_level=True)
+        if ok:
+            return True
+        ctx = self._ctx(job_id)
+        diff_text = git(wt, "diff", f"{self._job(job_id)['base_sha']}..HEAD", "--", ".", ":(exclude)openspec")
+        res = self.call_agent(job_id, "factory-security-review", {
+            "mode": "feature", "security_depth": "full", "feature": self._feature(job_id), "spec": ctx.get("spec"),
+            "diff": diff_text[:120000], "head_sha": head, "gate_evidence": gate.as_payload(), "risk": self._job(job_id)["risk"],
+            "tasks": [dict(r) for r in self.store.all("SELECT task_id, state FROM tasks WHERE job_id = ?", (job_id,))],
+            **self._security_inputs(job_id, None, files), **self._verification_context(job_id, "acceptance"),
+            "controller_note": ctx.get("security_note"),
+        }, purpose="acceptance")
+        verdict, findings = self._triage_security(job_id, None, res.envelope.verdict, self._findings(res.envelope), {d.path for d in files})
+        if verdict in ("BLOCKED", "UNKNOWN") and self._inconclusive(job_id, "security", verdict, res.envelope.summary):
+            return False
+        self._record(job_id, ResultKind.SECURITY_REVIEW, verdict, {"scope": "feature", "envelope": res.envelope.model_dump()},
+                     producer=self._agent_producer(res, "factory-security-review"), findings=findings)
+        if verdict == "PASS":
+            return True
+        if res.envelope.payload.get("error_class") in ("spec", "decomposition"):
+            self._back_to_analysis(job_id, "feature security review found a spec defect")
+            return False
+        owner = self._owner_task(job_id, findings, res.envelope.payload.get("owner_task_id"))
+        with self.store.tx() as conn:
+            conn.execute("UPDATE tasks SET state = 'REWORK' WHERE job_id = ? AND task_id = ?", (job_id, owner))
+        self._set_ctx(job_id, current_task=owner, last_failure={owner: {"verdict": "FEATURE_SECURITY", "reason": res.envelope.summary,
+                                                                        "findings": findings}})
+        self.controller.transition(job_id, S.BUILD_TASK, "feature security review found unmitigated threats")
+        return False
+
+    def _owner_task(self, job_id: str, findings: list[dict], proposed: str | None) -> str:
+        """The task whose file scope holds the first blocking finding; else the reviewer's pick; else the last task."""
+        tasks = self.store.all("SELECT task_id, spec_json FROM tasks WHERE job_id = ? ORDER BY order_idx", (job_id,))
+        for finding in (f for f in findings if f["blocking"]):
+            path = (finding.get("location") or {}).get("path")
+            for t in tasks:
+                scope = json.loads(t["spec_json"]).get("file_scope") or []
+                if path and any(fnmatch.fnmatch(path, s) or path.startswith(s.rstrip("/") + "/") for s in scope):
+                    return t["task_id"]
+        ids = [t["task_id"] for t in tasks]
+        return proposed if proposed in ids else ids[-1]
 
     def _review_order(self, required: list[str]) -> list[str | None]:
         """Required reviews by tier, with None marking each tier boundary."""
@@ -1592,12 +1704,18 @@ class Factory(ParallelLanes):
             cited = {e for v in payload.viewports for e in v.evidence_ids} | {e for v in payload.visual for e in v.evidence_ids}
             if unknown := sorted(cited - shots):
                 problems.append(f"evidence_ids that are not saved screenshots: {unknown}")
-            if missing_h := [h for h in HEURISTICS if h not in {x.id for x in payload.heuristics}]:
-                problems.append(f"heuristics not assessed: {missing_h}")
-            if missing_v := [a for a in VISUAL_ASPECTS if a not in {v.aspect for v in payload.visual if v.score is not None}]:
-                problems.append(f"visual aspects not scored from screenshots: {missing_v}")
-            if verdict == "PASS":
-                low = [v for v in payload.visual if v.score is not None and v.score < self.cfg.factory.design.min_visual_score]
+            # Touched screens the app does not show yet (a later task mounts them): the screenshots prove what it
+            # shows, and the full visual judgement belongs to the task that mounts them and to feature acceptance.
+            if payload.touched_screens_rendered:
+                if missing_h := [h for h in HEURISTICS if h not in {x.id for x in payload.heuristics}]:
+                    problems.append(f"heuristics not assessed: {missing_h}")
+                if missing_v := [a for a in VISUAL_ASPECTS if a not in {v.aspect for v in payload.visual if v.score is not None}]:
+                    problems.append(f"visual aspects not scored from screenshots: {missing_v}")
+                if verdict == "PASS":
+                    low = [v for v in payload.visual if v.score is not None and v.score < self.cfg.factory.design.min_visual_score]
+            else:
+                with self.store.tx() as conn:
+                    self.store.event(conn, job_id, "ui_review.not_rendered", {"reason": payload.not_rendered_reason[:300]})
         if problems:
             with self.store.tx() as conn:
                 self.store.event(conn, job_id, "ui_review.inconclusive", {"problems": problems})
@@ -1636,6 +1754,8 @@ class Factory(ParallelLanes):
         gate = self._gate(job_id, "acceptance", wt, head_sha=head, tree_sha=WorkspaceManager.tree(wt))
         if gate.verdict is GateVerdict.ERROR_ENV:
             raise StageBlocked(S.BLOCKED_ENV, gate.reason)
+        if gate.verdict is GateVerdict.PASS and not self._feature_security_review(job_id, wt, head, gate):
+            return
         browser = self._browser_session(job_id)
         res = self.call_agent(job_id, "factory-product-verify", {
             "mode": "feature-acceptance", "original_request": self._feature(job_id)["original_request"],

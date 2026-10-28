@@ -10,6 +10,7 @@ tools/openspec/node_modules/
 tools/playwright-cli/node_modules/
 tools/codex/node_modules/
 tools/opencode/node_modules/
+tools/semgrep/.venv/
 .hypothesis/
 .pytest_cache/
 

@@ -254,12 +254,18 @@ class UiReviewPayload(Model):
     heuristics: list[HeuristicCheck] = []
     visual: list[VisualScore] = []
     design_direction: DesignDirectionCheck = DesignDirectionCheck()
+    # False when the served app does not show the touched screens yet (e.g. components a later task mounts):
+    # the screenshots then prove what the app shows, and the visual judgement waits for the task that mounts them.
+    touched_screens_rendered: bool = True
+    not_rendered_reason: str = Field(default="", max_length=1000)
 
     @model_validator(mode="after")
     def _unique(self) -> "UiReviewPayload":
         for name, ids in (("heuristics", [h.id for h in self.heuristics]), ("visual", [v.aspect for v in self.visual])):
             if len(ids) != len(set(ids)):
                 raise ValueError(f"{name} entries must be unique")
+        if not self.touched_screens_rendered and not self.not_rendered_reason.strip():
+            raise ValueError("touched_screens_rendered: false needs not_rendered_reason")
         return self
 
 

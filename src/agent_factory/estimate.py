@@ -53,7 +53,8 @@ def estimate_plan(store: Store, job_id: str, tasks: list[dict], reserve_fraction
             roles.append("ui_reviewer")
         per_task.append({"task_id": task["task_id"], "usd": round(rounds * sum(costs[r] for r in roles), 2)})
     build = sum(t["usd"] for t in per_task)
-    verification = 1.2 * (costs["product_evaluator"] + costs["integration_evaluator"])  # one retry in five
+    # acceptance, integration and at most one full security review of the feature; one retry in five
+    verification = 1.2 * (costs["product_evaluator"] + costs["integration_evaluator"] + costs["security_reviewer"])
     try:
         spent = budgets.status(store, job_id).spent
     except KeyError:  # an estimate for a plan outside a job (backtests)

@@ -230,3 +230,24 @@ def test_an_existing_design_doc_must_be_checked_even_without_a_browser(make_env,
     results = _ui_results(env, job)
     assert results[0][0] == "UNKNOWN" and "docs/DESIGN.md exists" in results[0][1]["controller"]["problem"]
     assert results[-1][0] == "PASS" and ui.inputs[0]["environment"]["kind"] == "local-checkout"
+
+
+def test_screens_a_later_task_mounts_need_screenshots_but_no_visual_scores(make_env, tmp_path, repo):
+    unmounted = {"viewports": [{"name": "mobile", "width": 390, "evidence_ids": ["home-390.png"]}],
+                 "touched_screens_rendered": False, "not_rendered_reason": "App does not mount SetupPanel yet (TASK-08)"}
+    ui = UiReviewer([(True, unmounted)])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert [v for v, _ in _ui_results(env, job)] == ["PASS"]
+    assert env.events(job, "ui_review.not_rendered")
+
+
+def test_not_rendered_still_needs_the_screenshots_of_what_the_app_shows(make_env, tmp_path, repo):
+    unmounted = {"viewports": [{"name": "mobile", "width": 390, "evidence_ids": []}],
+                 "touched_screens_rendered": False, "not_rendered_reason": "not mounted yet"}
+    ui = UiReviewer([(False, unmounted), (True, ui_payload())])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert [v for v, _ in _ui_results(env, job)][0] == "UNKNOWN"

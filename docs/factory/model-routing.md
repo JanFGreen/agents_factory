@@ -16,7 +16,7 @@ zmienia. Sekcje:
 | `runtimes` | jak uruchamiany jest agent: `binary`, `min_cli_version`, `api_key_env` (nazwa zmiennej, nie klucz), `base_url` | `runtime.runtimes`, `runtime.claude_binary` |
 | `roles` | runtime, model, `effort`, narzędzia każdej roli | `runtime.roles` |
 | `routing` | model buildera wg trudności taska, eskalacja, model ścieżki trivial | `routing` |
-| `review_models` | tańsi recenzenci tasków (`for_risk`, `models`) | `review.cheaper_models*` |
+| `review_models` | tańsi recenzenci tasków (`for_risk`, `models`); model przeglądu bezpieczeństwa baseline (`security_baseline`) | `review.cheaper_models*`, `review.security.baseline_model` |
 | `decision_model` | opcjonalny Jev | `decision_model` |
 
 **Inni dostawcy (adaptery `adapters/codex.py`, `adapters/opencode.py`).** `runtime` roli:

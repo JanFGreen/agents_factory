@@ -325,6 +325,10 @@ class Controller:
         analysis_ok = self._g_analysis_current(job_id)
         if not analysis_ok.ok:
             return analysis_ok
+        if self._ctx(job_id).get("feature_security_required"):
+            ok, why = self.evidence.current_pass(job_id, ResultKind.SECURITY_REVIEW, self.identity(job_id), job_level=True)
+            if not ok:
+                return GuardResult(False, f"feature security review: {why}")
         ok, why = self.evidence.current_pass(job_id, ResultKind.FEATURE_ACCEPTANCE, self.identity(job_id))
         return GuardResult(ok, why)
 

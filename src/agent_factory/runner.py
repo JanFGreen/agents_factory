@@ -30,7 +30,8 @@ from .sandbox import Sandbox, SandboxPolicy, scrubbed_env
 
 MAX_LOG_BYTES = 2_000_000
 EXCERPT_BYTES = 4000
-_PLACEHOLDERS = {"{python}", "{report}", "{worktree}"}
+# {factory}: the factory checkout (pinned tools, local rule files); {base_sha}: the job base, for checks of new code only.
+_PLACEHOLDERS = {"{python}", "{report}", "{worktree}", "{factory}", "{base_sha}"}
 CHECKS_NAME = re.compile(r"^[a-z0-9_-]{1,40}$")
 
 
@@ -199,10 +200,11 @@ def _group_alive(pgid: int) -> bool:
 
 
 class TrustedRunner:
-    def __init__(self, sandbox: Sandbox, evidence: EvidenceStore, work_root: Path):
+    def __init__(self, sandbox: Sandbox, evidence: EvidenceStore, work_root: Path, factory_root: Path | None = None):
         self.sandbox = sandbox
         self.evidence = evidence
         self.work_root = work_root
+        self.factory_root = factory_root
 
     def run_check(
         self,
@@ -214,16 +216,23 @@ class TrustedRunner:
         tree_sha: str | None,
         extra_env: dict[str, str] | None = None,
         timeout_override: int | None = None,
+        base_sha: str | None = None,
     ) -> CheckEvidence:
         scratch = self.work_root / job_id / f"run-{time.time_ns()}"
         home, tmpdir = scratch / "home", scratch / "tmp"
         for path in (home, tmpdir):
             path.mkdir(parents=True, exist_ok=True)
         report = scratch / "report.xml"
-        argv = [
-            arg.replace("{python}", sys.executable).replace("{report}", str(report)).replace("{worktree}", str(worktree))
-            for arg in check.argv
-        ]
+        values = {"{python}": sys.executable, "{report}": str(report), "{worktree}": str(worktree),
+                  "{factory}": str(self.factory_root) if self.factory_root else None, "{base_sha}": base_sha}
+        argv = []
+        for arg in check.argv:
+            for key, value in values.items():
+                if key in arg:
+                    if value is None:
+                        return self._env_error(check, check.argv, worktree, {}, time.time(), f"no value for {key}", head_sha, tree_sha)
+                    arg = arg.replace(key, value)
+            argv.append(arg)
         policy = SandboxPolicy(
             writable=(worktree, scratch),
             denied_read=tuple(self._denied(worktree)),
@@ -324,9 +333,10 @@ class TrustedRunner:
         head_sha: str | None,
         tree_sha: str | None,
         extra_env: dict[str, str] | None = None,
+        base_sha: str | None = None,
     ) -> GateResult:
         evidence = [
-            self.run_check(c, worktree, job_id=job_id, head_sha=head_sha, tree_sha=tree_sha, extra_env=extra_env)
+            self.run_check(c, worktree, job_id=job_id, head_sha=head_sha, tree_sha=tree_sha, extra_env=extra_env, base_sha=base_sha)
             for c in checks
         ]
         required = [e for e, c in zip(evidence, checks) if c.required]

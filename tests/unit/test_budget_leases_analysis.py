@@ -4,7 +4,7 @@ import pytest
 
 from agent_factory import analysis, budgets
 from agent_factory.config import load_config
-from agent_factory.scheduler import LeaseLost, acquire_lease, acquire_slot, check_fence, NoSlot, release_allocation
+from agent_factory.scheduler import LeaseLost, acquire_lease, acquire_slot, check_fence, NoSlot, release_allocation, wait_for_slot
 from agent_factory.state import ConcurrentModification, Store
 
 from ..conftest import make_factory_dir
@@ -85,6 +85,36 @@ def test_global_slots(env):
         acquire_slot(store, "agent_process", 2, "j", "o")
     release_allocation(store, slots[0])
     acquire_slot(store, "agent_process", 2, "j", "o")
+
+
+def test_slots_of_a_dead_controller_are_reclaimed(env):
+    """Live finding: two slots held by controllers killed the day before starved the next job's lanes."""
+    import subprocess
+    import sys
+
+    _, store = env
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    for _ in range(2):
+        acquire_slot(store, "agent_process", 3, "old-job", f"controller-{dead.pid}-abc123")
+    acquire_slot(store, "agent_process", 3, "j", "test-owner")  # not a controller id: never reclaimed
+    taken = [acquire_slot(store, "agent_process", 3, "j", "o") for _ in range(2)]
+    assert len(taken) == 2
+    reclaimed = store.all("SELECT owner FROM resource_allocations WHERE owner LIKE '%:reclaimed'")
+    assert len(reclaimed) == 2
+    with pytest.raises(NoSlot):
+        acquire_slot(store, "agent_process", 3, "j", "o")
+
+
+def test_waiting_for_a_slot_gets_one_when_released_and_times_out_otherwise(env):
+    import threading
+
+    _, store = env
+    held = acquire_slot(store, "agent_process", 1, "j", "o")
+    threading.Timer(0.3, release_allocation, (store, held)).start()
+    assert wait_for_slot(store, "agent_process", 1, "j", "o", timeout=5, poll=0.05)
+    with pytest.raises(NoSlot):
+        wait_for_slot(store, "agent_process", 1, "j", "o", timeout=0.2, poll=0.05)
 
 
 def test_cas_detects_concurrent_writer(env):

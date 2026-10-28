@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -181,9 +182,22 @@ class NoSlot(RuntimeError):
     pass
 
 
+_CONTROLLER_OWNER = re.compile(r"^controller-(\d+)-[0-9a-f]+$")
+
+
+def _reclaim_dead_slots(conn: sqlite3.Connection, kind: str) -> list[str]:
+    """Release slots whose controller process no longer exists (a crash or kill left them taken)."""
+    rows = conn.execute("SELECT alloc_id, owner FROM resource_allocations WHERE kind = ? AND released_at IS NULL", (f"slot:{kind}",)).fetchall()
+    dead = [r["alloc_id"] for r in rows if (m := _CONTROLLER_OWNER.match(r["owner"] or "")) and not _pid_alive(int(m.group(1)))]
+    for alloc_id in dead:
+        conn.execute("UPDATE resource_allocations SET released_at = ?, owner = owner || ':reclaimed' WHERE alloc_id = ?", (now(), alloc_id))
+    return dead
+
+
 def acquire_slot(store: Store, kind: str, limit: int, job_id: str, owner: str) -> str:
     """Global slot from resource_allocations (e.g. agent_process, test_process)."""
     with store.tx() as conn:
+        _reclaim_dead_slots(conn, kind)
         for index in range(limit):
             try:
                 alloc_id = new_id("slot")
@@ -195,6 +209,18 @@ def acquire_slot(store: Store, kind: str, limit: int, job_id: str, owner: str) -
             except sqlite3.IntegrityError:
                 continue
     raise NoSlot(f"all {limit} {kind} slots are busy")
+
+
+def wait_for_slot(store: Store, kind: str, limit: int, job_id: str, owner: str, *, timeout: float, poll: float = 2.0) -> str:
+    """Acquire a slot, waiting while other lanes or jobs hold them all; NoSlot after ``timeout`` seconds."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            return acquire_slot(store, kind, limit, job_id, owner)
+        except NoSlot:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(poll)
 
 
 def release_allocation(store: Store, alloc_id: str) -> None:

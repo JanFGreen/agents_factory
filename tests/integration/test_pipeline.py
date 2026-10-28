@@ -265,9 +265,14 @@ def test_af11_ui_intake_but_auth_endpoint_raises_risk_and_security(make_env):
     env.factory.run(job)
     assert env.store.job(job)["risk"] == "high"
     assert env.events(job, "risk.raised")
-    assert env.store.job_context(job)["security_depth"] == "full"
-    security_call = next(c for c in env.runtime.calls if c.skill == "factory-security-review")
-    assert '"security_depth": "full"' in security_call.prompt
+    # Per task the baseline review sees the triggers; the full threat analysis runs once on the whole feature.
+    assert env.store.job_context(job)["security_depth"] == "baseline"
+    calls = [c for c in env.runtime.calls if c.skill == "factory-security-review"]
+    assert '"trigger": "endpoint"' in calls[0].prompt and '"trigger": "auth"' in calls[0].prompt
+    feature = [c for c in calls if '"mode": "feature"' in c.prompt]
+    assert feature and '"security_depth": "full"' in feature[0].prompt
+    assert env.store.job_context(job)["feature_security_required"] is True
+    assert env.store.one("SELECT verdict FROM results WHERE job_id = ? AND kind = 'security-review' AND task_id IS NULL", (job,))["verdict"] == "PASS"
 
 
 def test_af58_hidden_complexity_reclassifies_fast_path_keeping_counters(make_env):

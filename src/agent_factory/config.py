@@ -355,6 +355,16 @@ class Runtime(Strict):
 _REVIEWS = Literal["code-review", "security-review", "product-verify", "test-adequacy", "ui-review"]
 
 
+class SecurityReviewPolicy(Strict):
+    """Depth of the security review: a baseline per task, one full threat analysis per feature."""
+
+    # Tasks of jobs at these risk levels also get the full review per task (default: never; the feature review covers it).
+    full_per_task_for_risk: list[Literal["low", "medium", "high"]] = []
+    # Full review of the whole feature diff before acceptance: off | on_trigger (a trigger or high risk) | always.
+    feature_review: Literal["off", "on_trigger", "always"] = "on_trigger"
+    baseline_model: str | None = None  # models.yaml review_models.security_baseline (claude roles only)
+
+
 class ReviewPolicy(Strict):
     """Task review cost controls. Feature acceptance and integration always use the full role bindings."""
 
@@ -363,6 +373,7 @@ class ReviewPolicy(Strict):
     # Task reviews of jobs at these risk levels use `cheaper_models` for the listed roles.
     cheaper_models_for_risk: list[Literal["low", "medium", "high"]] = ["low"]
     cheaper_models: dict[str, str] = {}
+    security: SecurityReviewPolicy = SecurityReviewPolicy()
 
     @model_validator(mode="after")
     def _every_review_once(self) -> "ReviewPolicy":
@@ -500,6 +511,7 @@ def _merge_models(raw_factory: dict, raw_models: Any, source: Path) -> dict:
     moved = [k for k in ("routing", "decision_model") if k in raw_factory]
     moved += [f"runtime.{k}" for k in ("roles", "claude_binary", "min_cli_version", "runtimes", "endpoints", "prices") if k in runtime]
     moved += [f"review.{k}" for k in ("cheaper_models", "cheaper_models_for_risk") if k in review]
+    moved += ["review.security.baseline_model"] if "baseline_model" in (review.get("security") or {}) else []
     if moved:
         raise ConfigError(f"{source.parent / 'config.yaml'}: {', '.join(moved)} belong in models.yaml only")
     models = _validate(ModelsFile, raw_models, source)
@@ -514,11 +526,13 @@ def _merge_models(raw_factory: dict, raw_models: Any, source: Path) -> dict:
     if models.decision_model:
         merged["decision_model"] = models.decision_model
     if models.review_models:
-        extra = set(models.review_models) - {"for_risk", "models"}
+        extra = set(models.review_models) - {"for_risk", "models", "security_baseline"}
         if extra:
-            raise ConfigError(f"{source}: review_models accepts for_risk and models, not {sorted(extra)}")
+            raise ConfigError(f"{source}: review_models accepts for_risk, models and security_baseline, not {sorted(extra)}")
         merged["review"] = {**review, "cheaper_models_for_risk": models.review_models.get("for_risk", []),
                             "cheaper_models": models.review_models.get("models", {})}
+        if "security_baseline" in models.review_models:
+            merged["review"]["security"] = {**(review.get("security") or {}), "baseline_model": models.review_models["security_baseline"]}
     return merged
 
 

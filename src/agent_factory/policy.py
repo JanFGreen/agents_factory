@@ -8,7 +8,9 @@ and detects test weakening. Risk is the maximum of every signal and can only ris
 from __future__ import annotations
 
 import fnmatch
+import math
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .config import Policy
@@ -22,6 +24,43 @@ _CONTENT_RULES: list[tuple[str, re.Pattern[str], str]] = [
     ("high", re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b.+\b(FROM|INTO|SET)\b|execute\(\s*f[\"']", re.I), "SQL"),
     ("high", re.compile(r"\bwebhook\b", re.I), "webhook"),
     ("medium", re.compile(r"\bsubprocess\b|\bos\.system\b|\beval\(|\bexec\("), "process execution / dynamic code"),
+]
+
+# Credentials in added lines (high-confidence shapes only). The violation names the kind and the line, never the value.
+_SECRET_RULES: list[tuple[str, re.Pattern[str]]] = [
+    ("private key", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY")),
+    ("AWS access key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b|\bgithub_pat_[A-Za-z0-9_]{60,}\b")),
+    ("OpenAI/Anthropic API key", re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{32,}")),
+    ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    ("Slack token", re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}")),
+    ("Stripe live key", re.compile(r"\b(?:sk|rk)_live_[A-Za-z0-9]{20,}")),
+    ("JSON Web Token", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")),
+]
+# `password = "..."`-style literals: outside tests only, and only when the value looks random.
+_SECRET_ASSIGNMENT = re.compile(
+    r"\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\w*[\"']?\s*[:=]\s*[\"']([^\"'\s]{16,})[\"']", re.I)
+_PLACEHOLDER = re.compile(r"example|changeme|placeholder|dummy|sample|your[_-]|xxx|\*\*\*|<|\$\{|\{\{|process\.env|os\.environ", re.I)
+_SECRET_FILES = re.compile(r"(^|/)(\.env(\.[\w-]+)?|[^/]*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|ed25519|ecdsa)|credentials\.json|service-account[^/]*\.json)$")
+_SECRET_FILE_TEMPLATES = re.compile(r"\.env\.(example|sample|template)$")
+
+# What makes a change worth a full threat analysis (reported to the security reviewer and used to route it).
+_DEPENDENCY_FILES = re.compile(r"(^|/)(package(-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|requirements[^/]*\.txt|pyproject\.toml|uv\.lock|poetry\.lock|"
+                               r"Cargo\.(toml|lock)|go\.(mod|sum)|pom\.xml|build\.gradle(\.kts)?|Gemfile(\.lock)?)$")
+_TRIGGER_RULES: list[tuple[str, re.Pattern[str]]] = [
+    # `session` alone is too common (a game or study session); only its auth forms count.
+    ("auth", re.compile(r"\b(password|passwd|login|logout|sign[_-]?in|jwt|oauth|bcrypt|argon2|authori[sz]|permission)\w*|"
+                        r"\b(session[_-]?(id|token|cookie|secret)|req\.session|express-session|set-cookie)\b", re.I)),
+    ("secrets", re.compile(r"\b(secret|api[_-]?key|access[_-]?token|credential|private[_-]?key)\w*|process\.env|os\.environ|getenv\(", re.I)),
+    ("endpoint", re.compile(r"@(app|router|bp)\.(route|get|post|put|delete|patch)\b|\bAPIRouter\b|\bexpress\.Router\b|"
+                            r"\b(app|router)\.(get|post|put|delete|patch|use)\(|\bcreateServer\(|\bexport\s+(async\s+)?function\s+(GET|POST|PUT|DELETE|PATCH)\b")),
+    ("sql", re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b.+\b(FROM|INTO|SET)\b|execute\(\s*f[\"']|\.raw\(|\$queryRaw", re.I)),
+    ("outbound-request", re.compile(r"\bfetch\(|\baxios\b|\brequests\.(get|post|put|delete|request)\(|\burllib\.request\b|\bhttpx\.|\bhttps?\.request\(")),
+    ("html-sink", re.compile(r"dangerouslySetInnerHTML|\.innerHTML\s*=|\bv-html\b|\|\s*safe\b|mark_safe\(")),
+    ("process-exec", re.compile(r"\bsubprocess\b|\bos\.system\b|\bchild_process\b|\beval\(|\bexec\(|new Function\(")),
+    ("file-upload", re.compile(r"\bmulter\b|\bmultipart\b|\bUploadFile\b|\bFormData\b|\bupload\w*\(", re.I)),
+    ("webhook", re.compile(r"\bwebhook\b", re.I)),
+    ("crypto", re.compile(r"\bcreateHash\(|\bcreateCipheriv\(|\bhashlib\.|\bMath\.random\(\)|\brandom\.(random|randint)\(")),
 ]
 
 _WEAKENING = [
@@ -158,7 +197,58 @@ def evaluate_diff(
                     report.surfaces.add("security")
         if re.search(r"\.(tsx|jsx|vue|svelte|html|css|scss)$", diff.path) or "/templates/" in f"/{diff.path}":
             report.surfaces.add("ui")
+    report.violations += scan_secrets(files)
     return report
+
+
+def _entropy(value: str) -> float:
+    return -sum((n / len(value)) * math.log2(n / len(value)) for n in Counter(value).values())
+
+
+def scan_secrets(files: list[FileDiff]) -> list[str]:
+    """Credentials a change adds: secret files and key-shaped literals. Fail-closed; the value is never echoed."""
+    found = []
+    for diff in files:
+        if diff.status != "D" and _SECRET_FILES.search(diff.path) and not _SECRET_FILE_TEMPLATES.search(diff.path):
+            found.append(f"secret file added: {diff.path}")
+            continue
+        line_no = 0
+        for line in diff.patch.splitlines():
+            if line.startswith("@@"):
+                m = re.search(r"\+(\d+)", line)
+                line_no = int(m.group(1)) - 1 if m else 0
+                continue
+            if line.startswith("-") or line.startswith("+++"):
+                continue
+            line_no += 1
+            if not line.startswith("+"):
+                continue
+            text = line[1:]
+            kinds = [kind for kind, pattern in _SECRET_RULES if pattern.search(text)]
+            assigned = None if is_test_file(diff.path) else _SECRET_ASSIGNMENT.search(text)
+            if assigned and not _PLACEHOLDER.search(assigned.group(1)) and _entropy(assigned.group(1)) >= 3.5:
+                kinds.append("hard-coded credential")
+            if kinds:
+                found.append(f"possible secret ({', '.join(kinds)}) added in {diff.path}:{line_no}; use configuration, never a literal")
+    return found
+
+
+def security_triggers(files: list[FileDiff], policy: Policy) -> list[dict[str, str]]:
+    """Signals in the actual diff that call for a full threat analysis: one entry per (trigger, path)."""
+    found: dict[tuple[str, str], None] = {}
+    high_paths = policy.risk_path_rules.get("high", [])
+    for diff in files:
+        if _DEPENDENCY_FILES.search(diff.path):
+            found[("dependency", diff.path)] = None
+        if is_test_file(diff.path) or _DOCS.search(diff.path):
+            continue
+        if _matches(diff.path, high_paths):
+            found[("sensitive-path", diff.path)] = None
+        added = "\n".join(line[1:] for line in diff.patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
+        for name, pattern in _TRIGGER_RULES:
+            if pattern.search(added):
+                found[(name, diff.path)] = None
+    return [{"trigger": t, "path": p} for t, p in found]
 
 
 class BrokerDenied(PermissionError):

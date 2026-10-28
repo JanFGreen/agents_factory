@@ -129,6 +129,10 @@ def cmd_doctor(args) -> int:
                              "viewports": cfg.factory.browser.viewports,
                              **({} if browser_bin.exists() else {"effect": "UI review falls back to reading code (local-checkout)",
                                                                  "fix": "cd tools/playwright-cli && npm ci"})}
+    semgrep_bin = (cfg.factory_dir.parent / "tools/semgrep/.venv/bin/semgrep").absolute()
+    report["sast"] = {"tool": "semgrep", "binary": str(semgrep_bin), "present": semgrep_bin.exists(),
+                      **({} if semgrep_bin.exists() else {"effect": "repos whose checks manifest has `sast` stop in BLOCKED_ENV",
+                                                          "fix": "uv sync --project tools/semgrep"})}
     openspec_bin = Path("tools/openspec/node_modules/.bin/openspec")
     report["openspec"] = {"binary": str(openspec_bin), "present": openspec_bin.exists()}
     skills = sorted(p.name for p in (_factory_dir(args) / "skills").iterdir() if p.is_dir() and not p.name.startswith("_"))

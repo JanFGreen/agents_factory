@@ -65,6 +65,11 @@ environment: judge the running app, not only the diff.
    truncation, alignment, spacing, visual hierarchy, contrast. Each viewport needs at least one
    saved screenshot cited in `viewports[].evidence_ids`; the controller checks the names against
    the files it collected, and a review without them is inconclusive and re-runs.
+   When the served app does not show the touched screens yet (components a later task mounts,
+   a screen no route reaches), still screenshot what it shows for each viewport, set
+   `touched_screens_rendered: false` with `not_rendered_reason`, and judge the components from
+   code and tests as in `local-checkout` (heuristics and visual scores may then be omitted or
+   `NOT_RUN`). The task that mounts them is scored in full.
 3. Drive the touched flows with refs from the snapshot: `<cli> click <ref>`, `<cli> fill <ref> <text>`,
    `<cli> press Tab` / `Enter` / `Escape` for the keyboard path, `<cli> set-color-scheme dark` for the
    dark theme. A state the app cannot reach without its backend (no server runs) is

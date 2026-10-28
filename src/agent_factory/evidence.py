@@ -217,8 +217,14 @@ class EvidenceStore:
             analysis_round=row["analysis_round"],
         )
 
-    def latest(self, job_id: str, kind: ResultKind, task_id: str | None = None) -> StoredResult | None:
-        if task_id is None:
+    def latest(self, job_id: str, kind: ResultKind, task_id: str | None = None, job_level: bool = False) -> StoredResult | None:
+        """Latest result of ``kind``: of the task, of any task (default), or of the job itself (``job_level``)."""
+        if job_level:
+            row = self.store.one(
+                "SELECT * FROM results WHERE job_id = ? AND kind = ? AND task_id IS NULL ORDER BY rowid DESC LIMIT 1",
+                (job_id, str(kind)),
+            )
+        elif task_id is None:
             row = self.store.one(
                 "SELECT * FROM results WHERE job_id = ? AND kind = ? ORDER BY rowid DESC LIMIT 1",
                 (job_id, str(kind)),
@@ -231,11 +237,11 @@ class EvidenceStore:
         return None if row is None else self._row_to_result(row)
 
     def current_pass(
-        self, job_id: str, kind: ResultKind, current: InputIdentity, task_id: str | None = None
+        self, job_id: str, kind: ResultKind, current: InputIdentity, task_id: str | None = None, job_level: bool = False
     ) -> tuple[bool, str]:
         """True only for a verified, PASS, non-stale latest result of ``kind``."""
         try:
-            result = self.latest(job_id, kind, task_id)
+            result = self.latest(job_id, kind, task_id, job_level=job_level)
         except EvidenceError as exc:
             return False, str(exc)
         if result is None:

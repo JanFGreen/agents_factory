@@ -1,0 +1,44 @@
+# Trusted check manifest for React + Vite web apps with a Node API (vitest + tsc + eslint + vite build).
+# Dependencies are installed by the operator in the repo checkout (`npm ci`) and linked into each
+# worktree (read-only, hence the in-repo cacheDir and vitest's runner config loader); checks never
+# reach the network, so a new dependency needs the operator.
+schema_version: 1
+link_from_checkout: ["node_modules"]
+preview:                                 # output of the web-build check, served for UI review in a browser
+  static_dir: dist
+  spa_fallback: true
+checks:
+  - name: unit
+    argv: ["{worktree}/node_modules/.bin/vitest", "run", "--configLoader", "runner", "--reporter=default", "--reporter=junit", "--outputFile.junit={report}"]
+    timeout_seconds: 900
+    report: junit
+    min_tests: 1
+    required: true
+    network: localhost
+    stage: task
+  - name: typecheck
+    argv: ["{worktree}/node_modules/.bin/tsc", "--noEmit", "-p", "tsconfig.json"]
+    timeout_seconds: 600
+    required: true
+    stage: task
+  - name: lint
+    argv: ["{worktree}/node_modules/.bin/eslint", ".", "--max-warnings=0"]
+    timeout_seconds: 600
+    required: true
+    stage: task
+  - name: duplicates                    # EP-4: no new copied block; known clones live in the protected baseline
+    argv: ["{worktree}/node_modules/.bin/jscpd", "--config", ".jscpd.json", "--baseline", ".jscpd-baseline.json", "--fail-on-new-clones"]
+    timeout_seconds: 300
+    required: true
+    stage: task
+  - name: sast                          # semgrep z lokalnymi regułami fabryki (offline); tylko kod dodany względem bazy joba
+    argv: ["{factory}/tools/semgrep/.venv/bin/semgrep", "scan", "--config", "{factory}/factory/checks/semgrep/security.yml",
+           "--baseline-commit", "{base_sha}", "--error", "--metrics=off", "--disable-version-check", "--quiet", "."]
+    timeout_seconds: 600
+    required: true
+    stage: task
+  - name: web-build
+    argv: ["{worktree}/node_modules/.bin/vite", "build", "--configLoader", "runner", "--outDir", "dist", "--emptyOutDir"]  # runner: no temp config file in read-only node_modules
+    timeout_seconds: 600
+    required: true
+    stage: task

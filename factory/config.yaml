@@ -94,6 +94,11 @@ review:
   tiers:
     - [code-review, test-adequacy, ui-review]
     - [product-verify, security-review]
+  security:
+    # Per task: przegląd baseline (model review_models.security_baseline) z triggerami z diffu i znanymi findingami.
+    # Pełna analiza zagrożeń całego diffu raz na feature przed akceptacją: off | on_trigger | always.
+    feature_review: on_trigger
+    full_per_task_for_risk: []         # np. [high]: dodatkowo pełny przegląd każdego taska
 runtime:
   sandbox: required
   # Modele, role, routing i dostawcy agentów: factory/models.yaml (jedyne miejsce wyboru modeli).

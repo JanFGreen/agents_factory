@@ -19,6 +19,8 @@
   "factory.lock.json",
   "factory/checks/default.yaml",
   "factory/checks/node.yaml",
+  "factory/checks/semgrep/security.yml",
+  "factory/checks/vite.yaml",
   "factory/config.yaml",
   "factory/models.yaml",
   "factory/policies/README.md",
@@ -213,6 +215,8 @@
   "tools/openspec/package.json",
   "tools/playwright-cli/package-lock.json",
   "tools/playwright-cli/package.json",
+  "tools/semgrep/pyproject.toml",
+  "tools/semgrep/uv.lock",
   "uv.lock"
  ]
 }

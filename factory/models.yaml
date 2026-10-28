@@ -69,6 +69,9 @@ review_models:
   models:
     code_reviewer: claude-sonnet-5-5
     security_reviewer: claude-sonnet-5-5
+  # Przegląd bezpieczeństwa per task (baseline) na tym modelu; pełna analiza zagrożeń (rola security_reviewer)
+  # raz na feature na całym diffie (config.yaml review.security).
+  security_baseline: claude-sonnet-5-5
 
 # Druga opinia o trudności tasków z modelu decyzyjnego Jev (TypeSafe AI). Działa tylko, gdy zmienna
 # TYPESAFE_API_KEY jest ustawiona; bez niej krok jest pomijany. Wysyła rekord taska (ścieżki,

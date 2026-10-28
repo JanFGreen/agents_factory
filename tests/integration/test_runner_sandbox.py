@@ -141,3 +141,44 @@ def test_af33_non_enforcing_sandbox_fails_probe():
 
     with pytest.raises(SandboxUnavailable, match="did not enforce"):
         probe(Pretend())
+
+
+def test_factory_and_base_placeholders_are_filled_and_a_missing_value_is_an_env_error(setup, tmp_path):
+    runner, wt, data, _ = setup
+    runner.factory_root = tmp_path / "factory-root"
+    spec = CheckSpec(name="args", argv=[sys.executable, "-c", "import sys; print(sys.argv[1:])", "{factory}/x", "{base_sha}"], timeout_seconds=30)
+    ok = runner.run_check(spec, wt, job_id="job-000000000001", head_sha=None, tree_sha=None, base_sha="abc123")
+    assert ok.verdict == "PASS" and f"'{tmp_path / 'factory-root'}/x', 'abc123'" in ok.excerpt
+    missing = run(runner, wt, spec)
+    assert missing.verdict == "ERROR_ENV" and "no value for {base_sha}" in missing.reason
+
+
+SEMGREP = Path(__file__).resolve().parents[2] / "tools" / "semgrep" / ".venv" / "bin" / "semgrep"
+
+
+@pytest.mark.skipif(not SEMGREP.exists(), reason="NOT_RUN: pinned semgrep not installed (uv sync --project tools/semgrep)")
+def test_sast_check_reports_only_new_code_offline_in_the_sandbox(setup):
+    from agent_factory.runner import load_checks
+
+    runner, wt, data, _ = setup
+    root = Path(__file__).resolve().parents[2]
+    runner.factory_root = root
+    sast = next(c for c in load_checks(root / "factory" / "checks" / "node.yaml").checks if c.name == "sast")
+    assert sast.network == "none"
+
+    def commit(msg):
+        subprocess.run(["git", "add", "-A"], cwd=wt, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg], cwd=wt, check=True)
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=wt, capture_output=True, text=True, check=True).stdout.strip()
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=wt, check=True)
+    (wt / "old.py").write_text("import os\nos.system(cmd)\n")  # pre-existing: not this change's fault
+    base = commit("base")
+    (wt / "ok.ts").write_text("export const add = (a: number, b: number) => a + b;\n")
+    commit("clean change")
+    clean = runner.run_check(sast, wt, job_id="job-000000000001", head_sha=None, tree_sha=None, base_sha=base)
+    assert clean.verdict == "PASS", clean.excerpt
+    (wt / "view.ts").write_text("el.innerHTML = data;\n")
+    commit("xss")
+    bad = runner.run_check(sast, wt, job_id="job-000000000001", head_sha=None, tree_sha=None, base_sha=base)
+    assert bad.verdict == "FAIL_CODE" and "js-html-sink" in bad.excerpt and "old.py" not in bad.excerpt

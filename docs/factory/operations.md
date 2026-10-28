@@ -308,6 +308,40 @@ UI) pomija drogie product-verify i security-review w tej próbie; uruchomią si�
 Taski jobów o ryzyku z `cheaper_models_for_risk` (domyślnie `low`) mają tańszych recenzentów
 (`cheaper_models`); akceptacja feature'a i integracja zawsze używają pełnych powiązań ról.
 
+## Bezpieczeństwo: narzędzia, triggery, deduplikacja (`review.security`)
+
+Deterministyczne kontrole idą przed recenzją agenta:
+
+- **skan sekretów** w policy gate (`policy.py::scan_secrets`), zawsze włączony, bez zależności.
+  Zablokuje pliki sekretów (`.env`, `*.pem`, `*.key`, `credentials.json`; szablony `.env.example`
+  przechodzą) i literały o kształcie klucza: klucz prywatny, AWS, GitHub, OpenAI/Anthropic, Google,
+  Slack, Stripe live, JWT, a poza testami także `password = "<losowa wartość>"`. Wynik to FAIL_POLICY
+  z plikiem i linią. Wartość nigdy nie trafia do dowodów;
+- **`sast`** (manifest `node.yaml`): przypięty semgrep (`tools/semgrep`, `uv sync --project tools/semgrep`)
+  z lokalnymi regułami `factory/checks/semgrep/security.yml`. Działa offline, bez sieci w sandboxie,
+  `--metrics=off`. Dzięki `--baseline-commit {base_sha}` zgłasza tylko kod dodany przez job.
+  Reguły obejmują eval, wstrzykiwanie poleceń i SQL, ujścia HTML (XSS), słabą losowość i hasze haseł,
+  niezweryfikowany JWT, wyłączone TLS i open redirect. Bez programu repo z `sast` staje w BLOCKED_ENV
+  (`factory doctor` → `sast.present`). Inny manifest dodaje ten sam check;
+- **`npm audit` nie jest checkiem**: gate nie ma sieci, a `package.json` i lockfile są chronione,
+  więc nową zależność i jej audyt robi operator.
+
+Recenzja agenta:
+
+- **per task: baseline** na modelu `review_models.security_baseline` (Sonnet). Kontroler podaje
+  `security_triggers` z faktycznego diffu (`auth`, `secrets`, `endpoint`, `sql`, `outbound-request`,
+  `html-sink`, `process-exec`, `file-upload`, `webhook`, `crypto`, `dependency`, `sensitive-path`)
+  i `known_findings`. Recenzent sprawdza zagrożenia tych triggerów, nie cały model zagrożeń;
+- **raz na feature: pełna analiza** (rola `security_reviewer`, Opus) całego diffu przed akceptacją,
+  gdy był trigger albo ryzyko high (`feature_review: on_trigger`; `always`/`off`). CHANGES otwiera
+  ponownie task, którego `file_scope` obejmuje plik findingu. Guard przejścia do INTEGRATION wymaga
+  aktualnego PASS tej recenzji;
+- **triage w kontrolerze**: finding w pliku spoza diffu nigdy nie blokuje (prefiks `[outside this
+  diff]`), a finding, który inny task już zgłosił (ta sama ścieżka, ≥60% tych samych słów, nie
+  `fixed`), jest pomijany. CHANGES, który miał tylko takie findingi, staje się PASS. Zdarzenie:
+  `security.findings_triaged`;
+- `full_per_task_for_risk: [high]` przywraca pełny przegląd każdego taska dla wysokiego ryzyka.
+
 ## Zasady inżynierskie i kontrole jakości (`_shared/engineering-principles.md`)
 
 Konkretne reguły zamiast haseł SOLID/DRY/KISS: każda ma ID (`EP-1`…`EP-14`) i jest oznaczona
