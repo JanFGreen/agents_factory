@@ -410,10 +410,14 @@ def cmd_cleanup(args) -> int:
 
 def cmd_dashboard(args) -> int:
     from .dashboard import serve
+    from .dashboard.actions import ActionRunner
+    from .evidence import EvidenceStore
 
     cfg, store = _load(args)
-    print(f"dashboard on http://{args.host}:{args.port}")
-    serve(store, args.host, args.port)
+    factory_dir = _factory_dir(args).absolute()
+    runner = None if args.read_only else ActionRunner(cfg.data_dir(), factory_dir, cwd=factory_dir.parent)
+    print(f"dashboard on http://{args.host}:{args.port}" + (" (read-only)" if args.read_only else ""))
+    serve(store, args.host, args.port, evidence=EvidenceStore(store, cfg.data_dir()), runner=runner)
     return EXIT_OK
 
 
@@ -617,6 +621,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("dashboard")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--read-only", action="store_true", help="no actions from the browser")
     s.set_defaults(fn=cmd_dashboard)
     s = sub.add_parser("budget")
     bsub = s.add_subparsers(dest="budget_cmd", required=True)

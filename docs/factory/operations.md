@@ -222,10 +222,40 @@ pilot. Komenda wykonuje prawdziwe, płatne wywołania Claude. Wyniki: `acceptanc
 ## Dashboard
 
 ```sh
-uv run factory dashboard [--host 127.0.0.1] [--port 8765]
+nvm use 24                                   # akcje uruchamiają fabrykę z PATH tego procesu
+uv run factory dashboard [--port 8765] [--read-only]
+# otwórz http://127.0.0.1:8765
 ```
 
-Tylko odczyt, tylko localhost. Lista jobów i strona joba (powód blokady, zadania, findings, zdarzenia).
+Podgląd na żywo (odświeżanie co 3–5 s, bez przeładowania strony):
+
+- **lista jobów** w grupach: „Needs you” (stany zatrzymane), „Running”, „Ready to merge”, „Finished”;
+  przy każdym postęp tasków i budżet;
+- **job**: stan, ścieżka, ryzyko, cel; KPI (wydane / budżet ze znacznikiem kosztorysu, taski, próby,
+  czas); **graf tasków** (kolumny według zależności, kolor stanu, próby, koszt; wybór taska
+  pokazuje werdykty wszystkich recenzji, kryteria, pliki i otwarte findingi); koszt per rola;
+  **zrzuty** z recenzji w przeglądarce; findings (otwarte / blokujące / wszystkie); oś zdarzeń;
+  log uruchomienia w tle.
+
+Akcje (bez `--read-only`), każda to ta sama komenda CLI co w terminalu (`dashboard/actions.py`,
+stała lista argv, bez powłoki), więc guardy kontrolera działają bez zmian:
+
+| Przycisk | Komenda | Tryb |
+|---|---|---|
+| Save answers / Accept all proposals | `factory decide <id> --answer Q-n=… / --accept-proposed` | od razu |
+| Approve plan and build | `factory plan approve <id> --budget X`, potem `resume` | od razu + w tle |
+| Raise budget and resume | `factory budget raise <id> --to X --reason …`, potem `resume` | od razu + w tle |
+| Run / Resume | `factory run --job <id>` / `factory resume <id>` | w tle (`caffeinate -i` na macOS) |
+| Approve merge / Reject | `factory approve|reject <id> --revision <digest>` | w tle |
+| Cancel job | `factory cancel <id>` | od razu |
+
+Uruchomienia w tle: jedno na job naraz; log w `data_dir/dashboard/runs/`. Odmowa kontrolera
+(exit 3) wraca jako komunikat, nie jako sukces.
+
+Bezpieczeństwo: tylko `127.0.0.1`; nagłówek `Host` musi wskazywać localhost (DNS rebinding);
+POST wymaga tokenu wygenerowanego przy starcie serwera (w stronie) i `Origin` tego serwera (CSRF);
+CSP `script-src 'self'`, bez zewnętrznych skryptów; dane wstawiane wyłącznie jako tekst. Z artefaktów
+serwowane są tylko zrzuty ekranu. `/job/<id>` i `/plain` to strony bez JavaScriptu.
 
 ## Backup i restore
 

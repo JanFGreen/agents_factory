@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="factory-token" content="__TOKEN__">
+  <title>Agent Factory</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/">Agent Factory</a>
+    <span id="live" class="live" aria-live="polite">connecting…</span>
+    <a class="plain" href="/plain">plain view</a>
+  </header>
+  <div class="layout">
+    <nav id="jobs" class="jobs" aria-label="Jobs"></nav>
+    <main id="main" class="main" tabindex="-1"><p class="muted">Select a job.</p></main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
