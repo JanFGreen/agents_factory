@@ -63,3 +63,10 @@ def test_openspec_schema_validates():
     proc = subprocess.run([str(binary), "schema", "validate", "factory-autonomous"], cwd=ROOT, capture_output=True, text=True,
                           env={"PATH": "/usr/bin:/bin:" + str(binary.parent) + ":" + shutil.which("node").rsplit("/", 1)[0], "OPENSPEC_TELEMETRY": "0", "HOME": str(ROOT)})
     assert proc.returncode == 0 and "valid" in (proc.stdout + proc.stderr)
+
+
+def test_manifest_lists_every_factory_and_source_file():
+    tracked = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard", "factory", "src"],
+                             cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+    missing = sorted(set(tracked) - set(MANIFEST["files"]) - {"factory/manifests/install-files.json"})
+    assert not missing, f"add to factory/manifests/install-files.json: {missing}"

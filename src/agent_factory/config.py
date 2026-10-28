@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .identities import digest
 
@@ -277,12 +277,50 @@ class Merge(Strict):
     allow_admin_bypass: Literal[False]
 
 
+AgentRuntimeName = Literal["claude", "codex", "opencode"]
+IMPLEMENTED_RUNTIMES = {"claude", "codex", "opencode"}  # each has an adapter in adapters/
+
+
+class AgentRuntimeDef(Strict):
+    """How an agent program is launched (models.yaml `runtimes`)."""
+
+    binary: str  # a command on PATH, or a path relative to the factory checkout (tools/...)
+    min_cli_version: str | None = None
+    # Variables the agent process receives, as {name inside the agent: name in the controller environment}.
+    # Only these pass; the agent can read them, so prefer a key-holding proxy for shared keys.
+    pass_env: dict[str, str] = {}
+
+
+class EndpointDef(Strict):
+    """An OpenAI-compatible model server (Ollama, LM Studio, llama.cpp, vLLM), local or on another machine."""
+
+    base_url: str = Field(pattern=r"^https?://")
+    models: list[str] = Field(min_length=1)
+    max_concurrent: int = Field(default=1, ge=1, le=64)
+    key_env: str | None = None  # variable with the server's API key, when it needs one
+
+
+class FallbackBinding(Strict):
+    """Used when the role's runtime is not installed or none of its endpoints is free and reachable."""
+
+    runtime: AgentRuntimeName
+    model: str
+    effort: Literal["low", "medium", "high", "max"] | None = None
+
+
 class RoleBinding(Strict):
-    runtime: Literal["claude"]  # the fake runtime is injected by tests only, never configurable
+    runtime: AgentRuntimeName  # the fake runtime is injected by tests only, never configurable
     model: str
     effort: Literal["low", "medium", "high", "max"] | None = None
     tools: list[str]
     max_turns: int | None = None
+    endpoints: list[str] = []  # opencode only: a pool of servers that serve `model`; a free one is picked per call
+    fallback: FallbackBinding | None = None
+
+
+class ModelPrice(Strict):
+    input_per_mtok: float = Field(ge=0)
+    output_per_mtok: float = Field(ge=0)
 
 
 class Runtime(Strict):
@@ -290,6 +328,28 @@ class Runtime(Strict):
     min_cli_version: str = "2.1.280"  # the 5.x models are rejected by older CLIs
     sandbox: Literal["required"]
     roles: dict[str, RoleBinding]
+    runtimes: dict[AgentRuntimeName, AgentRuntimeDef] = {}
+    endpoints: dict[str, EndpointDef] = {}
+    prices: dict[str, ModelPrice] = {}  # for runtimes that report tokens but not cost (codex)
+
+    @model_validator(mode="after")
+    def _roles_use_available_runtimes(self) -> "Runtime":
+        for role, binding in self.roles.items():
+            for runtime in (binding.runtime, *([binding.fallback.runtime] if binding.fallback else [])):
+                if runtime not in IMPLEMENTED_RUNTIMES:
+                    raise ValueError(f"role {role!r} uses runtime {runtime!r}, which has no adapter yet "
+                                     f"(implemented: {sorted(IMPLEMENTED_RUNTIMES)}); bind the role to claude in models.yaml")
+                if self.runtimes and runtime not in self.runtimes:
+                    raise ValueError(f"role {role!r} uses runtime {runtime!r}, which models.yaml `runtimes` does not define")
+            if binding.endpoints and binding.runtime != "opencode":
+                raise ValueError(f"role {role!r}: endpoints need runtime opencode (it speaks to OpenAI-compatible servers)")
+            for name in binding.endpoints:
+                endpoint = self.endpoints.get(name)
+                if endpoint is None:
+                    raise ValueError(f"role {role!r} uses endpoint {name!r}, which models.yaml `endpoints` does not define")
+                if binding.model not in endpoint.models:
+                    raise ValueError(f"role {role!r}: endpoint {name!r} does not serve {binding.model!r} (serves {endpoint.models})")
+        return self
 
 
 _REVIEWS = Literal["code-review", "security-review", "product-verify", "test-adequacy", "ui-review"]
@@ -346,6 +406,24 @@ class DecisionModel(Strict):
     timeout_seconds: float = Field(default=10, gt=0, le=60)
 
 
+class BrowserConfig(Strict):
+    """Browser for UI reviewers (Playwright CLI), used when the checks manifest declares a preview."""
+
+    tool: Literal["playwright-cli"] = "playwright-cli"
+    binary: str  # relative to the factory checkout (pinned under tools/)
+    viewports: list[str] = Field(default=["390x844", "1280x800"], min_length=1)
+    idle_timeout_ms: int = Field(default=300_000, ge=10_000)  # a session left open by an agent ends on its own
+
+    @field_validator("viewports")
+    @classmethod
+    def _sizes(cls, sizes: list[str]) -> list[str]:
+        for size in sizes:
+            w, sep, h = size.partition("x")
+            if not sep or not (w.isdigit() and h.isdigit()):
+                raise ValueError(f"viewport must look like 390x844: {size!r}")
+        return sizes
+
+
 class FactoryConfig(Strict):
     schema_version: Literal[1]
     data_dir: str
@@ -357,6 +435,7 @@ class FactoryConfig(Strict):
     runtime: Runtime
     review: ReviewPolicy = ReviewPolicy()
     spec: SpecPolicy = SpecPolicy()
+    browser: BrowserConfig | None = None
     routing: Routing = Routing()
     decision_model: DecisionModel = DecisionModel()
 
@@ -386,9 +465,53 @@ def _validate(model: type[Strict], raw: Any, source: Path) -> Any:
         raise ConfigError(f"{source}: {exc}") from exc
 
 
+class ModelsFile(Strict):
+    """factory/models.yaml: every model choice in one place (who runs which role, routing, reviews)."""
+
+    schema_version: Literal[1]
+    runtimes: dict[str, dict[str, Any]]
+    roles: dict[str, dict[str, Any]]
+    endpoints: dict[str, dict[str, Any]] = {}
+    prices: dict[str, dict[str, Any]] = {}
+    routing: dict[str, Any] = {}
+    review_models: dict[str, Any] = {}
+    decision_model: dict[str, Any] = {}
+
+
+def _merge_models(raw_factory: dict, raw_models: Any, source: Path) -> dict:
+    """Place models.yaml into the config tree; a model setting left in config.yaml is an error."""
+    runtime, review = raw_factory.get("runtime") or {}, raw_factory.get("review") or {}
+    moved = [k for k in ("routing", "decision_model") if k in raw_factory]
+    moved += [f"runtime.{k}" for k in ("roles", "claude_binary", "min_cli_version", "runtimes", "endpoints", "prices") if k in runtime]
+    moved += [f"review.{k}" for k in ("cheaper_models", "cheaper_models_for_risk") if k in review]
+    if moved:
+        raise ConfigError(f"{source.parent / 'config.yaml'}: {', '.join(moved)} belong in models.yaml only")
+    models = _validate(ModelsFile, raw_models, source)
+    if "claude" not in models.runtimes:
+        raise ConfigError(f"{source}: runtimes.claude is required (the default agent runtime)")
+    claude = models.runtimes["claude"]
+    merged = {**raw_factory, "runtime": {**runtime, "claude_binary": claude.get("binary"), "roles": models.roles,
+                                          "runtimes": models.runtimes, "endpoints": models.endpoints, "prices": models.prices,
+                                          **({"min_cli_version": claude["min_cli_version"]} if "min_cli_version" in claude else {})}}
+    if models.routing:
+        merged["routing"] = models.routing
+    if models.decision_model:
+        merged["decision_model"] = models.decision_model
+    if models.review_models:
+        extra = set(models.review_models) - {"for_risk", "models"}
+        if extra:
+            raise ConfigError(f"{source}: review_models accepts for_risk and models, not {sorted(extra)}")
+        merged["review"] = {**review, "cheaper_models_for_risk": models.review_models.get("for_risk", []),
+                            "cheaper_models": models.review_models.get("models", {})}
+    return merged
+
+
 def load_config(factory_dir: Path) -> LoadedConfig:
     factory_dir = factory_dir.resolve()
     raw_factory = load_yaml(factory_dir / "config.yaml")
+    raw_models = load_yaml(factory_dir / "models.yaml") if (factory_dir / "models.yaml").exists() else None
+    if raw_models is not None:
+        raw_factory = _merge_models(raw_factory, raw_models, factory_dir / "models.yaml")
     raw_workflow = load_yaml(factory_dir / "workflow.yaml")
     raw_selection = load_yaml(factory_dir / "selection.yaml")
     factory = _validate(FactoryConfig, raw_factory, factory_dir / "config.yaml")
@@ -401,5 +524,5 @@ def load_config(factory_dir: Path) -> LoadedConfig:
         workflow=workflow,
         selection=selection,
         factory_dir=factory_dir,
-        policy_digest=digest({"factory": raw_factory, "workflow": raw_workflow, "selection": raw_selection}),
+        policy_digest=digest({"factory": raw_factory, "workflow": raw_workflow, "selection": raw_selection, "models": raw_models}),
     )

@@ -75,3 +75,44 @@ def test_fake_runtime_not_configurable(tmp_path):
     d = make_factory_dir(tmp_path, **{"runtime.roles.builder.runtime": "fake"})
     with pytest.raises(ConfigError):
         load_config(d)
+
+
+def test_model_settings_live_in_models_yaml_only(tmp_path):
+    d = make_factory_dir(tmp_path)
+    cfg = load_config(d).factory
+    assert cfg.runtime.roles["builder"].runtime == "claude" and cfg.runtime.claude_binary == "claude"
+    assert cfg.routing.builder_models["hard"] == "claude-opus-5-5" and cfg.review.cheaper_models_for_risk == ["low"]
+    raw = yaml.safe_load((d / "config.yaml").read_text())
+    raw["routing"] = {"builder_models": {}}
+    (d / "config.yaml").write_text(yaml.safe_dump(raw))
+    with pytest.raises(ConfigError, match="belong in models.yaml"):
+        load_config(d)
+
+
+def test_a_role_on_a_runtime_models_yaml_does_not_define_is_refused(tmp_path):
+    d = make_factory_dir(tmp_path, **{"runtime.roles.code_reviewer.runtime": "codex",
+                                      "runtime.roles.code_reviewer.model": "gpt-x"})
+    models = yaml.safe_load((d / "models.yaml").read_text())
+    del models["runtimes"]["codex"]
+    (d / "models.yaml").write_text(yaml.safe_dump(models))
+    with pytest.raises(ConfigError, match="does not define"):
+        load_config(d)
+
+
+def test_runtimes_pass_only_the_named_variables(tmp_path):
+    d = make_factory_dir(tmp_path)
+    runtimes = load_config(d).factory.runtime.runtimes
+    assert set(runtimes) == {"claude", "codex", "opencode"}
+    assert runtimes["opencode"].pass_env["GOOGLE_GENERATIVE_AI_API_KEY"] == "GEMINI_API_KEY"
+
+
+def test_models_yaml_rejects_unknown_sections_and_needs_claude(tmp_path):
+    d = make_factory_dir(tmp_path)
+    models = yaml.safe_load((d / "models.yaml").read_text())
+    (d / "models.yaml").write_text(yaml.safe_dump({**models, "pricing": {}}))
+    with pytest.raises(ConfigError):
+        load_config(d)
+    del models["runtimes"]["claude"]
+    (d / "models.yaml").write_text(yaml.safe_dump(models))
+    with pytest.raises(ConfigError, match="runtimes.claude is required"):
+        load_config(d)

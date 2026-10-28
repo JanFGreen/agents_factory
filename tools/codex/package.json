@@ -1,0 +1,9 @@
+{
+  "name": "agent-factory-codex-tool",
+  "private": true,
+  "description": "Pinned Codex CLI (OpenAI) agent runtime (see factory.lock.json).",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@openai/codex": "0.160.0"
+  }
+}

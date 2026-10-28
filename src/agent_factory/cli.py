@@ -9,6 +9,8 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +18,11 @@ import yaml
 
 from . import analysis, budgets
 from .adapters.claude import ClaudeRuntime
+from .adapters.codex import CodexRuntime
+from .adapters.opencode import OpencodeRuntime
+from .adapters.router import RuntimeRouter
 from .adapters.github import LocalMergeHandler
-from .config import ConfigError, load_config
+from .config import IMPLEMENTED_RUNTIMES, ConfigError, load_config
 from .controller import HALTED, TERMINAL, TransitionRefused
 from .environment import cli_too_old, node_bin_dir
 from .features import normalize
@@ -55,11 +60,30 @@ def _repos(cfg) -> dict[str, dict]:
     return json.loads(path.read_text()) if path.exists() else {}
 
 
+def _binary(cfg, binary: str) -> str:
+    """A runtime binary from models.yaml: a command on PATH, or a path relative to the factory checkout."""
+    return str((cfg.factory_dir.parent / binary).absolute()) if "/" in binary else binary
+
+
+def _make_runtime(cfg, sandbox):
+    """One adapter per runtime defined in models.yaml, behind a router that follows each role's binding."""
+    logs = cfg.data_dir() / "agent-logs"
+    rt = cfg.factory.runtime
+    runtimes = {"claude": ClaudeRuntime(rt.claude_binary, sandbox, logs)}
+    for name, rdef in rt.runtimes.items():
+        if name == "codex":
+            runtimes[name] = CodexRuntime(_binary(cfg, rdef.binary), sandbox, logs, rdef.pass_env,
+                                          {model: price.model_dump() for model, price in rt.prices.items()})
+        elif name == "opencode":
+            runtimes[name] = OpencodeRuntime(_binary(cfg, rdef.binary), sandbox, logs, rdef.pass_env)
+    return RuntimeRouter(runtimes)
+
+
 def _make_factory(cfg, store):
     from .factory import Factory
 
     sandbox = get_sandbox()
-    runtime = ClaudeRuntime(cfg.factory.runtime.claude_binary, sandbox, cfg.data_dir() / "agent-logs")
+    runtime = _make_runtime(cfg, sandbox)
     handler = LocalMergeHandler(cfg.factory.policy) if cfg.factory.policy.mode == "local" else None
     return Factory(cfg, store, runtime, sandbox, merge_handler=handler)
 
@@ -99,6 +123,12 @@ def cmd_doctor(args) -> int:
     report["toolchains"] = toolchains
     lock = Path("factory.lock.json")
     report["lock"] = json.loads(lock.read_text()) if lock.exists() else None
+    if cfg.factory.browser is not None:
+        browser_bin = (cfg.factory_dir.parent / cfg.factory.browser.binary).absolute()
+        report["browser"] = {"tool": cfg.factory.browser.tool, "binary": str(browser_bin), "present": browser_bin.exists(),
+                             "viewports": cfg.factory.browser.viewports,
+                             **({} if browser_bin.exists() else {"effect": "UI review falls back to reading code (local-checkout)",
+                                                                 "fix": "cd tools/playwright-cli && npm ci"})}
     openspec_bin = Path("tools/openspec/node_modules/.bin/openspec")
     report["openspec"] = {"binary": str(openspec_bin), "present": openspec_bin.exists()}
     skills = sorted(p.name for p in (_factory_dir(args) / "skills").iterdir() if p.is_dir() and not p.name.startswith("_"))
@@ -111,6 +141,32 @@ def cmd_doctor(args) -> int:
         "note": "skipped (optional)" if dm.provider == "none" or not os.environ.get(dm.api_key_env) else f"task difficulty second opinion via {dm.url}",
     }
     report["routing"] = {"builder_models": cfg.factory.routing.builder_models, "escalate_on_retry": cfg.factory.routing.escalate_on_retry}
+    roles_by_runtime: dict[str, list[str]] = {}
+    for role, binding in cfg.factory.runtime.roles.items():
+        roles_by_runtime.setdefault(binding.runtime, []).append(role)
+    report["runtimes"] = {}
+    for name, rdef in cfg.factory.runtime.runtimes.items():
+        binary = _binary(cfg, rdef.binary)
+        installed = Path(binary).exists() if "/" in binary else shutil.which(binary) is not None
+        report["runtimes"][name] = {
+            "implemented": name in IMPLEMENTED_RUNTIMES, "binary": binary, "installed": installed,
+            "env": {target: ("set" if os.environ.get(source) else f"{source} not set") for target, source in rdef.pass_env.items()},
+            "roles": roles_by_runtime.get(name, []),
+        }
+        if roles_by_runtime.get(name) and not installed:
+            ok = False
+    report["endpoints"] = {}
+    for name, endpoint in cfg.factory.runtime.endpoints.items():
+        try:
+            with urllib.request.urlopen(endpoint.base_url.rstrip("/") + "/models", timeout=3) as response:
+                served = {m.get("id") for m in json.loads(response.read()).get("data", [])}
+            status = {"reachable": True, "missing_models": sorted(set(endpoint.models) - served)}
+        except (OSError, ValueError) as exc:
+            status = {"reachable": False, "error": str(exc)[:200]}
+        host = urllib.parse.urlparse(endpoint.base_url).hostname or ""
+        if endpoint.base_url.startswith("http://") and host not in ("127.0.0.1", "localhost", "::1"):
+            status["warning"] = "plain http to another machine: code and prompts cross the network unencrypted (use TLS or a VPN such as Tailscale)"
+        report["endpoints"][name] = {"base_url": endpoint.base_url, "max_concurrent": endpoint.max_concurrent, **status}
     report["credentials"] = {
         "claude": "CLI auth (keychain/config); checked by a live call, not by env",
         "github": "gh auth (needed only for mode pr/automerge)" if shutil.which("gh") else "gh not installed",

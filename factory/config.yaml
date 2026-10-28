@@ -75,49 +75,19 @@ spec:
   # auto: przyjmowane są proponowane odpowiedzi. Tryb wybiera się per job przy `factory submit --mode`.
   default_mode: guided
   max_decisions: 7
-routing:
-  # Model buildera wg trudności taska (planer + dolna granica z kontrolera + opcjonalnie Jev).
-  builder_models:
-    easy: claude-sonnet-5-5
-    medium: claude-sonnet-5-5
-    hard: claude-opus-5-5
-  escalate_on_retry: true              # każda kolejna próba taska: model o poziom wyżej
-  trivial_path_model: claude-haiku-5-5 # tylko bardzo małe zmiany (ścieżka trivial), 1. próba; potem jak easy
-decision_model:
-  # Druga opinia o trudności tasków z modelu decyzyjnego Jev (TypeSafe AI). Używany tylko, gdy
-  # zmienna TYPESAFE_API_KEY jest ustawiona; bez niej krok jest pomijany. Wysyła rekord taska
-  # (ścieżki, kryteria akceptacji) do api.typesafe.ai — ustaw provider: none, jeśli to niedozwolone.
-  provider: jev
-  model: jev-latest
-  min_confidence: 0.6
-  timeout_seconds: 10
+browser:
+  # Przeglądarka dla ui-review i product-verify: kontroler serwuje build z `preview` manifestu checków
+  # na 127.0.0.1, a recenzent ogląda go przez Playwright CLI (zrzuty, snapshot dostępności, konsola).
+  tool: playwright-cli
+  binary: tools/playwright-cli/node_modules/.bin/playwright-cli
+  viewports: ["390x844", "1280x800"]
+  idle_timeout_ms: 300000
 review:
   # Recenzje tasków w poziomach: CHANGES w poziomie pomija kolejne (uruchomią się po poprawce).
+  # Tańsze modele recenzentów dla tasków niskiego ryzyka: models.yaml `review_models`.
   tiers:
     - [code-review, test-adequacy, ui-review]
     - [product-verify, security-review]
-  cheaper_models_for_risk: [low]       # taski niskiego ryzyka: tańsi recenzenci (akceptacja i integracja zawsze pełne)
-  cheaper_models:
-    code_reviewer: claude-sonnet-5-5
-    security_reviewer: claude-sonnet-5-5
 runtime:
-  claude_binary: claude
-  min_cli_version: "2.1.280"          # starsze CLI nie obsługują modeli 5.x (API odrzuca żądanie)
   sandbox: required
-  # Modele są wyborem operatora; patrz docs/factory/model-routing.md (wymagają benchmarku ról).
-  roles:
-    default:                { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
-    intake:                 { runtime: claude, model: claude-haiku-5-5, tools: [Read, Glob, Grep] }
-    classifier:             { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
-    planner:                { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
-    decision:               { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
-    spec_author:            { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
-    spec_evaluator:         { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
-    decomposition_reviewer: { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
-    builder:                { runtime: claude, model: claude-sonnet-5-5, effort: high, tools: [Read, Edit, Write, Glob, Grep, Bash] }
-    code_reviewer:          { runtime: claude, model: claude-opus-5-5, effort: medium, tools: [Read, Glob, Grep] }
-    security_reviewer:      { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
-    ui_reviewer:            { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
-    product_evaluator:      { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep, Bash] }
-    test_reviewer:          { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
-    integration_evaluator:  { runtime: claude, model: claude-opus-5-5, effort: medium, tools: [Read, Glob, Grep] }
+  # Modele, role, routing i dostawcy agentów: factory/models.yaml (jedyne miejsce wyboru modeli).

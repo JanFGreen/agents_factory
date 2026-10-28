@@ -1,0 +1,9 @@
+{
+  "name": "agent-factory-opencode-tool",
+  "private": true,
+  "description": "Pinned opencode agent runtime (Gemini, OpenAI, Anthropic API, local models) (see factory.lock.json).",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "opencode-ai": "1.19.0"
+  }
+}

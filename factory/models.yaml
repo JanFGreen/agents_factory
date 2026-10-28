@@ -1,0 +1,80 @@
+# Wybór modeli fabryki — jedyne miejsce, gdzie się je ustawia (config.yaml ich nie zawiera).
+# Zmiana tego pliku zmienia policy_digest: dowody zebrane na starej konfiguracji przestają być aktualne.
+# Opis i zasady: docs/factory/model-routing.md. Przed zmianą modelu roli porównaj ją `factory eval`.
+schema_version: 1
+
+# Jak uruchamiany jest agent (program z narzędziami, nie samo API: role czytają repo i edytują pliki).
+# Każdy działa w sandboxie fabryki. pass_env: {zmienna w agencie: zmienna u operatora} — tylko te
+# zmienne trafiają do agenta (agent może je odczytać; dla współdzielonych kluczy lepsze jest proxy).
+runtimes:
+  claude:
+    binary: claude
+    min_cli_version: "2.1.280"          # starsze CLI nie obsługują modeli 5.x (API odrzuca żądanie)
+  codex:                                # OpenAI; logowanie `codex login` (ChatGPT) albo klucz API
+    binary: tools/codex/node_modules/.bin/codex
+    pass_env: { OPENAI_API_KEY: OPENAI_API_KEY }
+  opencode:                             # Gemini, OpenAI, Anthropic API oraz serwery z `endpoints`
+    binary: tools/opencode/node_modules/.bin/opencode
+    pass_env:
+      GOOGLE_GENERATIVE_AI_API_KEY: GEMINI_API_KEY
+      OPENAI_API_KEY: OPENAI_API_KEY
+
+# Serwery modeli zgodne z API OpenAI (Ollama, LM Studio, llama.cpp, vLLM): na tej maszynie albo na
+# innych (np. kilka Mac mini). Rola z `endpoints` dostaje wolny i osiągalny serwer z puli; gdy żaden
+# nie jest wolny, używa `fallback`. Adres spoza tej maszyny: używaj TLS albo VPN (np. Tailscale).
+endpoints: {}
+#  mini-1: { base_url: "http://10.0.0.11:11434/v1", models: ["qwen3-coder:30b"], max_concurrent: 2 }
+#  mini-2: { base_url: "http://10.0.0.12:11434/v1", models: ["qwen3-coder:30b"], max_concurrent: 2 }
+
+# Ceny modeli, których runtime podaje tokeny, ale nie koszt (codex). Bez ceny koszt wywołania jest
+# liczony jako pełna rezerwacja budżetu.
+prices: {}
+#  gpt-5.5-codex: { input_per_mtok: 1.25, output_per_mtok: 10.0 }
+
+# Model każdej roli. runtime: claude | codex | opencode. Nazwy modeli: claude → claude-sonnet-5-5;
+# codex → nazwa OpenAI; opencode → dostawca/model (google/gemini-…, openai/…) albo sama nazwa modelu
+# z `endpoints`. Przykład roli na lokalnej puli z zapasem w chmurze:
+#   test_reviewer: { runtime: opencode, model: "qwen3-coder:30b", endpoints: [mini-1, mini-2],
+#                    tools: [Read, Glob, Grep], fallback: { runtime: claude, model: claude-sonnet-5-5 } }
+roles:
+  default:                { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
+  intake:                 { runtime: claude, model: claude-haiku-5-5, tools: [Read, Glob, Grep] }
+  classifier:             { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
+  planner:                { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
+  decision:               { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
+  spec_author:            { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
+  spec_evaluator:         { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
+  decomposition_reviewer: { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
+  builder:                { runtime: claude, model: claude-sonnet-5-5, effort: high, tools: [Read, Edit, Write, Glob, Grep, Bash] }
+  code_reviewer:          { runtime: claude, model: claude-opus-5-5, effort: medium, tools: [Read, Glob, Grep] }
+  security_reviewer:      { runtime: claude, model: claude-opus-5-5, effort: high, tools: [Read, Glob, Grep] }
+  ui_reviewer:            { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
+  product_evaluator:      { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep, Bash] }
+  test_reviewer:          { runtime: claude, model: claude-sonnet-5-5, effort: medium, tools: [Read, Glob, Grep] }
+  integration_evaluator:  { runtime: claude, model: claude-opus-5-5, effort: medium, tools: [Read, Glob, Grep] }
+
+# Model buildera wg trudności taska (planer + dolna granica kontrolera + opcjonalnie Jev).
+# Model musi działać w runtime roli builder.
+routing:
+  builder_models:
+    easy: claude-sonnet-5-5
+    medium: claude-sonnet-5-5
+    hard: claude-opus-5-5
+  escalate_on_retry: true               # każda kolejna próba taska: model o poziom wyżej
+  trivial_path_model: claude-haiku-5-5  # tylko bardzo małe zmiany (ścieżka trivial), 1. próba
+
+# Tańsi recenzenci tasków przy niskim ryzyku (akceptacja feature'a i integracja zawsze pełne).
+review_models:
+  for_risk: [low]
+  models:
+    code_reviewer: claude-sonnet-5-5
+    security_reviewer: claude-sonnet-5-5
+
+# Druga opinia o trudności tasków z modelu decyzyjnego Jev (TypeSafe AI). Działa tylko, gdy zmienna
+# TYPESAFE_API_KEY jest ustawiona; bez niej krok jest pomijany. Wysyła rekord taska (ścieżki,
+# kryteria akceptacji) do api.typesafe.ai — ustaw provider: none, jeśli to niedozwolone.
+decision_model:
+  provider: jev
+  model: jev-latest
+  min_confidence: 0.6
+  timeout_seconds: 10

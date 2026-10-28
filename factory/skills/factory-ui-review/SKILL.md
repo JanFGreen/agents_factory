@@ -42,6 +42,29 @@ behavior); you do not re-verify business logic.
    and the evidence ID in `problem`. Severity by user impact: a flow that cannot be
    completed by keyboard or on mobile is blocking.
 
+## Served web build (`environment.kind: "served"`)
+
+The controller serves the gate-built web candidate at `environment.url` and gives you a browser
+CLI (`environment.browser.binary`, Playwright CLI) through Bash. This is the rendering
+environment: judge the running app, not only the diff.
+
+1. `<cli> open <url>`, then `<cli> snapshot`: the accessibility tree with element refs (`e12`).
+   Always run `snapshot` after open, resize or navigation and before a screenshot; it waits for
+   the render (a screenshot taken right after `resize` can be blank).
+2. For each viewport in `environment.browser.viewports` (e.g. `390x844`, `1280x800`):
+   `<cli> resize <w> <h>`, `<cli> snapshot`, `<cli> screenshot --filename <evidence_dir>/<screen>-<w>.png`.
+   Use the file names as `evidence_ids`. Look at the screenshots you take (Read the PNG): overflow,
+   truncation, alignment, spacing, visual hierarchy, contrast.
+3. Drive the touched flows with refs from the snapshot: `<cli> click <ref>`, `<cli> fill <ref> <text>`,
+   `<cli> press Tab` / `Enter` / `Escape` for the keyboard path, `<cli> set-color-scheme dark` for the
+   dark theme. A state the app cannot reach without its backend (no server runs) is
+   `NOT_APPLICABLE` with the reason, or judged from code as in `local-checkout`.
+4. `<cli> console` after the flows: errors in the console are findings (`medium`, blocking when a
+   flow breaks).
+5. Finish with `<cli> close`. Write files only into `evidence_dir`; the repository is read-only.
+
+Render-only checks are real here: they are `PASS` or `FAIL`, not `NOT_RUN`.
+
 ## Environment without a browser (`environment.kind: "local-checkout"`)
 
 The controller states the environment in `<inputs>`. When it is `local-checkout`, no browser,

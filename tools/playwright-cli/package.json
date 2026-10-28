@@ -1,0 +1,9 @@
+{
+  "name": "agent-factory-playwright-cli-tool",
+  "private": true,
+  "description": "Pinned Playwright CLI for UI review of the served web build (see factory.lock.json).",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@playwright/cli": "0.1.22"
+  }
+}

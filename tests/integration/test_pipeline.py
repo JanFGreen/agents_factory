@@ -105,10 +105,10 @@ def test_af57_restart_and_model_switch_do_not_reset_rounds(make_env):
     used_before = env.store.one("SELECT COUNT(*) FROM analysis_rounds WHERE job_id = ?", (job,))[0]
     assert 1 <= used_before < 3
     import yaml
-    cfg_path = env.factory_dir / "config.yaml"
-    cfg = yaml.safe_load(cfg_path.read_text())
-    cfg["runtime"]["roles"]["spec_evaluator"]["model"] = "claude-sonnet-5-5"  # model switch
-    cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    models_path = env.factory_dir / "models.yaml"
+    models = yaml.safe_load(models_path.read_text())
+    models["roles"]["spec_evaluator"]["model"] = "claude-sonnet-5-5"  # model switch
+    models_path.write_text(yaml.safe_dump(models, sort_keys=False))
     env.reload()  # new controller process on the same database
     assert env.factory.run(job) == "ANALYSIS_LIMIT_REACHED"
     assert env.store.one("SELECT COUNT(*) FROM analysis_rounds WHERE job_id = ?", (job,))[0] == 3

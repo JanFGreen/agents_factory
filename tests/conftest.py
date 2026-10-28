@@ -56,20 +56,35 @@ def push_base_change(repo: Path, tmp_path: Path, rel: str, content: str) -> str:
     return sha
 
 
+# Override keys that address model settings, which live in models.yaml (dotted prefix -> models.yaml path).
+_MODEL_KEYS = {"runtime.roles": "roles", "runtime.runtimes": "runtimes", "runtime.endpoints": "endpoints",
+               "runtime.prices": "prices", "routing": "routing", "decision_model": "decision_model",
+               "review.cheaper_models_for_risk": "review_models.for_risk", "review.cheaper_models": "review_models.models"}
+
+
+def _set(tree: dict, dotted: str, value: Any) -> None:
+    *path, last = dotted.split(".")
+    for key in path:
+        tree = tree[key]
+    tree[last] = value
+
+
 def make_factory_dir(tmp_path: Path, **overrides: Any) -> Path:
     target = tmp_path / "factory"
     shutil.copytree(ROOT / "factory", target, ignore=shutil.ignore_patterns("manifests"))
     cfg = yaml.safe_load((target / "config.yaml").read_text())
+    models = yaml.safe_load((target / "models.yaml").read_text())
     cfg["data_dir"] = str(tmp_path / "data")
     cfg["budget"]["plan_approval"] = "off"  # tests that exercise the approval stop turn it back on
-    cfg["decision_model"]["provider"] = "none"  # tests never call an external decision model
+    models["decision_model"]["provider"] = "none"  # tests never call an external decision model
     for dotted, value in overrides.items():
-        node = cfg
-        *path, last = dotted.split(".")
-        for key in path:
-            node = node[key]
-        node[last] = value
+        prefix = next((k for k in _MODEL_KEYS if dotted == k or dotted.startswith(k + ".")), None)
+        if prefix is None:
+            _set(cfg, dotted, value)
+        else:
+            _set(models, _MODEL_KEYS[prefix] + dotted[len(prefix):], value)
     (target / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
+    (target / "models.yaml").write_text(yaml.safe_dump(models, sort_keys=False))
     return target
 
 

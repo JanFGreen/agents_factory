@@ -7,6 +7,9 @@ __pycache__/
 
 # Pinned OpenSpec CLI install (package.json + package-lock.json are committed)
 tools/openspec/node_modules/
+tools/playwright-cli/node_modules/
+tools/codex/node_modules/
+tools/opencode/node_modules/
 .hypothesis/
 .pytest_cache/
 
@@ -54,3 +57,6 @@ GoogleService-Info.plist
 .DS_Store
 .idea/
 *.swp
+
+# Local notes
+TODO.md

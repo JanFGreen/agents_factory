@@ -1,11 +1,54 @@
 # Routing modeli
 
-**Przypisania modeli w `factory/config.yaml` to wybór operatora, nie wynik benchmarku.** Blueprint
+**Przypisania modeli w `factory/models.yaml` to wybór operatora, nie wynik benchmarku.** Blueprint
 (§3 pkt 6, §13.2) wymaga małego benchmarku ról. `factory eval` (`evals.py`) porównuje całą fabrykę z
 pojedynczym agentem, ale nie porównuje modeli per rola; benchmark ról nie został wykonany. Wyniki
 pilota eval są w `acceptance-report.md`. Traktuj poniższe wartości jako punkt startowy.
 
-## Role → model (`runtime.roles`)
+## Plik `factory/models.yaml`
+
+Jedyne miejsce wyboru modeli; `config.yaml` ich nie zawiera (wpis modelu w `config.yaml` →
+`ConfigError`). Kontroler wstawia go w te same pola konfiguracji co wcześniej, więc działanie się nie
+zmienia. Sekcje:
+
+| Sekcja | Co ustawia | Pole w konfiguracji |
+|---|---|---|
+| `runtimes` | jak uruchamiany jest agent: `binary`, `min_cli_version`, `api_key_env` (nazwa zmiennej, nie klucz), `base_url` | `runtime.runtimes`, `runtime.claude_binary` |
+| `roles` | runtime, model, `effort`, narzędzia każdej roli | `runtime.roles` |
+| `routing` | model buildera wg trudności taska, eskalacja, model ścieżki trivial | `routing` |
+| `review_models` | tańsi recenzenci tasków (`for_risk`, `models`) | `review.cheaper_models*` |
+| `decision_model` | opcjonalny Jev | `decision_model` |
+
+**Inni dostawcy (adaptery `adapters/codex.py`, `adapters/opencode.py`).** `runtime` roli:
+`claude | codex | opencode`. Każde wywołanie idzie przez `RuntimeRouter` do adaptera z wiązania
+roli; nazwa runtime jest w uchwycie przebiegu, więc recovery po restarcie trafia do właściwego.
+
+| Runtime | Modele | Wynik | Koszt | Uwagi |
+|---|---|---|---|---|
+| `claude` | Claude (CLI) | `--json-schema`, `structured_output` | z CLI, cap `--max-budget-usd` | domyślny |
+| `codex` | OpenAI (`codex exec --json`, logowanie ChatGPT albo `OPENAI_API_KEY`) | koperta z tekstu (ostatni blok ```json) | tokeny; koszt z `prices`, bez ceny = pełna rezerwacja | własny sandbox Codex nie startuje w sandboxie fabryki, więc działa z `--dangerously-bypass-approvals-and-sandbox` (flaga dla środowisk z zewnętrznym sandboxem); granicą jest sandbox fabryki |
+| `opencode` | `dostawca/model` (Gemini, OpenAI, Anthropic API) albo model z `endpoints` | koperta z tekstu | z opencode (`step_finish.cost`; lokalnie 0) | konfiguracja per wywołanie (`OPENCODE_CONFIG`: instrukcje skilla, uprawnienia `edit`/`bash`, provider endpointu), izolowane `XDG_*`: prywatna konfiguracja i logowania operatora nie są czytane |
+
+Codex i opencode nie mają limitu kosztu po stronie CLI; obowiązuje timeout, wykrywanie zawieszenia i
+budżet joba. Narzędzia nie są ograniczane listą jak w Claude: recenzent tylko do odczytu jest
+wymuszany sandboxem (worktree bez zapisu).
+
+- **`pass_env`** (`runtimes.<nazwa>`): `{zmienna w agencie: zmienna u operatora}`. Tylko te zmienne
+  trafiają do agenta; agent może je odczytać. Dla współdzielonych kluczy lepsze jest proxy.
+- **`endpoints`**: serwery zgodne z API OpenAI (Ollama, LM Studio, llama.cpp, vLLM), lokalne albo w
+  sieci (`base_url`, `models`, `max_concurrent`, opcjonalnie `key_env`). Rola z
+  `endpoints: [a, b]` (tylko `runtime: opencode`, `model` = nazwa z `models`) dostaje losowo wybrany
+  osiągalny (`GET /models`, wynik cache'owany 30 s) i wolny (`slot:endpoint:<nazwa>`) serwer.
+- **`fallback`** (`roles.<rola>.fallback: {runtime, model}`): gdy runtime nie jest zainstalowany albo
+  żaden endpoint nie jest wolny i osiągalny (zdarzenie `runtime.fallback`). Bez `fallback` →
+  `BLOCKED_ENV` z powodem.
+- **`prices`**: `{model: {input_per_mtok, output_per_mtok}}` dla runtime bez raportu kosztu (codex).
+- `routing` i `review_models` podają modele Claude i działają tylko dla ról na `claude`; rola na
+  innym runtime zawsze używa swojego `model`.
+- `factory doctor`: `runtimes` (zainstalowany, zmienne z `pass_env`, role) i `endpoints`
+  (osiągalność, brakujące modele, ostrzeżenie dla `http://` na inną maszynę).
+
+## Role → model (`roles`)
 
 Rola skilla wynika z `factory.py::SKILL_ROLE`; brak wpisu roli → binding `default`.
 
@@ -61,7 +104,7 @@ Fabryka nie trzyma cennika. Koszt pochodzi z dostawcy:
 
 ## Jak zmienić model
 
-1. Zmień `model` (i ewentualnie `effort`) roli w `factory/config.yaml` jako osobną zmianę fabryki.
+1. Zmień `model` (i ewentualnie `effort`) roli w `factory/models.yaml` jako osobną zmianę fabryki.
 2. `uv run factory doctor` (walidacja), `uv run pytest`, a dla nowego modelu live smoke:
    `AGENT_FACTORY_LIVE=1 AGENT_FACTORY_LIVE_MODEL=<model> uv run pytest tests/live`.
 3. Zapisz w commicie, dlaczego zmieniasz (wynik porównania, koszt).
@@ -71,7 +114,7 @@ Skutki dla trwających jobów:
 - Zmiana modelu **nie resetuje liczników**: rundy analizy (`analysis_rounds`), próby zadań i feature'a
   oraz wydany budżet są w SQLite per job (`workflow.yaml: reset_on_model_switch: false`; konfiguracja
   z wartością `true` jest odrzucana).
-- Ponieważ `policy_digest` obejmuje całą treść `config.yaml`, zmiana modelu unieważnia wszystkie
+- Ponieważ `policy_digest` obejmuje całą treść `config.yaml` i `models.yaml`, zmiana modelu unieważnia wszystkie
   wyniki zależne od `policy_digest` w trwających jobach — oceny muszą powstać ponownie (patrz znany
   problem w `state-machine.md`). Sam `model_id` nie jest polem tożsamości wyniku.
 

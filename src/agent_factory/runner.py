@@ -57,6 +57,23 @@ class CheckSpec(BaseModel):
     stage: Literal["task", "acceptance", "integration"] = "task"
 
 
+class PreviewSpec(BaseModel):
+    """Where a gate-built static web candidate lives, for UI review in a browser."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    static_dir: str  # relative to the worktree, written by a check of the same stage (e.g. web-build -> dist)
+    spa_fallback: bool = True  # unknown paths serve index.html (client-side routing)
+
+    @field_validator("static_dir")
+    @classmethod
+    def _relative(cls, path: str) -> str:
+        parts = Path(path).parts
+        if not parts or Path(path).is_absolute() or ".." in parts:
+            raise ValueError(f"preview.static_dir must be a relative path inside the worktree: {path!r}")
+        return path
+
+
 class ChecksManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
@@ -65,6 +82,7 @@ class ChecksManifest(BaseModel):
     # Dependency directories (e.g. node_modules) the operator installed in the repo checkout;
     # linked read-only into each worktree because checks run without network.
     link_from_checkout: list[str] = []
+    preview: PreviewSpec | None = None
 
     @field_validator("link_from_checkout")
     @classmethod

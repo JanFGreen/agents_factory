@@ -3,6 +3,9 @@
 # into each worktree (tools must not write into it, hence vitest's runner config loader); checks never reach the network, so a new dependency needs the operator.
 schema_version: 1
 link_from_checkout: ["node_modules"]
+preview:                                 # build of the web-build check, served for UI review in a browser
+  static_dir: dist
+  spa_fallback: true
 checks:
   - name: unit
     argv: ["{worktree}/node_modules/.bin/vitest", "run", "--configLoader", "runner", "--reporter=default", "--reporter=junit", "--outputFile.junit={report}"]

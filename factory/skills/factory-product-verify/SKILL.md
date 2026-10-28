@@ -34,7 +34,14 @@ request; green leaf tasks never make the parent DONE automatically.
 ## Procedure
 
 1. Confirm the environment runs the candidate under review (version endpoint,
-   build tree hash, or deployed SHA). Mismatch => `UNKNOWN`. When `inputs.environment.kind`
+   build tree hash, or deployed SHA). Mismatch => `UNKNOWN`. When `inputs.environment.kind` is
+   `served`, the controller serves the gate-built web candidate at `environment.url` and gives a
+   browser CLI (`environment.browser.binary`) through Bash: perform the user flows of the
+   acceptance criteria in it (`open`, `snapshot` for element refs, `click`/`fill`/`press`,
+   `snapshot` again to observe the result, `console` for errors, `screenshot --filename
+   <evidence_dir>/<flow>.png` at the key steps) and cite the file names as evidence; finish with
+   `close`. Behaviour that needs the backend server (not running) is verified as in
+   `local-checkout`. When `inputs.environment.kind`
    is `local-checkout` (libraries, CLIs, modules without a service) the working directory
    at `head_sha` is the environment: perform each action by running the code read-only
    (e.g. a python snippet importing it against temp files) and record the command and

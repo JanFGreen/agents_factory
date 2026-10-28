@@ -260,7 +260,7 @@ część joba aplikacyjnego. Wycofanie: `git revert <commit>` w repo fabryki i `
 
 Skutki dla trwających jobów:
 
-- `policy_digest` = digest treści `config.yaml` + `workflow.yaml` + `selection.yaml`. Każda zmiana
+- `policy_digest` = digest treści `config.yaml` + `models.yaml` + `workflow.yaml` + `selection.yaml`. Każda zmiana
   (także modelu roli) czyni nieaktualnymi wszystkie wyniki zależne od `policy_digest` (czyli
   praktycznie wszystkie). Revert przywraca dokładnie poprzedni digest, więc wyniki sprzed zmiany
   znów są aktualne, a wyniki wyprodukowane w czasie wadliwej konfiguracji stają się nieaktualne.
@@ -332,3 +332,25 @@ skilla: agent nie czyta `factory/`, więc inaczej checklisty by do niego nie dot
 - **Review**: code reviewer zgłasza tylko reguły *review* z ID i kosztem; nie powtarza tego, co
   sprawdził gate. Profile Python, Rust i Java (narzędzia dla każdej reguły *gate*) są opisane w
   dokumencie zasad; manifest checków dla nich trzeba dodać przy pierwszym takim repo.
+
+## Przegląd UI w przeglądarce (`browser`, `preview` w manifeście checków)
+
+Gdy manifest checków repo ma `preview` (np. `node.yaml`: `static_dir: dist`, budowane przez check
+`web-build`), a `config.yaml` ma `browser`, ui-review i product-verify (recenzja taska i akceptacja
+feature'a) dostają środowisko `served` zamiast `local-checkout`:
+
+- kontroler serwuje zbudowany katalog worktree na `127.0.0.1:<port z puli>` (`preview.py`; nieznane
+  ścieżki → `index.html` dla SPA, `/x` → `x.html` dla eksportu statycznego); serwer żyje do końca
+  `factory run` dla danego joba;
+- recenzent dostaje Bash i Playwright CLI (`tools/playwright-cli`, wersja w `factory.lock.json`):
+  `open`, `resize`, `snapshot` (drzewo dostępności z refami), `click`/`fill`/`press`, `console`,
+  `screenshot`. Działa w sandboxie fabryki: worktree tylko do odczytu, zapis tylko do katalogu
+  dowodów; `PLAYWRIGHT_MCP_SANDBOX=false`, bo wewnętrzny sandbox Chrome nie startuje w sandboxie
+  fabryki, `ISOLATED=true` (profil w pamięci), `ALLOWED_ORIGINS` = adres podglądu;
+- po wywołaniu kontroler zamyka sesję przeglądarki (`close`), a zrzuty z katalogu dowodów zapisuje
+  jako artefakty (`screenshots` w wyniku recenzji, zdarzenie `browser.screenshots`).
+
+Bez buildu (brak `dist/index.html`) albo bez programu (`factory doctor` → `browser.present: false`)
+recenzja zostaje `local-checkout`. Instalacja: `cd tools/playwright-cli && npm ci`; przeglądarka
+z cache Playwright (`playwright-cli install-browser`, jeśli jej brak). Aplikacja w podglądzie działa
+bez backendu (serwer API nie jest uruchamiany).

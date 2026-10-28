@@ -43,6 +43,8 @@ class AgentRequest:
     max_budget_usd: float | None = None
     sandbox_policy: SandboxPolicy | None = None
     lease_epoch: int | None = None
+    runtime: str = "claude"  # which agent program runs the role (models.yaml `roles.<role>.runtime`)
+    runtime_options: dict[str, Any] = field(default_factory=dict)  # e.g. the endpoint chosen for a local model
 
 
 @dataclass

@@ -17,8 +17,9 @@ import sys
 import shutil
 import threading
 import time
+import urllib.request
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -38,12 +39,13 @@ from .features import NormalizedFeature, classify, load_feature, path_rank, reco
 from .identities import InputIdentity, ResultKind, digest
 from .lanes import ParallelLanes
 from .policy import evaluate_diff, max_risk
+from .preview import PreviewServer
 from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
-from .scheduler import LeaseLost, acquire_lease, acquire_slot, check_fence, heartbeat, ready_tasks, release_allocation, release_lease, validate_dag
+from .scheduler import LeaseLost, NoSlot, acquire_lease, acquire_slot, check_fence, heartbeat, ready_tasks, release_allocation, release_lease, validate_dag
 from .schemas import ContractError, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, envelope_json_schema, parse_envelope
 from .state import Store, new_id, now
-from .workspaces import GENERATED_EXCLUDES, GitError, WorkspaceManager, default_branch, git, release_job_resources
+from .workspaces import GENERATED_EXCLUDES, GitError, WorkspaceManager, allocate_port, default_branch, git, release_job_resources
 
 SKILL_ROLE = {
     "factory-intake": "intake",
@@ -72,6 +74,7 @@ REVIEW_SKILLS = {
     "test-adequacy": "factory-test-adequacy",
 }
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep"]
+BROWSER_REVIEWS = ("ui-review", "product-verify")  # reviews that look at the served web build when there is one
 _FOLLOW = re.compile(r"^Follow \.\./_shared/([\w.-]+\.md)\s*$", re.M)  # shared documents a skill names
 
 
@@ -90,6 +93,7 @@ class AgentResult:
     model_id: str | None
     attempt_id: str
     prompt_digest: str
+    screenshots: list[dict] = field(default_factory=list)  # browser evidence: {"name", "artifact_id"}
 
 
 class Factory(ParallelLanes):
@@ -123,6 +127,9 @@ class Factory(ParallelLanes):
         self.poll_interval = poll_interval
         # Set inside a parallel task lane: agents, checks and identities use the lane's worktree.
         self._lane = threading.local()
+        self._previews: dict[str, PreviewServer] = {}  # served web build per worktree (UI review in a browser)
+        self._previews_lock = threading.Lock()
+        self._endpoint_health: dict[str, tuple[bool, float]] = {}  # endpoint -> (reachable, checked at)
 
     # ------------------------------------------------------------------ submission --
 
@@ -160,6 +167,12 @@ class Factory(ParallelLanes):
     # ------------------------------------------------------------------ main loop --
 
     def run(self, job_id: str, max_steps: int = 200) -> str:
+        try:
+            return self._run_steps(job_id, max_steps)
+        finally:
+            self._stop_previews(job_id)
+
+    def _run_steps(self, job_id: str, max_steps: int) -> str:
         for _ in range(max_steps):
             state = S(self.store.job(job_id)["state"])
             if state in TERMINAL or state in HALTED:
@@ -322,15 +335,29 @@ class Factory(ParallelLanes):
         purpose: str = "analysis",
         extra_note: str = "",
         model: str | None = None,
+        browser: dict | None = None,
     ) -> AgentResult:
         kind = skill.removeprefix("factory-")
         role = SKILL_ROLE[skill]
         binding = self._binding(skill)
-        if model is not None:
+        # `routing` and `review_models` name Claude models: they apply to roles that run on claude only.
+        if model is not None and binding.runtime == "claude":
             binding = binding.model_copy(update={"model": model})
         review = self.cfg.factory.review
-        if purpose == "review" and role in review.cheaper_models and self._job(job_id)["risk"] in review.cheaper_models_for_risk:
+        if (purpose == "review" and binding.runtime == "claude" and role in review.cheaper_models
+                and self._job(job_id)["risk"] in review.cheaper_models_for_risk):
             binding = binding.model_copy(update={"model": review.cheaper_models[role]})
+        try:
+            result = self._call_agent_loop(job_id, skill, kind, role, binding, inputs, task_id=task_id, writable=writable,
+                                           purpose=purpose, extra_note=extra_note, browser=browser)
+        finally:
+            if browser is not None:
+                self._close_browser(browser)
+        if browser is not None:
+            result.screenshots = self._collect_screenshots(job_id, browser, self._agent_producer(result, skill))
+        return result
+
+    def _call_agent_loop(self, job_id, skill, kind, role, binding, inputs, *, task_id, writable, purpose, extra_note, browser):
         repairs_left = self.cfg.factory.attempts.structured_output_repair
         transient_left = 2
         error_note = ""
@@ -339,7 +366,7 @@ class Factory(ParallelLanes):
             try:
                 result_text, snapshot, handle, attempt_id, pdigest = self._run_agent_once(
                     job_id, skill, role, binding, inputs, task_id=task_id, writable=writable,
-                    note=extra_note + error_note, max_budget=self.cfg.factory.budget.max_cost_per_agent_call,
+                    note=extra_note + error_note, max_budget=self.cfg.factory.budget.max_cost_per_agent_call, browser=browser,
                 )
             except BaseException:
                 budgets.release(self.store, reservation)
@@ -365,7 +392,7 @@ class Factory(ParallelLanes):
                 raise StageBlocked(S.NEEDS_HUMAN, f"{skill} returned invalid structured output twice: {exc}") from exc
             return AgentResult(env, payload, handle.run_id, snapshot.model_id or binding.model, attempt_id, pdigest)
 
-    def _run_agent_once(self, job_id, skill, role, binding, inputs, *, task_id, writable, note, max_budget):
+    def _run_agent_once(self, job_id, skill, role, binding, inputs, *, task_id, writable, note, max_budget, browser=None):
         job = self._job(job_id)
         lane = getattr(self._lane, "worktree", None)
         worktree = lane or (Path(job["worktree"]) if job["worktree"] else Path(job["repo_path"]))
@@ -399,13 +426,24 @@ class Factory(ParallelLanes):
         attempt_id = new_id("att")
         own = lane or (Path(job["worktree"]) if job["worktree"] else None)
         denied = tuple(default_denied_reads(self.data_dir, own))
-        policy = SandboxPolicy(writable=(worktree,) if writable else (), denied_read=denied, env=self._toolchain_env(job_id))
+        granted = ((worktree,) if writable else ()) + ((Path(browser["evidence_dir"]),) if browser else ())
+        policy = SandboxPolicy(writable=granted, denied_read=denied, env={**self._toolchain_env(job_id), **(browser or {}).get("env", {})})
+        tools = binding.tools if writable else [t for t in binding.tools if t in READ_ONLY_TOOLS + ["Bash"]]
+        if browser and "Bash" not in tools:
+            tools = [*tools, "Bash"]  # the browser CLI is driven through the shell
+        try:
+            binding, runtime_options, endpoint_slot = self._resolve_runtime(job_id, role, binding)
+        except BaseException:
+            release_allocation(self.store, slot)
+            release_lease(self.store, lease)
+            raise
         request = AgentRequest(
             job_id=job_id, attempt_id=attempt_id, role=role, skill=skill, prompt=prompt, system_append=system_append,
-            cwd=worktree, model=binding.model, tools=binding.tools if writable else [t for t in binding.tools if t in READ_ONLY_TOOLS + ["Bash"]],
+            cwd=worktree, model=binding.model, tools=tools,
             timeout_seconds=self.cfg.factory.execution.reviewer_timeout_seconds, session_id=str(uuid.uuid4()),
             effort=binding.effort, max_turns=binding.max_turns, json_schema=envelope_json_schema(skill.removeprefix("factory-")),
             max_budget_usd=max_budget, sandbox_policy=policy, lease_epoch=lease.epoch,
+            runtime=binding.runtime, runtime_options=runtime_options,
         )
         with self.store.tx() as conn:
             conn.execute(
@@ -425,8 +463,75 @@ class Factory(ParallelLanes):
             raise StageBlocked(S.NEEDS_HUMAN, f"lease lost during {skill}: {exc}") from exc
         finally:
             release_allocation(self.store, slot)
+            if endpoint_slot is not None:
+                release_allocation(self.store, endpoint_slot)
             release_lease(self.store, lease)
         return snapshot.output_text, snapshot, handle, attempt_id, pdigest
+
+    # --- runtimes and model endpoints (models.yaml) ------------------------------------
+
+    def _runtime_binary(self, binary: str) -> str | None:
+        """A configured binary: a command on PATH, or a path relative to the factory checkout."""
+        if "/" in binary:
+            path = (self.cfg.factory_dir.parent / binary).absolute()
+            return str(path) if path.exists() else None
+        return shutil.which(binary)
+
+    def _runtime_problem(self, runtime: str) -> str | None:
+        if runtime == "claude":
+            return None  # checked by the CLI preflight
+        rdef = self.cfg.factory.runtime.runtimes.get(runtime)
+        if rdef is None:
+            return f"runtime {runtime} is not defined in models.yaml"
+        return None if self._runtime_binary(rdef.binary) else f"runtime {runtime}: {rdef.binary} is not installed"
+
+    def _endpoint_up(self, name: str) -> bool:
+        """Reachability of an endpoint's /models, cached for 30 s (a down server is skipped, not waited on)."""
+        cache = self._endpoint_health
+        hit = cache.get(name)
+        if hit and time.time() - hit[1] < 30:
+            return hit[0]
+        endpoint = self.cfg.factory.runtime.endpoints[name]
+        try:
+            with urllib.request.urlopen(endpoint.base_url.rstrip("/") + "/models", timeout=2):
+                up = True
+        except (OSError, ValueError):
+            up = False
+        cache[name] = (up, time.time())
+        return up
+
+    def _resolve_runtime(self, job_id: str, role: str, binding: RoleBinding) -> tuple[RoleBinding, dict, str | None]:
+        """The binding that will run this call, its runtime options and the endpoint slot it holds.
+
+        A role on a pool of endpoints gets a free, reachable one; otherwise (or when its runtime is
+        not installed) its fallback; without a fallback the job stops with the reason.
+        """
+        problem = self._runtime_problem(binding.runtime)
+        if problem is None and not binding.endpoints:
+            return binding, {}, None
+        if problem is None:
+            names = list(binding.endpoints)
+            random.shuffle(names)  # spread calls over the pool
+            for name in names:
+                endpoint = self.cfg.factory.runtime.endpoints[name]
+                if not self._endpoint_up(name):
+                    continue
+                try:
+                    slot = acquire_slot(self.store, f"endpoint:{name}", endpoint.max_concurrent, job_id, self.owner_id)
+                except NoSlot:
+                    continue
+                return binding, {"endpoint": {"name": name, "base_url": endpoint.base_url, "key_env": endpoint.key_env}}, slot
+            problem = f"no free reachable endpoint among {binding.endpoints}"
+        fallback = binding.fallback
+        if fallback is None or self._runtime_problem(fallback.runtime):
+            raise StageBlocked(S.BLOCKED_ENV, f"role {role}: {problem}" + ("" if fallback is None else
+                               f"; fallback: {self._runtime_problem(fallback.runtime)}"))
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "runtime.fallback", {"role": role, "reason": problem,
+                                                                 "runtime": fallback.runtime, "model": fallback.model})
+        used = binding.model_copy(update={"runtime": fallback.runtime, "model": fallback.model, "endpoints": [],
+                                          "effort": fallback.effort or binding.effort, "fallback": None})
+        return used, {}, None
 
     def _adopt_running(self, job_id: str, task_id: str | None, role: str):
         """After a controller restart, wait for a still-living agent instead of starting a second one."""
@@ -1291,15 +1396,16 @@ class Factory(ParallelLanes):
                 verdicts[review] = "PASS"
                 continue
             skill = REVIEW_SKILLS[review]
+            browser = self._browser_session(job_id) if review in BROWSER_REVIEWS else None
             res = self.call_agent(job_id, skill, {
                 "task": task, "spec": ctx.get("spec"), "diff": diff_text[:60000], "head_sha": frozen_head,
                 "gate_evidence": gate.payload if gate else None, "risk": self._job(job_id)["risk"],
                 "security_depth": security_depth, "surfaces": surfaces,
-                "spec_advisories": ctx.get("spec_advisories", []), **self._verification_context(job_id, "task"),
-            }, task_id=task_id, purpose="review")
+                "spec_advisories": ctx.get("spec_advisories", []), **self._verification_context(job_id, "task", browser),
+            }, task_id=task_id, purpose="review", browser=browser)
             if WorkspaceManager.head(wt) != frozen_head or git(wt, "status", "--porcelain", "--", ".", *GENERATED_EXCLUDES):
                 raise StageBlocked(S.NEEDS_HUMAN, "worktree changed while reviewers were running (reviewers are read-only)")
-            payload = {"envelope": res.envelope.model_dump()}
+            payload = {"envelope": res.envelope.model_dump(), **({"screenshots": res.screenshots} if res.screenshots else {})}
             self._record(job_id, kind, res.envelope.verdict, payload, ident=ident,
                          producer=self._agent_producer(res, skill), task_id=task_id, findings=self._findings(res.envelope))
             verdicts[review] = res.envelope.verdict
@@ -1341,21 +1447,99 @@ class Factory(ParallelLanes):
 
     # ------------------------------------------------------------------ feature acceptance & integration --
 
-    def _verification_context(self, job_id: str, stage: str) -> dict[str, Any]:
+    def _verification_context(self, job_id: str, stage: str, browser: dict | None = None) -> dict[str, Any]:
         """What evaluators need to tie evidence to the candidate, stated explicitly instead of left for them to guess."""
         ctx = self._ctx(job_id)
         wt = self._active_worktree(job_id)
+        environment: dict[str, Any] = {
+            "kind": "local-checkout",
+            "how": "the candidate is the working directory at head_sha; verify by reading it and by running it read-only "
+                   "(e.g. a python snippet that imports the code against temp files). No deployed service, URL, "
+                   "accounts or credentials exist for this job; their absence is not a reason for BLOCKED.",
+        }
+        if browser is not None:
+            cli = browser["binary"]
+            environment = {
+                "kind": "served", "url": browser["url"],
+                "browser": {"tool": "playwright-cli", "binary": cli, "evidence_dir": browser["evidence_dir"], "viewports": browser["viewports"]},
+                "how": f"The web build of this candidate (output of the trusted gate) is served at {browser['url']}. Drive it "
+                       f"through Bash with the browser CLI: `{cli} open {browser['url']}`, `{cli} resize 390 844`, `{cli} snapshot` "
+                       f"(accessibility tree with element refs), `{cli} click <ref>`, `{cli} fill <ref> <text>`, `{cli} press Tab`, "
+                       f"`{cli} console`, `{cli} screenshot --filename {browser['evidence_dir']}/<name>.png`, `{cli} close`. "
+                       "Run `snapshot` after open, resize or navigation and before a screenshot (it waits for the render). Save "
+                       "files only in evidence_dir and cite their names in findings; the controller keeps them as evidence. The "
+                       "repository is read-only; the app runs without its backend server, accounts or credentials.",
+            }
         return {
             "acceptance_criteria": (ctx.get("spec") or {}).get("acceptance_criteria", []),
             "required_checks": [c.name for c in self._checks(job_id).for_stage(stage) if c.required],
             "candidate_tree_sha": WorkspaceManager.tree(wt),
-            "environment": {
-                "kind": "local-checkout",
-                "how": "the candidate is the working directory at head_sha; verify by reading it and by running it read-only "
-                       "(e.g. a python snippet that imports the code against temp files). No deployed service, URL, "
-                       "accounts or credentials exist for this job; their absence is not a reason for BLOCKED.",
-            },
+            "environment": environment,
         }
+
+    # --- browser review of the served web build ----------------------------------------
+
+    def _browser_session(self, job_id: str) -> dict | None:
+        """A served preview of the gate-built web candidate plus browser settings, or None (no web build or no browser)."""
+        cfg = self.cfg.factory.browser
+        preview = self._checks(job_id).preview
+        if cfg is None or preview is None:
+            return None
+        binary = (self.cfg.factory_dir.parent / cfg.binary).absolute()
+        wt = self._active_worktree(job_id)
+        root = wt / preview.static_dir
+        if not binary.exists() or not (root / "index.html").exists():
+            return None
+        url = self._preview_url(job_id, root, preview.spa_fallback)
+        evidence = self.data_dir / "browser" / job_id / uuid.uuid4().hex[:12]
+        evidence.mkdir(parents=True)
+        env = {
+            "PLAYWRIGHT_MCP_SANDBOX": "false",  # the factory sandbox confines the browser; Chrome's own cannot start inside it
+            "PLAYWRIGHT_MCP_ISOLATED": "true",  # profile in memory, nothing left on disk
+            "PLAYWRIGHT_MCP_OUTPUT_DIR": str(evidence),  # snapshots go here, not into the read-only worktree
+            "PLAYWRIGHT_MCP_ALLOWED_ORIGINS": url.rstrip("/"),
+            "PLAYWRIGHT_MCP_IDLE_TIMEOUT": str(cfg.idle_timeout_ms),
+        }
+        return {"url": url, "binary": str(binary), "evidence_dir": str(evidence), "viewports": cfg.viewports,
+                "env": env, "cwd": str(wt), "job_id": job_id}
+
+    def _preview_url(self, job_id: str, root: Path, spa_fallback: bool) -> str:
+        key = str(root.resolve())
+        with self._previews_lock:
+            server = self._previews.get(key)
+            if server is None:
+                server = PreviewServer(root, allocate_port(self.store, job_id), spa_fallback)
+                self._previews[key] = server
+                with self.store.tx() as conn:
+                    self.store.event(conn, job_id, "preview.started", {"url": server.url, "root": key})
+            return server.url
+
+    def _stop_previews(self, job_id: str) -> None:
+        job = self._job(job_id)
+        prefixes = [str(Path(p).resolve()) for p in (job["worktree"], self._lane_path(job_id, "")) if p]
+        with self._previews_lock:
+            for key in [k for k in self._previews if any(k.startswith(p) for p in prefixes)]:
+                self._previews.pop(key).stop()
+
+    def _close_browser(self, browser: dict) -> None:
+        """Close the session the agent may have left open (each worktree has its own browser sessions)."""
+        env = {**os.environ, **self._toolchain_env(browser["job_id"]), **browser["env"]}
+        try:
+            subprocess.run([browser["binary"], "close"], cwd=browser["cwd"], env=env, capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass  # the idle timeout ends it
+
+    def _collect_screenshots(self, job_id: str, browser: dict, producer: Producer) -> list[dict]:
+        evidence = Path(browser["evidence_dir"])
+        shots = []
+        for path in sorted(evidence.glob("*")):
+            if path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") and path.stat().st_size <= 5_000_000 and len(shots) < 30:
+                shots.append({"name": path.name, "artifact_id": self.evidence.put(path.read_bytes(), "screenshot", producer, job_id)})
+        shutil.rmtree(evidence, ignore_errors=True)
+        if shots:
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "browser.screenshots", {"count": len(shots), "names": [s["name"] for s in shots]})
+        return shots
 
     def _inconclusive(self, job_id: str, stage: str, verdict: str, summary: str) -> bool:
         """BLOCKED/UNKNOWN from an evaluator is missing input, not a code defect: retry once, then stop for a human.
@@ -1377,16 +1561,17 @@ class Factory(ParallelLanes):
         gate = self._gate(job_id, "acceptance", wt, head_sha=head, tree_sha=WorkspaceManager.tree(wt))
         if gate.verdict is GateVerdict.ERROR_ENV:
             raise StageBlocked(S.BLOCKED_ENV, gate.reason)
+        browser = self._browser_session(job_id)
         res = self.call_agent(job_id, "factory-product-verify", {
             "mode": "feature-acceptance", "original_request": self._feature(job_id)["original_request"],
             "feature": self._feature(job_id), "spec": ctx.get("spec"), "acceptance_gate": gate.as_payload(),
             "head_sha": head, "tasks": [dict(r) for r in self.store.all("SELECT task_id, state FROM tasks WHERE job_id = ?", (job_id,))],
-            **self._verification_context(job_id, "acceptance"), "controller_note": ctx.get("acceptance_note"),
-        }, purpose="acceptance")
+            **self._verification_context(job_id, "acceptance", browser), "controller_note": ctx.get("acceptance_note"),
+        }, purpose="acceptance", browser=browser)
         verdict = res.envelope.verdict if gate.verdict is GateVerdict.PASS else "CHANGES"
         if verdict in ("BLOCKED", "UNKNOWN") and self._inconclusive(job_id, "acceptance", verdict, res.envelope.summary):
             return
-        payload = {"gate": gate.as_payload(), "envelope": res.envelope.model_dump()}
+        payload = {"gate": gate.as_payload(), "envelope": res.envelope.model_dump(), **({"screenshots": res.screenshots} if res.screenshots else {})}
         self._record(job_id, ResultKind.FEATURE_ACCEPTANCE, verdict, payload, producer=self._agent_producer(res, "factory-product-verify"),
                      findings=self._findings(res.envelope))
         if verdict == "PASS":

@@ -14,7 +14,7 @@ merge przez bramki oparte na podpisanych dowodach. Szczegóły: `docs/factory/`.
 | `src/agent_factory/{scheduler,budgets,analysis,outbox,recovery,workspaces}.py` | DAG/lease, budżet, licznik rund, outbox, recovery, worktree |
 | `src/agent_factory/adapters/` | `claude.py` (realny runtime), `github.py`, `fake.py` (tylko testy) |
 | `src/agent_factory/cli.py`, `dashboard/`, `evals.py` | komenda `factory`, dashboard tylko do odczytu, eval fabryki |
-| `factory/` | konfiguracja operatora: `config.yaml`, `workflow.yaml`, `selection.yaml`, `checks/`, `skills/`, `prompts/` |
+| `factory/` | konfiguracja operatora: `config.yaml`, `models.yaml` (wybór modeli), `workflow.yaml`, `selection.yaml`, `checks/`, `skills/`, `prompts/` |
 | `openspec/` | schemat `factory-autonomous`; CLI przypięte w `tools/openspec` (`factory.lock.json`) |
 | `tests/` | `unit/`, `integration/`, `fault_injection/`, `live/` (tylko z `AGENT_FACTORY_LIVE=1`), `evals/dev.yaml` (suite eval z golden testami) |
 | `docs/factory/` | architektura, maszyna stanów, threat model, operacje, kontrakty |
