@@ -1675,14 +1675,19 @@ class Factory(ParallelLanes):
                 verdict = "CHANGES"
         if problem is not None:
             verdict = "UNKNOWN"
-        if verdict in ("BLOCKED", "UNKNOWN") and self._inconclusive(job_id, "ui_feature", verdict, problem or res.envelope.summary):
-            return False
+        if verdict in ("BLOCKED", "UNKNOWN"):
+            kept = self.evidence.put_json(res.envelope.model_dump(), "inconclusive-review",  # for the operator, though not a verdict
+                                          self._agent_producer(res, "factory-ui-review"), job_id)
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "ui_feature.inconclusive", {"problem": problem, "artifact_id": kept})
+            if self._inconclusive(job_id, "ui_feature", verdict, problem or res.envelope.summary):
+                return False
         self._record(job_id, ResultKind.UI_REVIEW, verdict, {"scope": "feature", "envelope": res.envelope.model_dump(),
                                                              **({"screenshots": res.screenshots} if res.screenshots else {})},
                      producer=self._agent_producer(res, "factory-ui-review"), findings=findings)
         if verdict == "PASS":
             return True
-        owner = self._owner_task(job_id, findings, res.envelope.payload.get("owner_task_id"))
+        owner = self._owner_task(job_id, findings, res.envelope.payload.get("owner_task_id"), ui=True)
         with self.store.tx() as conn:
             conn.execute("UPDATE tasks SET state = 'REWORK' WHERE job_id = ? AND task_id = ?", (job_id, owner))
         self._set_ctx(job_id, current_task=owner, last_failure={owner: {"verdict": "FEATURE_UI", "reason": res.envelope.summary,
@@ -1735,9 +1740,15 @@ class Factory(ParallelLanes):
                                                f"{st.indicator_contrast:.2f}:1 (minimum {design.min_indicator_contrast}:1)", st.evidence_ids)
         return None, findings
 
-    def _owner_task(self, job_id: str, findings: list[dict], proposed: str | None) -> str:
-        """The task whose file scope holds the first blocking finding; else the reviewer's pick; else the last task."""
+    def _owner_task(self, job_id: str, findings: list[dict], proposed: str | None, ui: bool = False) -> str:
+        """The task whose file scope holds the first blocking finding; else the reviewer's pick; else the last task.
+
+        ``ui``: findings of the feature walkthrough without a location go to the last task with user-visible files
+        (live finding: a 253px board shift was routed to the database migration task).
+        """
         tasks = self.store.all("SELECT task_id, spec_json FROM tasks WHERE job_id = ? ORDER BY order_idx", (job_id,))
+        if ui:
+            tasks = [t for t in tasks if any(is_ui_path(f) for f in json.loads(t["spec_json"]).get("file_scope") or [])] or tasks
         for finding in (f for f in findings if f["blocking"]):
             path = (finding.get("location") or {}).get("path")
             for t in tasks:
@@ -1907,10 +1918,12 @@ class Factory(ParallelLanes):
         low: list[Any] = []
         if browser is not None:
             shots = {s["name"] for s in res.screenshots}
-            widths = {int(v.partition("x")[0]) for v in browser["viewports"]}
-            covered = {v.width for v in payload.viewports if v.evidence_ids and set(v.evidence_ids) <= shots}
-            if missing := sorted(widths - covered):
-                problems.append(f"no saved screenshot cited for viewport width(s) {missing} (saved: {sorted(shots) or 'none'})")
+            # A screen class (phone, tablet, desktop) needs a cited screenshot, not one exact width: the feature
+            # walkthrough measures at 360 px while the configured phone viewport is 390 px.
+            needed = {self._screen_class(int(v.partition("x")[0])) for v in browser["viewports"]}
+            covered = {self._screen_class(v.width) for v in payload.viewports if v.evidence_ids and set(v.evidence_ids) <= shots}
+            if missing := sorted(needed - covered):
+                problems.append(f"no saved screenshot cited in viewports for: {missing} (saved: {sorted(shots) or 'none'})")
             cited = {e for v in payload.viewports for e in v.evidence_ids} | {e for v in payload.visual for e in v.evidence_ids}
             if unknown := sorted(cited - shots):
                 problems.append(f"evidence_ids that are not saved screenshots: {unknown}")
@@ -1938,6 +1951,10 @@ class Factory(ParallelLanes):
             "status": "open",
         } for v in low]
         return ("CHANGES" if low else verdict), findings, None
+
+    @staticmethod
+    def _screen_class(width: int) -> str:
+        return "phone" if width < 600 else "tablet" if width < 1024 else "desktop"
 
     def _set_review_note(self, job_id: str, task_id: str, review: str, note: str | None) -> None:
         notes = self._ctx(job_id).get("review_notes", {})

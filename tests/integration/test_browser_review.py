@@ -213,8 +213,8 @@ def test_a_ui_review_without_saved_screenshots_is_rerun_with_a_controller_note(m
     job = env.submit()
     assert env.factory.run(job) == "READY_TO_MERGE"
     results = _ui_results(env, job)
-    assert results[0][0] == "UNKNOWN" and "no saved screenshot cited for viewport width(s) [390]" in results[0][1]["controller"]["problem"]
-    assert "controller_note" not in ui.inputs[0] and "[390]" in ui.inputs[1]["controller_note"]
+    assert results[0][0] == "UNKNOWN" and "no saved screenshot cited in viewports for: ['phone']" in results[0][1]["controller"]["problem"]
+    assert "controller_note" not in ui.inputs[0] and "['phone']" in ui.inputs[1]["controller_note"]
     assert results[-1][0] == "PASS"
 
 
@@ -342,3 +342,35 @@ def test_only_tasks_with_user_visible_files_get_a_ui_review(make_env, tmp_path, 
     assert env.factory.run(job) == "READY_TO_MERGE"
     reviewed = [c for c in env.runtime.calls if c.skill == "factory-ui-review" and "task=None" not in c.prompt]
     assert reviewed and all("task=TASK-01" in c.prompt for c in reviewed)
+
+
+def test_walkthrough_findings_go_to_the_last_task_with_user_visible_files(make_env, tmp_path, repo):
+    """Live finding (tic-tac-toe F3): a board shift was routed to the last task, a database migration."""
+    from ..conftest import FAREWELL, FAREWELL_TEST, GREET_BANG, GREET_TEST, plan_reply
+
+    def implement(request):
+        if "task=TASK-02" in request.prompt:
+            edits = {"app/farewell.py": FAREWELL, "tests/test_farewell.py": FAREWELL_TEST}
+        else:
+            edits = {"app/greet.py": GREET_BANG, "tests/test_greet_bang.py": GREET_TEST, "app/page.html": "<p>hi</p>\n"}
+        return FakeReply(envelope("implement", payload={"changed_files": list(edits)}), edits=edits)
+
+    plan = plan_reply([
+        {"task_id": "TASK-01", "requirement_ids": ["REQ-1"], "file_scope": ["app/greet.py", "app/page.html", "tests"],
+         "acceptance": "greeting page", "estimated_minutes": 20},
+        {"task_id": "TASK-02", "requirement_ids": ["REQ-2"], "depends_on": ["TASK-01"], "file_scope": ["app/farewell.py", "tests"],
+         "acceptance": "farewell", "estimated_minutes": 20}])
+    ui = UiReviewer([(True, ui_payload())], [(True, walkthrough(shift=253)), (True, walkthrough())])
+    (repo / ".gitignore").write_text("dist/\n")
+    git_commit_all(repo, "ignore build output")
+    env = make_env("standard", responders={"factory-implement": implement, "factory-plan": plan, "factory-ui-review": ui},
+                   **{"execution.max_builders_per_job": 1, "browser": {"binary": str(_fake_cli(tmp_path)[0]), "viewports": ["390x844"]}})
+    (env.factory_dir / "checks" / "default.yaml").write_text(yaml.safe_dump({
+        "schema_version": 1, "checks": [UNIT_CHECK, BUILD], "preview": {"static_dir": "dist"}}))
+    env.reload()
+    job = env.submit("Add a greeting page and a farewell")
+    assert env.factory.run(job) == "READY_TO_MERGE", env.store.job(job)["blocked_reason"]
+    rework = [json.loads(e["payload_json"]) for e in env.events(job) if e["to_state"] == "BUILD_TASK"]
+    assert any("feature walkthrough" in r.get("reason", "") for r in rework)
+    builds = [c for c in env.runtime.calls if c.skill == "factory-implement"]
+    assert sum("task=TASK-01" in c.prompt for c in builds) == 2 and sum("task=TASK-02" in c.prompt for c in builds) == 1
