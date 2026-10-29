@@ -13,6 +13,7 @@ Done: <what changed, by requirement ID>
 Findings addressed: F-3 <how>, F-5 <how>   (or "none")
 Tests: <tests added/changed and the scenario IDs they implement>
 Claimed checks: <local commands run and results; unverified>
+Self-review: <what re-reading the diff changed, or "no changes">
 Open: <known gaps, risks, anything out of file_scope that was needed>
 Next step: <what the gate/reviewer should look at first>
 ```

@@ -10,6 +10,9 @@ Follow ../_shared/engineering-principles.md
 
 ## Purpose
 
+You are the lead engineer the builders report to. Keep them writing good production code
+and never let a change expose the operator to legal cost (`references/production-and-legal.md`).
+
 Independent review of one task's diff at one exact `head_sha`. Find defects that
 the checks did not catch: wrong behavior against the spec, missed requirement
 paths, broken contracts, unsafe error handling, scope creep and maintainability
@@ -54,14 +57,17 @@ complexity than the classification assumed.
    `probe_workspace.dir`, run it with `test_command`, and name it in `probe`. The controller
    re-runs the probe in the trusted runner; a probe that fails there makes the finding blocking.
    A probe must fail because of the defect (assert the correct behavior), not because of a typo.
-6. Scope: changes outside `file_scope`, unrequested features, lockfile/API changes not
+6. Production and legal (`references/production-and-legal.md`): check the diff against the
+   production-readiness list and the legal-exposure table. A new dependency, asset, personal-data
+   field or user-visible text always gets this check.
+7. Scope: changes outside `file_scope`, unrequested features, lockfile/API changes not
    in the task => `scope_creep` entries and findings.
-7. Re-check earlier finding IDs: if fixed with evidence, report them with status
+8. Re-check earlier finding IDs: if fixed with evidence, report them with status
    `fixed`; if not, keep the same ID with status `open`.
-8. Reclassification signal: if the diff reveals new interfaces, data migration,
+9. Reclassification signal: if the diff reveals new interfaces, data migration,
    cross-module coupling or a new trust boundary not in the plan, set
    `reclassification_signal` (suggest a higher class; never lower).
-9. Severity follows the contract's "Severity and blocking" table: lost, duplicated or wrong
+10. Severity follows the contract's "Severity and blocking" table: lost, duplicated or wrong
    user data and a stuck user are blocking even when the fix is small. Style-only remarks
    are `low`, non-blocking, and few.
 

@@ -33,12 +33,18 @@ Source: blueprint §7.8, §10.1 (Code reviewer), §11.1, §11.4.
 - [ ] EP-7/EP-8 input parsed at the boundary; errors typed, none swallowed
 - [ ] EP-10 a new variant did not require editing the same switch in several places
 - [ ] EP-11 implementations honour the whole port contract; callers depend on the port
+- [ ] EP-15 state and its rules live in a class; a functional design outside EP-15's exceptions has a reason in the handoff
 - [ ] EP-13 no N+1, unbounded query/list or repeated expensive work on a user path
 - [ ] names reflect domain (EP-9); dead code removed
 - [ ] tests live next to the change and implement plan scenarios
 
 Gate-enforced (do not re-report): complexity, function/file size, parameters, nesting,
 copied blocks, layer imports, deprecated APIs, formatting.
+
+## Production and legal
+
+- [ ] `production-and-legal.md` applied: no debug leftovers or hard-coded environment; new
+      dependencies, assets and personal data checked for licence, consent and minimisation
 
 ## Reclassification triggers (signal upward only)
 

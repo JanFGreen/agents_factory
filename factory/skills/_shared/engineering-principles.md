@@ -19,7 +19,7 @@ restructure the code instead.
 | EP-2 | **One responsibility.** A module can be described in one sentence without "and". It exports only what its callers use. | review |
 | EP-3 | **Small units.** Per stack profile; default: cyclomatic complexity ≤ 10, nesting ≤ 3, ≤ 4 parameters (more: one options object), function ≤ 60 lines, file ≤ 300 lines. | gate |
 | EP-4 | **One home for each piece of knowledge.** No new copied block (≥ 50 tokens). A business rule, constant, schema or mapping lives in one place; two different implementations of the same rule are a defect even when the text differs. | gate (copies), review (same rule written twice) |
-| EP-5 | **Simplest thing that works (KISS, YAGNI).** No abstraction, option, flag or hook without two current uses or a `required_now` need. Prefer a function to a class and data to configuration. | review |
+| EP-5 | **Simplest thing that works (KISS, YAGNI).** No abstraction, option, flag or hook without two current uses or a `required_now` need. Prefer data to configuration. A class is not an abstraction in this sense: EP-15 decides between a class and functions. | review |
 | EP-6 | **Explicit dependencies.** Time, randomness, I/O, environment and network come in as parameters or ports. No module-level mutable state, no stateful singletons. | review |
 | EP-7 | **Validate at the boundary.** External input (HTTP, files, storage, env, other services) is parsed once at the edge into typed values; inside, types are trusted. | review |
 | EP-8 | **Errors are values or specific types.** Expected failures are typed results or specific errors and are never swallowed; programmer errors fail fast. | review |
@@ -28,7 +28,8 @@ restructure the code instead.
 | EP-11 | **Honest interfaces (SOLID L, I, D).** Every implementation of a port honours the whole contract (no "not supported" stubs). Interfaces are small and shaped by their callers. Callers depend on the port, not on a concrete adapter. | review |
 | EP-12 | **Current APIs, few dependencies.** Use the API of the installed version: read its type definitions or docs in the repo, not memory. Deprecated APIs are errors. A new runtime dependency is never added silently; the task must name it. | gate (deprecation lint, protected lockfile), review |
 | EP-13 | **Performance hygiene.** No query or request inside a loop over data (N+1). No unbounded list, query or payload (paginate, limit). No repeated expensive work per render or per request that can be derived once. No blocking I/O on a hot path. | review (gate when the profile has a benchmark or bundle budget) |
-| EP-14 | **Testable core.** Logic sits in pure functions or behind ports, so tests need no network, real clock or sleeps. | review (test-adequacy checks the tests) |
+| EP-14 | **Testable core.** Domain logic sits in domain objects (or pure functions where EP-15 allows them) with I/O behind ports, so tests need no network, real clock or sleeps. | review (test-adequacy checks the tests) |
+| EP-15 | **Object-oriented by default.** State and the behaviour that keeps it valid live together in a class: a domain object guards its invariants in its constructor and methods, callers ask it to act instead of reading its fields and deciding for it (`board.place(cell)`, not `applyMove(board, cell)` next to a bare record). Services, repositories and adapters are classes that receive their dependencies in the constructor (EP-6). Prefer immutable objects where the framework needs value semantics (a method returns a new instance), e.g. React state. Plain functions are right for stateless transformations, small helpers and framework idioms built on functions (React components and hooks, reducers that delegate to domain objects). A functional design elsewhere needs a reason in the handoff, e.g. the problem is a pipeline of transformations. The repository's established style wins over this default. | review |
 
 ## Design patterns
 
@@ -37,10 +38,12 @@ code written and changed by agents because they keep every change local and expl
 
 | Problem in the code | Pattern |
 |---|---|
-| Logic tangled with I/O or a framework | Functional core, imperative shell; ports and adapters (hexagonal) |
+| Logic tangled with I/O or a framework | Domain objects free of I/O at the core, I/O at the edge; ports and adapters (hexagonal) |
+| Rules about one concept scattered over free functions taking the same record | Domain object (class) that owns the record and those rules (EP-15) |
+| A variant changes behaviour (a difficulty, a payment method) | Polymorphism: one class per variant behind a small interface (strategy) |
 | The same `switch` on a kind in several places; a new kind edits many files | Strategy or a registry (table of handlers); discriminated union with an exhaustive match |
 | Storage details leak into business code | Repository (port) with a real adapter and an in-memory fake for tests |
-| Many-step UI or process state with flags (`isLoading && !error && ...`) | State machine or reducer with explicit transitions |
+| Many-step UI or process state with flags (`isLoading && !error && ...`) | State machine with explicit transitions (a class with one method per event; in React, a reducer that delegates to it) |
 | A feature spread over every layer folder | Vertical slice: one folder per feature, a thin shared kernel |
 | Building an object needs many optional parameters | Options object with defaults; builder only for genuinely complex construction |
 | A third-party API shape spreads through the code | Adapter (anti-corruption layer) at the boundary |

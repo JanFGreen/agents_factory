@@ -106,6 +106,7 @@ Severity is the impact on a user or on the data, not how easy the fix is:
 | Data the user entered or saved is lost, duplicated or silently wrong | `medium` or higher | yes |
 | The user gets stuck: no response, no way to retry or leave, a control that never re-enables | `medium` or higher | yes |
 | A requirement, contract, security minimum or another task breaks | per impact | yes |
+| Legal exposure: a dependency or asset without a compatible licence, personal data collected, logged or shared beyond the requirement, storage or tracking without consent, a control unusable by keyboard or screen reader | `medium` or higher | yes |
 | A visible defect that has a workaround (unclear message, weak focus, misaligned layout) | `medium` | per requirement |
 | Maintainability, naming, duplication, style | `low` | no |
 

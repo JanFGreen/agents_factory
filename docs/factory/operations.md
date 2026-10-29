@@ -272,6 +272,20 @@ reported the last one, but rated it `low`. Three controls address this class:
   The controller accepts only findings that are on record, makes them blocking, sets acceptance
   to `CHANGES` and reopens the finding's task (event `findings.escalated`). An escalation is
   sticky: a later review may close the finding but cannot rate it non-blocking again.
+- **Production readiness and legal exposure (code review).** The code reviewer acts as the lead
+  the builders report to (`code-review/references/production-and-legal.md`). It checks for debug
+  leftovers, hard-coded environment and missing input limits. It also checks the legal exposure
+  the diff adds: licences of new dependencies, copied code and assets; personal data collected,
+  logged or sent to third parties (including CDN fonts and scripts); storage and tracking without
+  consent; accessibility of new controls (European Accessibility Act, WCAG 2.1 AA); user content
+  shown to others; product claims. A legal-exposure finding is at least `medium` and blocking
+  (severity table in `_shared/contract.md`). When the answer needs an operator decision (a
+  licence policy, a legal basis), the finding names that decision.
+- **Senior bar (builder).** Before the handoff the builder re-reads its whole diff as a senior
+  engineer reviewing a stranger's pull request (`implement/references/senior-bar.md`): names,
+  no clever code, one source of truth, no leftovers, deliberate failure paths, comments that say
+  why, consistency with the surrounding code, tests of behaviour, no unrelated changes. The
+  handoff's `Self-review:` line says what the re-read changed, never a self-assessment.
 
 ## Dashboard
 
@@ -428,7 +442,7 @@ Agent review:
 
 ## Engineering principles and quality checks (`_shared/engineering-principles.md`)
 
-Concrete rules instead of SOLID/DRY/KISS slogans: each has an ID (`EP-1`…`EP-14`) and is marked
+Concrete rules instead of SOLID/DRY/KISS slogans: each has an ID (`EP-1`…`EP-15`) and is marked
 as *gate* (checked by a tool) or *review* (judged by the code reviewer). The builder, code reviewer and
 planner have them in their prompt (`Follow ../_shared/engineering-principles.md` in `SKILL.md`). The controller
 appends to the prompt every `_shared` file the skill points to, plus the skill's own `references/*.md`:

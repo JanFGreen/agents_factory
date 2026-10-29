@@ -40,6 +40,8 @@ the micro-spec).
    a task that precedes all its consumers. In `design.md`, place each new unit in a layer
    (EP-1) and name the pattern for each extension point the request needs (engineering
    principles, "Design patterns"); plan a pattern only for a problem the feature has.
+   Name the domain classes and what each one owns (EP-15); where the design is
+   functional instead, say why.
 4. Build vertical increments early: connect API, data and UI incrementally rather
    than finishing isolated layers. Each leaf task has: one or more `requirement_ids`
    (or a necessary dependency it serves), `inputs`, `outputs`, disjoint `file_scope`,

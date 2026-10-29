@@ -13,9 +13,13 @@ def test_principles_and_references_reach_the_agents_that_follow_them(make_env):
     implement = env.factory._skill_text("factory-implement")
     assert "# Engineering principles" in implement and "EP-10" in implement
     assert "# Reference: references/handoff.md" in implement
+    assert "# Reference: references/senior-bar.md" in implement and "Self-review" in implement
     review = env.factory._skill_text("factory-code-review")
     assert "# Engineering principles" in review and "# Reference: references/review-checklist.md" in review
+    assert "# Reference: references/production-and-legal.md" in review and "legal cost" in review
     assert "# Engineering principles" in env.factory._skill_text("factory-plan")
+    for skill in ("factory-implement", "factory-code-review", "factory-plan"):  # the object-oriented default
+        assert "EP-15" in env.factory._skill_text(skill)
     intake = env.factory._skill_text("factory-intake")
     assert "# Engineering principles" not in intake and "# Reference: references/normalization.md" in intake
 
