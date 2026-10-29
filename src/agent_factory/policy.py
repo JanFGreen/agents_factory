@@ -161,6 +161,11 @@ def _removed_with_its_subject(diff: "FileDiff", files: list["FileDiff"], task_fi
     return False
 
 
+def is_ui_path(path: str) -> bool:
+    """A user-visible file: components, markup, styles or server templates (tests excluded)."""
+    return not is_test_file(path) and (bool(re.search(r"\.(tsx|jsx|vue|svelte|html|css|scss)$", path)) or "/templates/" in f"/{path}")
+
+
 def evaluate_diff(
     files: list[FileDiff],
     policy: Policy,
@@ -208,7 +213,7 @@ def evaluate_diff(
                 report.risk_reasons.append(f"{label} in {diff.path}")
                 if level == "high":
                     report.surfaces.add("security")
-        if re.search(r"\.(tsx|jsx|vue|svelte|html|css|scss)$", diff.path) or "/templates/" in f"/{diff.path}":
+        if is_ui_path(diff.path):
             report.surfaces.add("ui")
     report.violations += scan_secrets(files)
     return report

@@ -39,7 +39,7 @@ from .evidence import EvidenceStore, Producer
 from .features import NormalizedFeature, classify, load_feature, path_rank, record_classification, store_feature
 from .identities import InputIdentity, ResultKind, digest
 from .lanes import ParallelLanes
-from .policy import RISK_ORDER, effect_sites, evaluate_diff, is_test_file, max_risk, security_triggers
+from .policy import RISK_ORDER, effect_sites, evaluate_diff, is_test_file, is_ui_path, max_risk, security_triggers
 from .preview import PreviewServer
 from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
@@ -1355,10 +1355,21 @@ class Factory(ParallelLanes):
         """Per task the baseline review; the full threat analysis runs once per feature (review.security)."""
         return "full" if risk in self.cfg.factory.review.security.full_per_task_for_risk else "baseline"
 
+    def _task_surfaces(self, job_id: str, task_id: str, task: TaskSpec, surfaces: list[str], diff) -> list[str]:
+        """Job surfaces, with `ui` only when this task owns or changes a user-visible file.
+
+        Live finding (tic-tac-toe F3): once any task touched the UI, every later task (server, API
+        client) got a UI review that had nothing to look at. A task that already had a UI review keeps
+        it, so its open UI findings can still be closed by a later attempt.
+        """
+        ui = (any(is_ui_path(p) for p in task.file_scope) or any(is_ui_path(d.path) for d in diff or [])
+              or self.evidence.latest(job_id, ResultKind.UI_REVIEW, task_id) is not None)
+        return sorted((set(surfaces) - {"ui"}) | ({"ui"} if ui else set()))
+
     def _route_reviews(self, job_id: str, task_id: str, task: TaskSpec, surfaces: list[str], risk: str, diff) -> None:
         ctx = self._ctx(job_id)
         routed = ctx.get("required_reviews", {})
-        routed[task_id] = self._required_reviews(surfaces)
+        routed[task_id] = self._required_reviews(self._task_surfaces(job_id, task_id, task, surfaces, diff))
         self._set_ctx(job_id, required_reviews=routed, security_depth=self._security_depth(risk, surfaces))
 
     def _step_review(self, job_id: str) -> None:

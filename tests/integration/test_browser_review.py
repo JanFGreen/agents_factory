@@ -32,6 +32,7 @@ def _env(make_env, tmp_path, repo, responders):
     (repo / ".gitignore").write_text("dist/\n")
     git_commit_all(repo, "ignore build output")
     cli, log = _fake_cli(tmp_path)
+    responders = {"factory-implement": implement_ui, **responders}  # the task changes a page, so it gets a UI review
     env = make_env("trivial", responders=responders, **{"browser": {"binary": str(cli), "viewports": ["390x844"]}})
     (env.factory_dir / "checks" / "default.yaml").write_text(yaml.safe_dump({
         "schema_version": 1, "checks": [UNIT_CHECK, BUILD], "preview": {"static_dir": "dist"}}))
@@ -233,7 +234,8 @@ def test_a_ui_pass_with_a_visual_score_below_the_floor_becomes_changes(make_env,
     ui = UiReviewer([(True, ui_payload(score=2)), (True, ui_payload())])
     env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
     job = env.submit()
-    assert env.factory.run(job) == "READY_TO_MERGE"
+    state = env.factory.run(job)
+    assert state == "READY_TO_MERGE", env.store.job(job)["blocked_reason"]
     verdicts = [v for v, _ in _ui_results(env, job)]
     assert verdicts[0] == "CHANGES" and verdicts[-1] == "PASS"
     findings = env.store.all("SELECT finding_id, blocking, status FROM findings WHERE job_id = ? AND kind = 'ui-review'", (job,))
@@ -315,3 +317,28 @@ def test_measurements_over_the_limits_block_and_reopen_a_task(make_env, tmp_path
                                                    " AND kind = 'ui-review'", (job,))}
     assert {"CTRL-first-screen", "CTRL-shift-1"} <= ids and any(i.startswith("CTRL-contrast-") for i in ids)
     assert env.calls("factory-implement") == 2  # the owner task was rebuilt with the findings
+
+
+def test_only_tasks_with_user_visible_files_get_a_ui_review(make_env, tmp_path, repo):
+    """Live finding (tic-tac-toe F3): server-only tasks got UI reviews because an earlier task touched the UI."""
+    from ..conftest import FAREWELL, FAREWELL_TEST, GREET_BANG, GREET_TEST, plan_reply
+
+    def implement(request):
+        if "task=TASK-02" in request.prompt:
+            edits = {"app/farewell.py": FAREWELL, "tests/test_farewell.py": FAREWELL_TEST}
+        else:
+            edits = {"app/greet.py": GREET_BANG, "tests/test_greet_bang.py": GREET_TEST, "app/page.html": "<p>hi</p>\n"}
+        return FakeReply(envelope("implement", payload={"changed_files": list(edits)}), edits=edits)
+
+    plan = plan_reply([
+        {"task_id": "TASK-01", "requirement_ids": ["REQ-1"], "file_scope": ["app/greet.py", "app/page.html", "tests"],
+         "acceptance": "greeting page", "estimated_minutes": 20},
+        {"task_id": "TASK-02", "requirement_ids": ["REQ-2"], "depends_on": ["TASK-01"], "file_scope": ["app/farewell.py", "tests"],
+         "acceptance": "farewell", "estimated_minutes": 20}])
+    ui = UiReviewer([(False, ui_payload())])
+    env = make_env("standard", responders={"factory-implement": implement, "factory-plan": plan, "factory-ui-review": ui},
+                   **{"execution.max_builders_per_job": 1})
+    job = env.submit("Add a greeting page and a farewell")
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    reviewed = [c for c in env.runtime.calls if c.skill == "factory-ui-review" and "task=None" not in c.prompt]
+    assert reviewed and all("task=TASK-01" in c.prompt for c in reviewed)

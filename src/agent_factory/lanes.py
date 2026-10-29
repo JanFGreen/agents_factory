@@ -262,7 +262,7 @@ class ParallelLanes:
                 return LaneOutcome(task_id, "blocked", reason=f"gate {gate.verdict}: {gate.reason}", blocked_state=S.BLOCKED_ENV)
             if gate.verdict is not GateVerdict.PASS:
                 return self._lane_fail(job_id, task_id, str(gate.verdict), gate.reason, {c.name: c.excerpt[-1500:] for c in gate.checks})
-        required = self._required_reviews(surfaces)
+        required = self._required_reviews(self._task_surfaces(job_id, task_id, spec, surfaces, WorkspaceManager.diff(lane, start)))
         for _ in range(3):  # inconclusive reviews re-run, as in the sequential REVIEW state
             verdicts, error_class = self._run_reviews(job_id, task_id, json.loads(task["spec_json"]), lane, ident, required,
                                                       self._security_depth(risk, surfaces), surfaces)
