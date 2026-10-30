@@ -113,6 +113,15 @@ Severity is the impact on a user or on the data, not how easy the fix is:
 A finding you describe as a real user-facing defect is never `low`. If you would write
 "the user loses", "is stuck", "is saved twice" or "cannot", it blocks.
 
+### Past escapes
+
+`inputs.past_escapes` (when present) lists defects found after earlier features of this
+repository were merged: `area`, `location`, `problem` and the stage that `missed_by` let it
+through. They are what this factory got wrong here before. Planners and test designers turn
+the relevant ones into requirements and scenarios; reviewers check the change for the same
+class of defect first (the same operation elsewhere, the same pattern in new code) and cite
+the escape id in the finding. A repeat of an escaped class is blocking.
+
 ### Verdict semantics
 
 | Verdict | Meaning | Controller effect |

@@ -132,7 +132,7 @@ def test_generated_bytecode_is_never_committed_or_counted(make_env):
 
     edits = {"app/greet.py": GREET_BANG, "tests/test_greet_bang.py": GREET_TEST,
              **{f"app/__pycache__/m{i}.cpython-312.pyc": "bytecode" for i in range(6)}, ".pytest_cache/v/x": "c"}
-    env = make_env("trivial", responders={"factory-implement": FakeReply(envelope("implement", payload={}), edits=edits)})
+    env = make_env("trivial", responders={"factory-implement": FakeReply(envelope("implement", payload={"handoff": "Done: as tasked\nSelf-review: no changes"}), edits=edits)})
     job = env.submit()
     assert env.factory.run(job) == "READY_TO_MERGE"
     assert [a["source"] for a in env.store.all("SELECT source FROM complexity_assessments WHERE job_id = ?", (job,))] == ["intake"]

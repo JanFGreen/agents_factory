@@ -328,7 +328,7 @@ def test_only_tasks_with_user_visible_files_get_a_ui_review(make_env, tmp_path, 
             edits = {"app/farewell.py": FAREWELL, "tests/test_farewell.py": FAREWELL_TEST}
         else:
             edits = {"app/greet.py": GREET_BANG, "tests/test_greet_bang.py": GREET_TEST, "app/page.html": "<p>hi</p>\n"}
-        return FakeReply(envelope("implement", payload={"changed_files": list(edits)}), edits=edits)
+        return FakeReply(envelope("implement", payload={"changed_files": list(edits), "handoff": "Done: as tasked\nSelf-review: no changes"}), edits=edits)
 
     plan = plan_reply([
         {"task_id": "TASK-01", "requirement_ids": ["REQ-1"], "file_scope": ["app/greet.py", "app/page.html", "tests"],
@@ -353,7 +353,7 @@ def test_walkthrough_findings_go_to_the_last_task_with_user_visible_files(make_e
             edits = {"app/farewell.py": FAREWELL, "tests/test_farewell.py": FAREWELL_TEST}
         else:
             edits = {"app/greet.py": GREET_BANG, "tests/test_greet_bang.py": GREET_TEST, "app/page.html": "<p>hi</p>\n"}
-        return FakeReply(envelope("implement", payload={"changed_files": list(edits)}), edits=edits)
+        return FakeReply(envelope("implement", payload={"changed_files": list(edits), "handoff": "Done: as tasked\nSelf-review: no changes"}), edits=edits)
 
     plan = plan_reply([
         {"task_id": "TASK-01", "requirement_ids": ["REQ-1"], "file_scope": ["app/greet.py", "app/page.html", "tests"],

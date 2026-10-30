@@ -182,3 +182,69 @@ def test_sast_check_reports_only_new_code_offline_in_the_sandbox(setup):
     commit("xss")
     bad = runner.run_check(sast, wt, job_id="job-000000000001", head_sha=None, tree_sha=None, base_sha=base)
     assert bad.verdict == "FAIL_CODE" and "js-html-sink" in bad.excerpt and "old.py" not in bad.excerpt
+
+
+def _commit(wt, msg):
+    subprocess.run(["git", "add", "-A"], cwd=wt, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg], cwd=wt, check=True)
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=wt, capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _node_check(name):
+    from agent_factory.runner import load_checks
+
+    root = Path(__file__).resolve().parents[2]
+    return root, next(c for c in load_checks(root / "factory" / "checks" / "vite.yaml").checks if c.name == name)
+
+
+@pytest.mark.skipif(not SEMGREP.exists(), reason="NOT_RUN: pinned semgrep not installed (uv sync --project tools/semgrep)")
+def test_hygiene_check_refuses_debug_leftovers_and_third_party_loads_in_new_code(setup):
+    runner, wt, _, _ = setup
+    runner.factory_root, hygiene = _node_check("hygiene")
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=wt, check=True)
+    (wt / "src").mkdir()
+    (wt / "src" / "old.ts").write_text("console.log('legacy');\n")  # pre-existing: not this change's fault
+    base = _commit(wt, "base")
+    (wt / "src" / "api.ts").write_text("export const base = import.meta.env.VITE_API ?? '/api';\nconsole.info('ready');\n")
+    (wt / "src" / "api.test.ts").write_text("console.log('fine in a test');\n")
+    _commit(wt, "clean change")
+    clean = runner.run_check(hygiene, wt, job_id="job-000000000001", head_sha=None, tree_sha=None, base_sha=base)
+    assert clean.verdict == "PASS", clean.excerpt
+    (wt / "src" / "save.ts").write_text("// TODO: retry\nconsole.log(fetch('http://localhost:3001/api'));\n")
+    (wt / "src" / "fonts.css").write_text("@import url('https://fonts.googleapis.com/css2?family=Inter');\n")
+    _commit(wt, "leftovers")
+    bad = runner.run_check(hygiene, wt, job_id="job-000000000001", head_sha=None, tree_sha=None, base_sha=base)
+    assert bad.verdict == "FAIL_CODE"
+    for rule in ("debug-console", "unfinished-work", "hard-coded-local-address", "third-party-resource"):
+        assert rule in bad.excerpt, rule
+    assert "old.ts" not in bad.excerpt and "api.test.ts" not in bad.excerpt
+
+
+def _lockfile(wt, packages):
+    import json
+
+    (wt / "package-lock.json").write_text(json.dumps({"lockfileVersion": 3, "packages": {"": {"name": "app"}, **packages}}))
+
+
+def test_licence_check_refuses_shipped_copyleft_and_unlicensed_packages(setup):
+    runner, wt, _, _ = setup
+    runner.factory_root, licenses = _node_check("licenses")
+    _lockfile(wt, {
+        "node_modules/react": {"version": "19.3.0", "license": "MIT"},
+        "node_modules/dual": {"version": "1.0.0", "license": "(MIT OR GPL-3.0-only)"},
+        "node_modules/lightningcss": {"version": "1.0.0", "license": "MPL-2.0", "dev": True},  # a build tool, not shipped
+    })
+    ok = runner.run_check(licenses, wt, job_id="job-000000000001", head_sha=None, tree_sha=None)
+    assert ok.verdict == "PASS", ok.excerpt
+    _lockfile(wt, {
+        "node_modules/chart-gpl": {"version": "2.0.0", "license": "GPL-3.0-only"},
+        "node_modules/mystery": {"version": "0.1.0"},
+        "node_modules/both": {"version": "1.0.0", "license": "MIT AND AGPL-3.0-only"},
+        "node_modules/devtool": {"version": "1.0.0", "license": "AGPL-3.0-only", "dev": True},
+    })
+    bad = runner.run_check(licenses, wt, job_id="job-000000000001", head_sha=None, tree_sha=None)
+    assert bad.verdict == "FAIL_CODE"
+    for package in ("chart-gpl@2.0.0", "mystery@0.1.0: no licence", "both@1.0.0", "devtool@1.0.0 (build tool)"):
+        assert package in bad.excerpt, package
+    (wt / ".license-exceptions.json").write_text('{"chart-gpl": "x", "mystery": "x", "both": "x", "devtool": "operator: internal tool only"}')
+    assert runner.run_check(licenses, wt, job_id="job-000000000001", head_sha=None, tree_sha=None).verdict == "PASS"

@@ -281,6 +281,25 @@ reported the last one, but rated it `low`. Three controls address this class:
   shown to others; product claims. A legal-exposure finding is at least `medium` and blocking
   (severity table in `_shared/contract.md`). When the answer needs an operator decision (a
   licence policy, a legal basis), the finding names that decision.
+- **Deterministic hygiene and licences (gate).** Two trusted checks in `checks/node.yaml` and
+  `checks/vite.yaml` move what the prompts ask for into code. `hygiene` (semgrep,
+  `checks/semgrep/hygiene.yml`, only lines the change adds) refuses `console.log/debug/trace`
+  outside tests, debugger statements, `TODO/FIXME/XXX/HACK`, hard-coded `localhost` URLs and
+  scripts, styles, fonts or images loaded from a third-party server (each visit sends the user's
+  IP there). `licenses` (`checks/licenses.py`, offline) reads `package-lock.json`: every shipped
+  package needs a licence from `checks/licenses.json`; a package without one fails; build tools
+  (`dev`) fail only for licences that bind their users (AGPL, SSPL, BUSL...). An operator
+  decision goes into the repository's protected `.license-exceptions.json`
+  (`{"package": "reason"}`).
+- **Self-review is required.** A passing builder envelope whose handoff has no `Self-review:`
+  line is rejected by the validator and sent back once with a note.
+- **Escaped defects (`factory defect`).** A defect found after merge is recorded against the
+  job that shipped it: `factory defect report <job> --area failure-mode --location
+  src/ui/leaderboard-api.ts:24 --problem "a hung request blocks saving" --missed-by code-review`.
+  `factory defect list [--repo PATH]` shows the escapes and their rate per review and per merged
+  job (event `defect.escaped`). Every later planner, test designer and reviewer of the same
+  repository gets the last 20 as `past_escapes` and checks the change for the same class first
+  (`_shared/contract.md`, "Past escapes").
 - **Senior bar (builder).** Before the handoff the builder re-reads its whole diff as a senior
   engineer reviewing a stranger's pull request (`implement/references/senior-bar.md`): names,
   no clever code, one source of truth, no leftovers, deliberate failure paths, comments that say

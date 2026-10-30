@@ -32,7 +32,7 @@ class Builder:
             edits = {"app/farewell.py": FAREWELL, "tests/test_farewell.py": FAREWELL_TEST}
         else:
             edits = {"app/greet.py": GREET_BANG, "tests/test_greet_bang.py": GREET_TEST if self.fixed else BROKEN_TEST}
-        return FakeReply(envelope("implement", payload={"changed_files": list(edits), "tests_added": [], "handoff": "done",
+        return FakeReply(envelope("implement", payload={"changed_files": list(edits), "tests_added": [], "handoff": "Done: as tasked\nSelf-review: no changes",
                                                         "claimed_checks": []}), edits=edits)
 
 

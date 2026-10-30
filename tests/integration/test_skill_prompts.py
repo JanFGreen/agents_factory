@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from agent_factory.adapters.fake import FakeReply, envelope
 from agent_factory.controller import S
 from agent_factory.factory import StageBlocked
+
+from ..conftest import implement_by_task
 
 
 def test_principles_and_references_reach_the_agents_that_follow_them(make_env):
@@ -37,3 +40,17 @@ def test_a_missing_shared_document_blocks_instead_of_running_without_it(make_env
     with pytest.raises(StageBlocked) as exc:
         env.factory._skill_text("factory-implement")
     assert exc.value.state is S.BLOCKED_ENV and "engineering-principles.md" in exc.value.reason
+
+
+def test_a_builder_handoff_without_its_self_review_is_sent_back(make_env):
+    builds = []
+
+    def implement(request):
+        builds.append(request)
+        reply = implement_by_task(request)
+        handoff = "Done: as tasked" if len(builds) == 1 else "Done: as tasked\nSelf-review: renamed `x` to `greeting`"
+        return FakeReply(envelope("implement", payload={**reply.envelope["payload"], "handoff": handoff}), edits=reply.edits)
+
+    env = make_env("trivial", responders={"factory-implement": implement})
+    assert env.factory.run(env.submit()) == "READY_TO_MERGE"
+    assert len(builds) == 2 and "Self-review:" in builds[1].prompt  # the validator's note asks for it

@@ -181,7 +181,7 @@ def implement_by_task(request) -> FakeReply:
         edits = {"app/farewell.py": FAREWELL, "tests/test_farewell.py": FAREWELL_TEST}
     else:
         edits = {"app/greet.py": GREET_BANG, "tests/test_greet_bang.py": GREET_TEST}
-    return FakeReply(envelope("implement", payload={"changed_files": list(edits), "tests_added": [], "handoff": "done", "claimed_checks": ["all tests pass"]}), edits=edits)
+    return FakeReply(envelope("implement", payload={"changed_files": list(edits), "tests_added": [], "handoff": "Done: as tasked\nSelf-review: no changes", "claimed_checks": ["all tests pass"]}), edits=edits)
 
 
 def review_pass(kind: str) -> FakeReply:

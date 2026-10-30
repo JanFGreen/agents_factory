@@ -91,7 +91,7 @@ def test_shipped_node_manifest_is_valid():
 
     manifest = load_checks(Path(__file__).resolve().parents[2] / "factory" / "checks" / "node.yaml")
     assert manifest.link_from_checkout == ["node_modules"]
-    assert {c.name for c in manifest.for_stage("task")} == {"unit", "typecheck", "lint", "duplicates", "sast", "web-build"}
+    assert {c.name for c in manifest.for_stage("task")} == {"unit", "typecheck", "lint", "duplicates", "sast", "hygiene", "licenses", "web-build"}
 
 
 def test_shipped_vite_manifest_is_valid():
@@ -100,7 +100,7 @@ def test_shipped_vite_manifest_is_valid():
     manifest = load_checks(Path(__file__).resolve().parents[2] / "factory" / "checks" / "vite.yaml")
     assert manifest.link_from_checkout == ["node_modules"] and manifest.preview.static_dir == "dist"
     names = [c.name for c in manifest.for_stage("task")]
-    assert names == ["unit", "typecheck", "lint", "duplicates", "sast", "web-build"]
+    assert names == ["unit", "typecheck", "lint", "duplicates", "sast", "hygiene", "licenses", "web-build"]
     assert all(c.network == "none" for c in manifest.checks if c.name != "unit")
 
 

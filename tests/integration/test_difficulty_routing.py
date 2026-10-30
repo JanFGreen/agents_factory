@@ -33,7 +33,7 @@ class Builder:
         else:
             self.greet_calls += 1
             edits = {"app/greet.py": GREET_BANG, "tests/test_greet_bang.py": BROKEN_TEST if self.greet_calls == 1 else GREET_TEST}
-        return FakeReply(envelope("implement", payload={"changed_files": list(edits), "tests_added": [], "handoff": "done",
+        return FakeReply(envelope("implement", payload={"changed_files": list(edits), "tests_added": [], "handoff": "Done: as tasked\nSelf-review: no changes",
                                                         "claimed_checks": []}), edits=edits)
 
 

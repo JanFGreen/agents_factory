@@ -26,7 +26,7 @@ from typing import Any
 
 import yaml
 
-from . import analysis, budgets, outbox
+from . import analysis, budgets, escapes, outbox
 from .adapters.protocol import AgentRequest, AgentRuntime, RunHandle
 from .adapters.typesafe import PRICE_PER_INPUT_TOKEN_USD, make_decider
 from .config import LoadedConfig, RoleBinding
@@ -344,6 +344,8 @@ class Factory(ParallelLanes):
     ) -> AgentResult:
         kind = skill.removeprefix("factory-")
         role = SKILL_ROLE[skill]
+        if skill in escapes.READERS and (past := escapes.for_repo(self.store, self._job(job_id)["repo_path"])):
+            inputs = {**inputs, "past_escapes": past}  # what earlier reviews of this repository let through
         binding = self._binding(skill)
         # `routing` and `review_models` name Claude models: they apply to roles that run on claude only.
         if model is not None and binding.runtime == "claude":

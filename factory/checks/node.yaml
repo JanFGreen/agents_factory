@@ -36,6 +36,17 @@ checks:
     timeout_seconds: 600
     required: true
     stage: task
+  - name: hygiene                       # production readiness and third-party loads in added lines (semgrep, offline)
+    argv: ["{factory}/tools/semgrep/.venv/bin/semgrep", "scan", "--config", "{factory}/factory/checks/semgrep/hygiene.yml",
+           "--baseline-commit", "{base_sha}", "--error", "--emacs", "--metrics=off", "--disable-version-check", "--quiet", "."]  # one line per finding
+    timeout_seconds: 600
+    required: true
+    stage: task
+  - name: licenses                      # every shipped npm package has an allowed licence (factory/checks/licenses.json)
+    argv: ["{python}", "{factory}/factory/checks/licenses.py"]
+    timeout_seconds: 120
+    required: true
+    stage: task
   - name: web-build
     argv: ["{worktree}/node_modules/.bin/expo", "export", "--platform", "web", "--output-dir", "dist"]
     timeout_seconds: 900

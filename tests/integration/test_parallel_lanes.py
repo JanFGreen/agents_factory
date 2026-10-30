@@ -26,7 +26,7 @@ def _task(request) -> str:
 
 
 def _impl(edits: dict[str, str]) -> FakeReply:
-    return FakeReply(envelope("implement", payload={"changed_files": list(edits), "tests_added": [], "handoff": "done",
+    return FakeReply(envelope("implement", payload={"changed_files": list(edits), "tests_added": [], "handoff": "Done: as tasked\nSelf-review: no changes",
                                                     "claimed_checks": []}), edits=edits)
 
 

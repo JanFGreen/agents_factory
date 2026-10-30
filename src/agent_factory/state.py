@@ -240,6 +240,23 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX results_job_kind ON results (job_id, kind, task_id)
         """,
     ),
+    (
+        3,
+        """
+        CREATE TABLE escaped_defects (
+            escape_id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL REFERENCES jobs(job_id),
+            repo_path TEXT NOT NULL,
+            area TEXT NOT NULL,
+            location TEXT NOT NULL,
+            problem TEXT NOT NULL,
+            missed_by TEXT NOT NULL,
+            reported_by TEXT NOT NULL,
+            reported_at TEXT NOT NULL
+        );
+        CREATE INDEX escaped_defects_repo ON escaped_defects (repo_path, reported_at)
+        """,
+    ),
 ]
 
 

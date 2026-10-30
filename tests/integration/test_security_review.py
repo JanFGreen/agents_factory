@@ -108,7 +108,7 @@ def test_a_feature_review_finding_reopens_the_task_that_owns_the_file(make_env):
             edits = {"app/farewell.py": "import subprocess\n\n\n" + FAREWELL, "tests/test_farewell.py": FAREWELL_TEST}
         else:
             edits = {"app/greet.py": GREET_BANG, "tests/test_greet_bang.py": GREET_TEST}
-        return FakeReply(envelope("implement", payload={"changed_files": list(edits), "handoff": "done"}), edits=edits)
+        return FakeReply(envelope("implement", payload={"changed_files": list(edits), "handoff": "Done: as tasked\nSelf-review: no changes"}), edits=edits)
 
     env = make_env("standard", responders={"factory-security-review": review, "factory-implement": implement})
     job = env.submit("Add exclamation greeting and farewell")

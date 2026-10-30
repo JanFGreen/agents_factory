@@ -40,7 +40,7 @@ def test_af22_controller_killed_mid_build_adopts_live_builder(make_env):
         from pathlib import Path
         (Path(wt) / "app" / "greet.py").write_text(GREET_BANG)
         (Path(wt) / "tests" / "test_greet_bang.py").write_text(GREET_TEST)
-        return RunSnapshot("succeeded", output_text="```json\n" + json.dumps(envelope("implement", payload={})) + "\n```", usage=Usage(1, 1, 0.01))
+        return RunSnapshot("succeeded", output_text="```json\n" + json.dumps(envelope("implement", payload={"handoff": "Done: as tasked\nSelf-review: no changes"})) + "\n```", usage=Usage(1, 1, 0.01))
 
     env.runtime.poll = poll_live
     starts_before = env.calls("factory-implement")

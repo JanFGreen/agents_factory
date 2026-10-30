@@ -25,6 +25,7 @@ from .adapters.github import LocalMergeHandler
 from .config import IMPLEMENTED_RUNTIMES, ConfigError, load_config
 from .controller import HALTED, TERMINAL, TransitionRefused
 from .environment import cli_too_old, node_bin_dir
+from .escapes import AREAS, MISSED_BY
 from .features import normalize
 from .sandbox import SandboxUnavailable, get_sandbox
 from .state import Store
@@ -523,6 +524,25 @@ def cmd_budget(args) -> int:
     return EXIT_OK
 
 
+def cmd_defect(args) -> int:
+    from .escapes import EscapeRefused, for_repo, report, summary
+
+    cfg, store = _load(args)
+    if args.defect_cmd == "report":
+        try:
+            escape_id = report(store, args.id, area=args.area, location=args.location, problem=args.problem,
+                               missed_by=args.missed_by, actor=os.environ.get("USER", "operator"))
+        except EscapeRefused as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return EXIT_REFUSED
+        _out(args, {"escape_id": escape_id, "job_id": args.id})
+        return EXIT_OK
+    repo = str(Path(args.repo).resolve()) if args.repo else None
+    _out(args, {"summary": summary(store, repo), "escapes": for_repo(store, repo, limit=args.limit) if repo else
+                [dict(r) for r in store.all("SELECT * FROM escaped_defects ORDER BY reported_at DESC LIMIT ?", (args.limit,))]})
+    return EXIT_OK
+
+
 def cmd_eval(args) -> int:
     from .evals import run_suite
 
@@ -630,6 +650,18 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--to", type=float, required=True)
     b.add_argument("--reason", required=True)
     s.set_defaults(fn=cmd_budget)
+    s = sub.add_parser("defect", help="defects found after merge: what the reviews let through")
+    dsub = s.add_subparsers(dest="defect_cmd", required=True)
+    d = dsub.add_parser("report", help="record a defect found after the job was merged")
+    d.add_argument("id", help="the job that shipped the defect")
+    d.add_argument("--area", required=True, choices=AREAS)
+    d.add_argument("--location", required=True, help="path:line")
+    d.add_argument("--problem", required=True, help="what goes wrong, as a user or caller sees it")
+    d.add_argument("--missed-by", required=True, choices=MISSED_BY)
+    d = dsub.add_parser("list", help="escaped defects and the rate per review")
+    d.add_argument("--repo")
+    d.add_argument("--limit", type=int, default=50)
+    s.set_defaults(fn=cmd_defect)
     s = sub.add_parser("eval")
     s.add_argument("--suite", required=True)
     s.add_argument("--profile", required=True, choices=["full", "single-agent"])

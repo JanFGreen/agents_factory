@@ -204,6 +204,10 @@ class DecompositionPayload(Model):
     dag_ok: bool
 
 
+# The builder's senior self-review (implement/references/senior-bar.md) must leave a trace in the handoff.
+_SELF_REVIEW = re.compile(r"^\s*Self-review:\s*\S", re.MULTILINE)
+
+
 class ImplementPayload(Model):
     changed_files: list[str] = []
     tests_added: list[str] = []
@@ -400,6 +404,8 @@ def parse_envelope(raw: dict[str, Any] | str, expected_kind: str) -> tuple[Agent
             payload = payload_model.model_validate(envelope.payload)
         except ValidationError as exc:
             raise ContractError(f"{expected_kind} payload: {exc}") from exc
+    if expected_kind == "implement" and envelope.verdict == "PASS" and not _SELF_REVIEW.search(payload.handoff):
+        raise ContractError("implement handoff: no 'Self-review:' line (what re-reading the diff changed, or 'no changes')")
     return envelope, payload
 
 

@@ -1,0 +1,48 @@
+# Local semgrep rules for the trusted `hygiene` check: production readiness and third-party loads
+# that a prompt alone does not guarantee (code-review/references/production-and-legal.md).
+# Every rule is ERROR and sees only lines the change adds (`--baseline-commit`).
+rules:
+  - id: debug-console
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "console.log/debug/trace left in production code. Remove it, or report through the app's logger (console.info/warn/error for intended output)."
+    paths:
+      exclude: ["*.test.*", "*.spec.*", "tests/", "test/", "e2e/", "scripts/", "*.config.*"]
+    pattern-either:
+      - pattern: console.log(...)
+      - pattern: console.debug(...)
+      - pattern: console.trace(...)
+  - id: debugger-statement
+    languages: [regex]
+    severity: ERROR
+    message: "Debugger statement left in the code."
+    paths:
+      include: ["*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.mts", "*.cts", "*.vue", "*.svelte", "*.py"]
+    pattern-regex: '^\s*(debugger\s*;?|breakpoint\(\)|import\s+i?pdb\b.*|i?pdb\.set_trace\(\).*)\s*$'
+  - id: unfinished-work
+    languages: [regex]
+    severity: ERROR
+    message: "TODO/FIXME/XXX/HACK in new code. Finish it in this task, or report the gap as a finding; a comment is not a ticket."
+    paths:
+      include: ["*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.mts", "*.cts", "*.vue", "*.svelte", "*.py", "*.rs",
+                "*.java", "*.kt", "*.go", "*.css", "*.scss", "*.html", "*.sql"]
+    pattern-regex: '(//|#|/\*|<!--|--)\s*.*\b(TODO|FIXME|XXX|HACK)\b'
+  - id: hard-coded-local-address
+    languages: [regex]
+    severity: ERROR
+    message: "Hard-coded local address in production code: it breaks on every other machine. Take it from configuration or use a relative URL."
+    paths:
+      include: ["*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.mts", "*.cts", "*.vue", "*.svelte", "*.py", "*.html"]
+      exclude: ["*.test.*", "*.spec.*", "tests/", "test/", "e2e/", "scripts/", "*.config.*", "test_*.py", "*_test.py", "conftest.py"]
+    pattern-regex: '\bhttps?://(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])\b'
+  - id: third-party-resource
+    languages: [regex]
+    severity: ERROR
+    message: "Loads a script, style, font, image or frame from a third-party server: every visit sends the user's IP address there (GDPR; e.g. web fonts from a CDN). Serve the file from this app, or record the operator's decision and the provider in the spec."
+    paths:
+      include: ["*.html", "*.css", "*.scss", "*.jsx", "*.tsx", "*.vue", "*.svelte"]
+      exclude: ["*.test.*", "*.spec.*", "tests/", "test/", "e2e/"]
+    pattern-either:
+      - pattern-regex: '<(script|link|img|iframe|source|video|audio)\b[^>]*\b(src|href)\s*=\s*\{?\s*["''`](https?:)?//'
+      - pattern-regex: '@import\s+(url\(\s*)?["'']?(https?:)?//'
+      - pattern-regex: '\burl\(\s*["'']?(https?:)?//'

@@ -189,7 +189,7 @@ def test_af04_no_feasible_option_spikes_once_then_fails(make_env):
 
 
 def implement_reply(edits: dict, claims: list[str] | None = None) -> FakeReply:
-    return FakeReply(envelope("implement", payload={"changed_files": list(edits), "claimed_checks": claims or []}), edits=edits)
+    return FakeReply(envelope("implement", payload={"changed_files": list(edits), "claimed_checks": claims or [], "handoff": "Done: as tasked\nSelf-review: no changes"}), edits=edits)
 
 
 BROKEN = 'def greet(name: str) -> str:\n    return "Hello!"\n'

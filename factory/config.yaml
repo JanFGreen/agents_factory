@@ -49,6 +49,7 @@ policy:
     - "eslint.config.*"
     - ".jscpd.json"                    # quality checks and their baselines (engineering-principles)
     - ".jscpd-baseline.json"
+    - ".license-exceptions.json"        # operator decisions on licences (checks/licenses.py)
     - ".dependency-cruiser.*"
     - "ruff.toml"
     - ".importlinter"
