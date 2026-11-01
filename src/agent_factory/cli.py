@@ -524,6 +524,30 @@ def cmd_budget(args) -> int:
     return EXIT_OK
 
 
+def cmd_attempts(args) -> int:
+    cfg, store = _load(args)
+    factory = _make_factory(cfg, store)
+    try:
+        factory.raise_build_attempts(args.id, args.to, args.reason, actor=os.environ.get("USER", "operator"))
+    except TransitionRefused as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_REFUSED
+    _out(args, {"job_id": args.id, "build_attempts_limit": args.to})
+    return EXIT_OK
+
+
+def cmd_reopen(args) -> int:
+    cfg, store = _load(args)
+    factory = _make_factory(cfg, store)
+    try:
+        factory.reopen(args.id, args.reason, actor=os.environ.get("USER", "operator"))
+    except TransitionRefused as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_REFUSED
+    _out(args, {"job_id": args.id, "state": store.job(args.id)["state"]})
+    return EXIT_OK
+
+
 def cmd_defect(args) -> int:
     from .escapes import EscapeRefused, for_repo, report, summary
 
@@ -650,6 +674,17 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--to", type=float, required=True)
     b.add_argument("--reason", required=True)
     s.set_defaults(fn=cmd_budget)
+    s = sub.add_parser("attempts", help="feature build attempts")
+    asub = s.add_subparsers(dest="attempts_cmd", required=True)
+    a = asub.add_parser("raise")
+    a.add_argument("id")
+    a.add_argument("--to", type=int, required=True)
+    a.add_argument("--reason", required=True)
+    s.set_defaults(fn=cmd_attempts)
+    s = sub.add_parser("reopen", help="bring back a job FAILED only for the feature build-attempt cap (now a halt)")
+    s.add_argument("id")
+    s.add_argument("--reason", required=True)
+    s.set_defaults(fn=cmd_reopen)
     s = sub.add_parser("defect", help="defects found after merge: what the reviews let through")
     dsub = s.add_subparsers(dest="defect_cmd", required=True)
     d = dsub.add_parser("report", help="record a defect found after the job was merged")

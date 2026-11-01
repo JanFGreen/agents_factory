@@ -94,3 +94,38 @@ def test_the_retry_reason_reaches_the_builder(make_env):
     env.factory.retry_task(job, "TASK-01", 1, "use the shared key helper inside your own file")
     env.factory.resume(job)
     assert env.factory.run(job) == "READY_TO_MERGE"
+
+
+def test_the_feature_attempt_cap_halts_and_the_operator_can_raise_it(make_env):
+    """Live finding (LearnEnglish F5a): 20 tasks hit the fixed cap of 30 build attempts with 13 accepted, and the
+    job ended FAILED with no way on. The cap now scales with the plan and stops in NEEDS_HUMAN, like the budget."""
+    builder = Builder()
+    env = make_env("standard", responders={"factory-plan": plan_reply(_tasks(True)), "factory-implement": builder})
+    workflow = env.factory_dir / "workflow.yaml"
+    workflow.write_text(workflow.read_text().replace("max_build_attempts_per_feature: 30", "max_build_attempts_per_feature: 2")
+                        .replace("max_attempts_per_leaf_task: 3", "max_attempts_per_leaf_task: 10"))
+    env.reload()
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "NEEDS_HUMAN"
+    assert env.factory._build_attempts_limit(job) == 4  # two per planned task beats the configured 2
+    assert "used all 4 build attempts" in env.store.job(job)["blocked_reason"]
+    with pytest.raises(TransitionRefused):
+        env.factory.raise_build_attempts(job, 3, "lower")
+    builder.fixed = True
+    env.factory.raise_build_attempts(job, 8, "TASK-01 is close")
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert env.events(job, "build_attempts.raised")
+
+
+def test_reopen_brings_back_only_a_job_failed_for_the_attempt_cap(make_env):
+    env = make_env("standard", responders={"factory-plan": plan_reply(_tasks(False))})
+    job = env.submit("Add exclamation greeting and farewell")
+    with pytest.raises(TransitionRefused):
+        env.factory.reopen(job, "not failed")
+    row = env.store.job(job)
+    with env.store.tx() as conn:  # what an older controller left behind
+        env.store.cas_update_job(conn, job, row["version"], state="FAILED", blocked_reason="feature used all 30 build attempts")
+    env.factory.reopen(job, "the cap is a halt now")
+    assert env.state(job) == "NEEDS_HUMAN" and env.events(job, "job.reopened")
+    assert env.store.job_context(job)["resume_state"] == "BUILD_TASK"

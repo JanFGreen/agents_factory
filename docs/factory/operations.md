@@ -434,6 +434,17 @@ agents' sandbox policy (the claude CLI's own login), everything else with networ
 An attempt whose agent run died (a killed process, no agent slot: `BLOCKED_ENV`) or that the budget refused before
 the builder ran is given back, so `resume` repeats it instead of charging the task.
 
+The feature as a whole has a build-attempt limit: `max_build_attempts_per_feature` (workflow.yaml) or two per planned
+task, whichever is higher. Reaching it halts the job in `NEEDS_HUMAN` with its accepted tasks kept:
+
+```sh
+uv run factory attempts raise <id> --to 50 --reason "..."   # event build_attempts.raised
+uv run factory resume <id>
+uv run factory reopen <id> --reason "..."  # only a job an older controller FAILED for this cap -> NEEDS_HUMAN
+```
+
+`factory task retry --reason` reaches the builder as `operator_note`: say how to fix the task within its scope.
+
 The task moves to `FAILED` on its own: its rejected attempts are reverted from the job branch (patch stored as an artifact),
 and independent tasks keep building. When nothing is left to build, the job waits in `NEEDS_HUMAN`
 with a list of failed, blocked and accepted tasks.

@@ -1211,7 +1211,7 @@ class Factory(ParallelLanes):
         job = self._job(job_id)
         task_id = ctx.get("current_task")
         idle = not task_id or self._task(job_id, task_id) is None or self._task(job_id, task_id)["state"] == "ACCEPTED"
-        if idle and job["build_attempts"] < self.cfg.workflow.implementation.max_build_attempts_per_feature:
+        if idle and job["build_attempts"] < self._build_attempts_limit(job_id):
             wave = self._parallel_wave(job_id)
             if wave:
                 self._set_ctx(job_id, current_task=None)
@@ -1229,8 +1229,10 @@ class Factory(ParallelLanes):
             if ready_tasks(self.store, job_id):
                 return
             raise StageBlocked(S.NEEDS_HUMAN, self._stuck_reason(job_id))
-        if job["build_attempts"] >= impl.max_build_attempts_per_feature:
-            raise StageBlocked(S.FAILED, f"feature used all {impl.max_build_attempts_per_feature} build attempts")
+        if job["build_attempts"] >= (limit := self._build_attempts_limit(job_id)):
+            # A halt, not FAILED: accepted tasks stay, and the operator decides as with the budget (LearnEnglish F5a).
+            raise StageBlocked(S.NEEDS_HUMAN, f"feature used all {limit} build attempts; to go on: "
+                                              f"`factory attempts raise {job_id} --to N --reason ...` and `factory resume {job_id}`")
         wt = self._worktree(job_id)
         start_sha = WorkspaceManager.head(wt)
         bases = self._ctx(job_id).get("task_base", {})
@@ -1298,6 +1300,39 @@ class Factory(ParallelLanes):
         return (f"tasks {failed} used all their attempts; blocked by them: {sorted(blocked)}; accepted {accepted}/{len(rows)} "
                 f"(kept on the job branch). Read the findings, then `factory task retry {job_id} <task> --attempts N --reason ...` "
                 "and `factory resume`, or `factory cancel`.")
+
+    def _build_attempts_limit(self, job_id: str) -> int:
+        """The configured floor, at least two attempts per planned task, or what the operator raised it to."""
+        raised = self._ctx(job_id).get("build_attempts_limit")
+        tasks = self.store.one("SELECT COUNT(*) AS n FROM tasks WHERE job_id = ?", (job_id,))["n"]
+        return raised or max(self.cfg.workflow.implementation.max_build_attempts_per_feature, 2 * tasks)
+
+    def raise_build_attempts(self, job_id: str, to: int, reason: str, actor: str = "operator") -> None:
+        """Operator decision: more build attempts for a halted feature."""
+        if not reason.strip():
+            raise TransitionRefused("raising the build attempts requires a reason")
+        if S(self._job(job_id)["state"]) not in HALTED:
+            raise TransitionRefused("raise the build attempts only while the job is halted")
+        current = self._build_attempts_limit(job_id)
+        if to <= current:
+            raise TransitionRefused(f"the new limit must be higher than {current}")
+        self._set_ctx(job_id, build_attempts_limit=to)
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "build_attempts.raised", {"from": current, "to": to, "reason": reason, "actor": actor})
+
+    def reopen(self, job_id: str, reason: str, actor: str = "operator") -> None:
+        """Bring back a job that an older controller FAILED only for the feature build-attempt cap, which is now a halt."""
+        job = self._job(job_id)
+        if S(job["state"]) is not S.FAILED or not (job["blocked_reason"] or "").startswith("feature used all"):
+            raise TransitionRefused("only a job FAILED for the feature build-attempt cap can be reopened")
+        if not reason.strip():
+            raise TransitionRefused("reopening a job requires a reason")
+        with self.store.tx() as conn:
+            version = self.store.cas_update_job(conn, job_id, job["version"], state=str(S.NEEDS_HUMAN),
+                                                blocked_reason=f"reopened: {job['blocked_reason']}")
+            self.store.event(conn, job_id, "job.reopened", {"reason": reason, "actor": actor}, from_state=str(S.FAILED),
+                             to_state=str(S.NEEDS_HUMAN), from_version=job["version"], to_version=version)
+        self.store.update_job_context(job_id, resume_state=str(S.BUILD_TASK))
 
     def retry_task(self, job_id: str, task_id: str, attempts: int, reason: str) -> None:
         """Operator decision: give a FAILED task more attempts (the job must be halted)."""
