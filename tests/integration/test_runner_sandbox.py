@@ -184,6 +184,29 @@ def test_sast_check_reports_only_new_code_offline_in_the_sandbox(setup):
     assert bad.verdict == "FAIL_CODE" and "js-html-sink" in bad.excerpt and "old.py" not in bad.excerpt
 
 
+@pytest.mark.skipif(not SEMGREP.exists(), reason="NOT_RUN: pinned semgrep not installed (uv sync --project tools/semgrep)")
+def test_sast_tells_a_database_exec_from_a_shell_and_allows_a_pragma_from_a_constant(setup):
+    from agent_factory.runner import load_checks
+
+    runner, wt, _, _ = setup
+    root = Path(__file__).resolve().parents[2]
+    runner.factory_root = root
+    sast = next(c for c in load_checks(root / "factory" / "checks" / "node.yaml").checks if c.name == "sast")
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=wt, check=True)
+    (wt / "README.md").write_text("app\n")
+    base = _commit(wt, "base")
+    (wt / "migrate.ts").write_text("db.exec(`PRAGMA user_version = ${String(version)}`);\ndb.exec(`PRAGMA busy_timeout = ${BUSY_MS}`);\n")
+    _commit(wt, "pragmas")
+    ok = runner.run_check(sast, wt, job_id="job-000000000001", head_sha=None, tree_sha=None, base_sha=base)
+    assert ok.verdict == "PASS", ok.excerpt
+    (wt / "query.ts").write_text("db.exec(`PRAGMA user_version = ${String(req.body.v + 1)}`);\n"
+                                 "db.exec(`SELECT * FROM t WHERE id = ${id}`);\nexecSync(`rm ${path}`);\n")
+    _commit(wt, "injections")
+    bad = runner.run_check(sast, wt, job_id="job-000000000001", head_sha=None, tree_sha=None, base_sha=base)
+    assert bad.verdict == "FAIL_CODE" and "js-sql-concat" in bad.excerpt and "js-child-process-shell" in bad.excerpt
+    assert "migrate.ts" not in bad.excerpt
+
+
 def _commit(wt, msg):
     subprocess.run(["git", "add", "-A"], cwd=wt, check=True)
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg], cwd=wt, check=True)

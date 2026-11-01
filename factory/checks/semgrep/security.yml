@@ -14,11 +14,22 @@ rules:
     languages: [javascript, typescript]
     severity: ERROR
     message: "Shell command built from a value: command injection. Use execFile/spawn with an argument array."
+    # A database handle's exec (SQLite, pg) is not a shell: only child_process receivers or bare
+    # exec/execSync imported from it count.
     pattern-either:
-      - pattern: $CP.exec(`...${$X}...`, ...)
-      - pattern: $CP.execSync(`...${$X}...`, ...)
-      - pattern: $CP.exec($A + $B, ...)
-      - pattern: $CP.execSync($A + $B, ...)
+      - patterns:
+          - pattern-either:
+              - pattern: $CP.exec(`...${$X}...`, ...)
+              - pattern: $CP.execSync(`...${$X}...`, ...)
+              - pattern: $CP.exec($A + $B, ...)
+              - pattern: $CP.execSync($A + $B, ...)
+          - metavariable-regex:
+              metavariable: $CP
+              regex: ^(child_process|childProcess|child|cp|proc)$
+      - pattern: exec(`...${$X}...`, ...)
+      - pattern: execSync(`...${$X}...`, ...)
+      - pattern: exec($A + $B, ...)
+      - pattern: execSync($A + $B, ...)
       - pattern: '$CP.spawn($CMD, $ARGS, {..., shell: true, ...})'
   - id: js-html-sink
     languages: [javascript, typescript]
@@ -33,14 +44,18 @@ rules:
     languages: [javascript, typescript]
     severity: ERROR
     message: "SQL built by string interpolation: SQL injection. Use parameters/placeholders."
-    pattern-either:
-      - pattern: $DB.query(`...${$X}...`, ...)
-      - pattern: $DB.execute(`...${$X}...`, ...)
-      - pattern: $DB.run(`...${$X}...`, ...)
-      - pattern: $DB.prepare(`...${$X}...`)
-      - pattern: $DB.exec(`...${$X}...`)
-      - pattern: $DB.$queryRawUnsafe(...)
-      - pattern: $DB.$executeRawUnsafe(...)
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query(`...${$X}...`, ...)
+          - pattern: $DB.execute(`...${$X}...`, ...)
+          - pattern: $DB.run(`...${$X}...`, ...)
+          - pattern: $DB.prepare(`...${$X}...`)
+          - pattern: $DB.exec(`...${$X}...`)
+          - pattern: $DB.$queryRawUnsafe(...)
+          - pattern: $DB.$executeRawUnsafe(...)
+      # SQLite PRAGMA values cannot be bound as parameters; a PRAGMA set from a plain identifier
+      # (a constant or a typed number) is the only way to write it.
+      - pattern-not-regex: PRAGMA\s+\w+\s*=\s*\$\{\s*(String\(\s*)?[A-Za-z_][\w.]*(\s*\))?\s*\}
   - id: js-insecure-random-secret
     languages: [javascript, typescript]
     severity: ERROR
