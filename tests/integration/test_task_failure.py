@@ -77,3 +77,20 @@ def test_retry_needs_a_failed_task_and_a_halted_job(make_env):
     env.factory.retry_task(job, "TASK-01", 2, "ok")
     with pytest.raises(TransitionRefused):
         env.factory.retry_task(job, "TASK-01", 1, "no longer FAILED")
+
+
+def test_the_retry_reason_reaches_the_builder(make_env):
+    """Live finding (LearnEnglish F5a TASK-08): the operator saw how to fix a task within its scope, but the retry
+    reason only went into an event, so the builder repeated the out-of-scope fix."""
+    builder = Builder()
+
+    def build(request) -> FakeReply:
+        builder.fixed = "use the shared key helper" in request.prompt
+        return builder(request)
+
+    env = make_env("standard", responders={"factory-plan": plan_reply(_tasks(False)), "factory-implement": build})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "NEEDS_HUMAN"
+    env.factory.retry_task(job, "TASK-01", 1, "use the shared key helper inside your own file")
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"

@@ -1309,7 +1309,8 @@ class Factory(ParallelLanes):
         max_attempts = self.cfg.workflow.implementation.max_attempts_per_leaf_task
         bases = self._ctx(job_id).get("task_base", {})
         bases.pop(task_id, None)  # the retry starts from the head at that time
-        self._set_ctx(job_id, task_base=bases)
+        notes = {**self._ctx(job_id).get("operator_notes", {}), task_id: reason}  # the builder reads why and how to retry
+        self._set_ctx(job_id, task_base=bases, operator_notes=notes)
         with self.store.tx() as conn:
             conn.execute("UPDATE tasks SET state = 'REWORK', attempts = ? WHERE job_id = ? AND task_id = ?",
                          (max(0, max_attempts - attempts), job_id, task_id))
@@ -1331,6 +1332,7 @@ class Factory(ParallelLanes):
             "task": json.loads(task["spec_json"]), "spec": ctx.get("spec"), "feature_goal": self._feature(job_id)["goal"],
             "open_findings": open_findings, "last_failure": ctx.get("last_failure", {}).get(task_id),
             "root_cause": root_cause, "human_feedback": ctx.get("human_feedback"),
+            "operator_note": ctx.get("operator_notes", {}).get(task_id),
             "spec_advisories": ctx.get("spec_advisories", []), "design": self._design_context(job_id),
             "test_scope": "test files (tests/, test_*.py, *.test.ts(x), *.spec.ts(x)) are always in scope: add or extend the tests that prove this task's acceptance",
             "knowledge": self._knowledge_context(job_id),
