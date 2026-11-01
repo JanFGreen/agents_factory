@@ -39,7 +39,8 @@ from .evidence import EvidenceStore, Producer
 from .features import NormalizedFeature, classify, load_feature, path_rank, record_classification, store_feature
 from .identities import InputIdentity, ResultKind, digest
 from .lanes import ParallelLanes
-from .policy import RISK_ORDER, effect_sites, evaluate_diff, is_test_file, is_ui_path, max_risk, security_triggers
+from . import knowledge
+from .policy import FILE_SCOPE_RULE, RISK_ORDER, effect_sites, evaluate_diff, is_test_file, is_ui_path, max_risk, security_triggers
 from .preview import PreviewServer
 from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
@@ -125,6 +126,9 @@ class Factory(ParallelLanes):
         self.sandbox = sandbox
         self.workspaces = WorkspaceManager(store, self.data_dir)
         self.runner = TrustedRunner(sandbox, self.evidence, self.data_dir / "runs", factory_root=cfg.factory_dir.parent.absolute())
+        self.graphify = knowledge.Graphify(cfg.factory_dir.parent.absolute() / "tools" / "graphify" / ".venv" / "bin" / "graphify",
+                                           sandbox, self.data_dir / "knowledge")
+        self._graph_lock = threading.Lock()
         self.merge_handler = merge_handler
         self.checks_path = checks_path or cfg.factory_dir / "checks" / "default.yaml"
         self.owner_id = owner_id or f"controller-{os.getpid()}-{uuid.uuid4().hex[:6]}"
@@ -647,6 +651,69 @@ class Factory(ParallelLanes):
         files = git(wt, "ls-files").splitlines()
         return {"files": files[:400], "file_count": len(files)}
 
+    # ------------------------------------------------------------------ repository knowledge --
+
+    def _knowledge(self, job_id: str) -> knowledge.Knowledge:
+        found = knowledge.detect(git(self._worktree(job_id), "ls-files").splitlines())
+        if found.present and not self.graphify.available():
+            raise StageBlocked(S.BLOCKED_ENV, "the repository keeps a graphify graph or an Obsidian vault, which the factory must "
+                                              "keep current: install the pinned graphify (`uv sync --project tools/graphify`)")
+        return found
+
+    def _knowledge_context(self, job_id: str) -> dict[str, Any] | None:
+        found = self._knowledge(job_id)
+        if not found.present:
+            return None
+        report = self._worktree(job_id) / knowledge.REPORT
+        return {"graph": found.graph, "vaults": list(found.vaults),
+                "graph_report": report.read_text(errors="replace")[:6000] if report.is_file() else None,
+                "rule": "The controller rebuilds graphify-out/ and the vault's graph/ notes at integration: never edit them. "
+                        "Keep hand-written vault notes true to the behaviour they describe, and every [[wikilink]] resolving."}
+
+    def _code_graph(self, job_id: str) -> Path | None:
+        if not self._knowledge(job_id).graph:
+            return None
+        wt = self._worktree(job_id)
+        out = self.graphify.scratch / job_id / WorkspaceManager.head(wt)[:12]
+        with self._graph_lock:  # parallel lanes share one graph per commit
+            if not (out / knowledge.GRAPH).is_file():
+                try:
+                    self.graphify.code_graph(wt, out)
+                except (knowledge.KnowledgeError, subprocess.TimeoutExpired) as exc:
+                    raise StageBlocked(S.BLOCKED_ENV, f"code graph for planning: {exc}") from exc
+        return out / knowledge.GRAPH
+
+    def _dependents(self, job_id: str, files: list[str]) -> dict[str, list[str]]:
+        graph = self._code_graph(job_id) if files else None
+        return knowledge.dependents(graph, files) if graph else {}
+
+    def _refresh_knowledge(self, job_id: str, wt: Path, base_sha: str) -> str | None:
+        """Keep the repository's graph and vaults current with the job's change; a broken vault link is a rework reason."""
+        found = self._knowledge(job_id)
+        if not found.present:
+            return None
+        changed = git(wt, "diff", "--name-only", f"{base_sha}..HEAD").splitlines()
+        try:
+            if found.graph:
+                self.graphify.refresh(wt, docs_changed=any(knowledge.is_doc(f) for f in changed),
+                                      cache=self.graphify.scratch / "cache" / self._job(job_id)["repo_id"],
+                                      seed=Path(self._job(job_id)["repo_path"]) / "graphify-out" / "cache")
+                report = wt / knowledge.REPORT
+                if report.is_file():  # graphify titles the report after the folder; a worktree is named after the job
+                    head, _, rest = report.read_text().partition("\n")
+                    if head.startswith("# Graph Report - "):
+                        report.write_text(f"# Graph Report - {Path(self._job(job_id)['repo_path']).name}  {head.rsplit('  ', 1)[-1]}\n{rest}")
+                for vault in found.vaults:
+                    self.graphify.export_vault(wt, vault)
+        except (knowledge.KnowledgeError, subprocess.TimeoutExpired) as exc:
+            raise StageBlocked(S.BLOCKED_ENV, f"keeping the knowledge graph current: {exc}") from exc
+        broken = [link for vault in found.vaults for link in knowledge.broken_wikilinks(wt, vault)]
+        WorkspaceManager.commit_all(wt, "factory: refresh knowledge graph and Obsidian vault")
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "knowledge.refreshed", {"graph": found.graph, "vaults": list(found.vaults),
+                                                                  "broken_links": broken[:20], "docs_partial": self.graphify.docs_partial})
+        return f"Obsidian vault links that resolve to no note: {broken[:20]}" if broken else None
+
     def _step_intake(self, job_id: str) -> None:
         self._ensure_worktree(job_id)
         if self._ctx(job_id).get("intake") is None:  # answering decisions resumes here without a second intake run
@@ -980,7 +1047,10 @@ class Factory(ParallelLanes):
             # the guard into DECOMPOSE already required a current spec PASS; state it so the planner need not guess
             "spec_evaluation": {"verdict": "PASS", "spec_digest": ctx.get("spec_digest"), "advisories": ctx.get("spec_advisories", [])},
             "previous_plan": ctx.get("plan"), "previous_findings": ctx.get("analysis_findings", []),
-            "limits": self.cfg.workflow.decomposition.model_dump(),
+            "limits": self.cfg.workflow.decomposition.model_dump(), "file_scope_rule": FILE_SCOPE_RULE,
+            "knowledge": self._knowledge_context(job_id),
+            # who uses each file, so a task that changes a signature or type lists its callers (LearnEnglish F4, F5)
+            "dependency_map": knowledge.dependency_map(graph) if (graph := self._code_graph(job_id)) else None,
             "repo_map": self._repo_map(job_id), "design": self._design_context(job_id, with_text=True),
         })
         if res.payload is None:
@@ -996,7 +1066,10 @@ class Factory(ParallelLanes):
         dag = validate_dag(plan.tasks, [r.id for r in spec.requirements], self.cfg.workflow.decomposition)
         res = self.call_agent(job_id, "factory-decomposition-review", {
             "feature": self._feature(job_id), "spec": ctx["spec"], "plan": ctx["plan"], "controller_dag_problems": dag.problems,
-            "controller_difficulty": self._task_difficulty(job_id, plan.tasks),
+            "controller_difficulty": self._task_difficulty(job_id, plan.tasks), "file_scope_rule": FILE_SCOPE_RULE,
+            "knowledge": self._knowledge_context(job_id),
+            # files that import, call or reference each scoped file: a non-test one a task's change breaks belongs in a scope
+            "dependents": {t.task_id: self._dependents(job_id, t.file_scope) for t in plan.tasks},
         })
         verdict = res.envelope.verdict
         problems = list(dag.problems)
@@ -1173,15 +1246,24 @@ class Factory(ParallelLanes):
             self._run_builder(job_id, task_id, task, ctx)
         except budgets.BudgetExhausted:
             # The builder never ran: the attempt is not used up (live finding, LearnEnglish F1).
-            with self.store.tx() as conn:
-                conn.execute("UPDATE tasks SET attempts = attempts - 1 WHERE job_id = ? AND task_id = ?", (job_id, task_id))
-                row = conn.execute("SELECT version, build_attempts FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
-                self.store.cas_update_job(conn, job_id, row["version"], build_attempts=row["build_attempts"] - 1)
+            self._give_back_attempt(job_id, task_id)
+            raise
+        except StageBlocked as exc:
+            # The agent run died or found no slot (environment, not the code): resume retries the same
+            # attempt instead of charging the task for it (live finding, LearnEnglish F4 TASK-09).
+            if exc.state is S.BLOCKED_ENV:
+                self._give_back_attempt(job_id, task_id)
             raise
         sha = WorkspaceManager.commit_all(wt, f"factory: {task_id} attempt {task['attempts'] + 1}")
         self._sync_head(job_id)
         self.store.update_job_context(job_id, human_feedback=None)
         self.controller.transition(job_id, S.CHECKS, f"build produced {sha or 'no changes'}")
+
+    def _give_back_attempt(self, job_id: str, task_id: str) -> None:
+        with self.store.tx() as conn:
+            conn.execute("UPDATE tasks SET attempts = attempts - 1 WHERE job_id = ? AND task_id = ?", (job_id, task_id))
+            row = conn.execute("SELECT version, build_attempts FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            self.store.cas_update_job(conn, job_id, row["version"], build_attempts=row["build_attempts"] - 1)
 
     def _fail_task(self, job_id: str, task_id: str, reason: str) -> None:
         bases = self._ctx(job_id).get("task_base", {})
@@ -1251,6 +1333,8 @@ class Factory(ParallelLanes):
             "root_cause": root_cause, "human_feedback": ctx.get("human_feedback"),
             "spec_advisories": ctx.get("spec_advisories", []), "design": self._design_context(job_id),
             "test_scope": "test files (tests/, test_*.py, *.test.ts(x), *.spec.ts(x)) are always in scope: add or extend the tests that prove this task's acceptance",
+            "knowledge": self._knowledge_context(job_id),
+            "dependents": self._dependents(job_id, json.loads(task["spec_json"]).get("file_scope", [])),
         }, task_id=task_id, writable=True, purpose="build", model=self._builder_model(job_id, task_id, self._task(job_id, task_id)["attempts"]))
 
     def _fail_build(self, job_id: str, task_id: str, verdict: str, reason: str, evidence_payload: dict) -> None:
@@ -1667,6 +1751,7 @@ class Factory(ParallelLanes):
             "limits": {"max_layout_shift_px": design.max_layout_shift_px, "min_text_contrast": design.min_text_contrast,
                        "min_indicator_contrast": design.min_indicator_contrast, "first_screen": "360x640"},
             **self._verification_context(job_id, "acceptance", browser), "controller_note": ctx.get("ui_feature_note"),
+            "controller_checks": self._walkthrough_checks(browser),
         }, purpose="acceptance", browser=browser)
         verdict, extra, problem = self._hold_ui_review(job_id, res, browser)
         findings = self._findings(res.envelope) + extra
@@ -1696,6 +1781,21 @@ class Factory(ParallelLanes):
                                                                         "findings": findings}})
         self.controller.transition(job_id, S.BUILD_TASK, "feature walkthrough found UX defects")
         return False
+
+    def _walkthrough_checks(self, browser: dict) -> list[str]:
+        """What _hold_ui_review and _hold_walkthrough will require, stated up front from the same rules, so the reviewer
+        does not learn them one inconclusive run at a time (LearnEnglish F4b: three runs, three different omissions)."""
+        classes = sorted({self._screen_class(int(v.partition("x")[0])) for v in browser["viewports"]})
+        return [
+            f"viewports: for each screen class {classes}, cite a saved screenshot taken at a width of that class "
+            "(phone < 600 px, tablet < 1024 px, desktop otherwise) in evidence_ids",
+            "every evidence_id you cite is the name of a screenshot you saved in this run",
+            "flows: at least 2 (the first run on a phone and the action the user repeats most), each citing its screenshots",
+            "first_screen: what 360x640 shows before scrolling",
+            "layout_shifts: the main element measured before and after each state change of the flows",
+            f"interaction_states: {list(self.WALKTHROUGH_STATES)}; when you report 'checked', also {list(self.CHECKED_STATES)}",
+            "design_direction: PASS or FAIL against the design doc when it exists",
+        ]
 
     def _hold_walkthrough(self, res: AgentResult) -> tuple[str | None, list[dict]]:
         """(what the walkthrough left out, findings for measurements over the limits)."""
@@ -1915,7 +2015,9 @@ class Factory(ParallelLanes):
             return verdict, [], None
         problems = []
         design = self._design_context(job_id)
-        if design["exists"] and payload.design_direction.status in ("NOT_APPLICABLE", "NOT_RUN"):
+        # Judging the design direction needs a touched screen on show; a task whose screens the app does not
+        # render (plumbing in a .tsx provider, a screen mounted later) has nothing to judge it on (LearnEnglish F4).
+        if design["exists"] and payload.touched_screens_rendered and payload.design_direction.status in ("NOT_APPLICABLE", "NOT_RUN"):
             problems.append(f"{design['doc']} exists, so design_direction must be PASS or FAIL against it")
         low: list[Any] = []
         if browser is not None:
@@ -2071,6 +2173,9 @@ class Factory(ParallelLanes):
             base_sha, candidate = WorkspaceManager.integrate(wt, repo, job["base_branch"])
         except GitError as exc:
             return self._integration_rebuild(job_id, f"merge conflict with the current base: {exc}")
+        if broken := self._refresh_knowledge(job_id, wt, job["base_sha"]):
+            return self._integration_rebuild(job_id, broken)
+        candidate = WorkspaceManager.head(wt)
         self._set_ctx(job_id, candidate={"sha": candidate, "base_sha": base_sha})
         self._sync_head(job_id)
         ident = self.controller.identity(job_id)
@@ -2236,6 +2341,8 @@ class Factory(ParallelLanes):
         parked = self._ctx(job_id).get("parked_lanes")
         if parked and S(self._job(job_id)["state"]) in HALTED:  # the operator looked: re-run parked reviews once more
             self._set_ctx(job_id, parked_lanes={t: {**e, "count": 0} for t, e in parked.items()})
+        if S(self._job(job_id)["state"]) in HALTED:  # and inconclusive evaluations get their retry again, notes kept
+            self._set_ctx(job_id, **{k: 0 for k in self._ctx(job_id) if k.endswith("_inconclusive")})
         job = self._job(job_id)
         ctx = self._ctx(job_id)
         state = S(job["state"])

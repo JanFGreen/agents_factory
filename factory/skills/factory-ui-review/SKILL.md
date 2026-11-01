@@ -29,6 +29,8 @@ business logic.
 - Viewport set from policy (default desktop 1280 px, mobile 375 px).
 - `design`: the design direction document (`text` when it exists) and reference images.
 - `controller_note` (re-run only): what the controller could not find in your previous review.
+- `controller_checks` (feature walkthrough): every item the controller verifies in your payload; a missing one
+  makes the review inconclusive, so cover each before you answer.
 
 ## Procedure
 

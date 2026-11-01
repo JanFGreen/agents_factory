@@ -347,3 +347,28 @@ def test_budget_refusal_before_the_builder_runs_does_not_use_an_attempt(make_env
     env.factory.resume(job)
     assert env.factory.run(job) == "READY_TO_MERGE"
     assert env.store.all("SELECT attempts FROM tasks WHERE job_id = ?", (job,))[0]["attempts"] == 1
+
+
+def test_an_agent_run_that_dies_does_not_use_an_attempt(make_env, monkeypatch):
+    """Live finding (LearnEnglish F4 TASK-09): an operator session restart killed the builder; the run
+    ended `failed`, the job went BLOCKED_ENV, and resume charged the killed run as the task's last attempt."""
+    from agent_factory.factory import StageBlocked
+    from agent_factory.controller import S
+    env = make_env("trivial")
+    real_call = env.factory.call_agent
+    died: list[str] = []
+
+    def call_agent(job_id, skill, inputs, **kw):
+        if skill == "factory-implement" and not died:
+            died.append(skill)
+            raise StageBlocked(S.BLOCKED_ENV, "factory-implement run claude-x ended failed: success")
+        return real_call(job_id, skill, inputs, **kw)
+
+    monkeypatch.setattr(env.factory, "call_agent", call_agent)
+    job = env.submit()
+    assert env.factory.run(job) == "BLOCKED_ENV"
+    task = env.store.all("SELECT attempts FROM tasks WHERE job_id = ?", (job,))[0]
+    assert task["attempts"] == 0 and env.store.job(job)["build_attempts"] == 0
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert env.store.all("SELECT attempts FROM tasks WHERE job_id = ?", (job,))[0]["attempts"] == 1

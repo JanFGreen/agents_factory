@@ -86,5 +86,22 @@
    "semgrep --version",
    "semgrep scan --config <rules> --baseline-commit <sha> --error --metrics=off --disable-version-check --quiet ."
   ]
+ },
+ "graphify": {
+  "package": "graphifyy (PyPI)",
+  "version": "0.9.92",
+  "released": "2026-10-16",
+  "installed_at": "tools/graphify",
+  "binary": "tools/graphify/.venv/bin/graphify",
+  "install": "uv sync --project tools/graphify (uv.lock pins every dependency)",
+  "use": "knowledge.py: a repo that tracks graphify-out/graph.json or a folder with .obsidian/ gets dependents per scoped file in planning and a refreshed graph, community names and vault export at integration",
+  "sandbox": "code graph and vault export with network none; doc extraction and community naming (claude CLI, model haiku) with the agents' sandbox policy",
+  "verified_commands": [
+   "graphify extract . --code-only --no-cluster --out <dir>",
+   "graphify update . --force",
+   "graphify extract . --backend claude-cli --token-budget 12000",
+   "graphify label . --backend=claude-cli",
+   "graphify export obsidian --graph graphify-out/graph.json --dir <vault>/graph"
+  ]
  }
 }

@@ -67,7 +67,11 @@ the micro-spec).
    lists; every task that builds a screen `depends_on` it. Screens never define their own
    colors, type sizes or spacing.
 9. Mark `parallel_safe_with` only when file scopes and contracts are disjoint and no
-   lockfile/API change is shared.
+   lockfile/API change is shared. Follow `file_scope_rule` from the inputs: list every
+   non-test file the task changes, including production callers of a signature or type it
+   changes (search for them, or read them from `dependency_map` when the controller gives it: file ->
+   the files that import, call or reference it); a task that changes a shared type or signature is not
+   parallel-safe with tasks whose files or tests use it.
 10. Classify every future direction as `required_now`, `committed_next` or
    `hypothetical`. Build only `required_now`; record `committed_next` as
    `future_constraints` on affected tasks; `hypothetical` is a note only.

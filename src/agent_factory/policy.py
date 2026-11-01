@@ -128,6 +128,17 @@ def _matches(path: str, patterns: list[str]) -> bool:
 _JS_TEST = re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$")
 
 
+# What evaluate_diff enforces, told to the planner and the decomposition reviewer so they plan by
+# the real rule instead of guessing (a missing test file in a scope is not a defect).
+FILE_SCOPE_RULE = (
+    "file_scope must list every non-test file the task changes; a change to any other non-test file is refused. "
+    "Test files are always in the builder's scope: a task may update any existing test file (for example tests "
+    "that build a type or call a function whose shape the task changes) without listing it. Two tasks marked "
+    "parallel_safe_with must not both need to change the same file, test files included; when they would, drop "
+    "parallel_safe_with and order them with depends_on."
+)
+
+
 def is_test_file(path: str) -> bool:
     name = path.rsplit("/", 1)[-1]
     return name.startswith("test_") or name.endswith("_test.py") or bool(_JS_TEST.search(name)) or "/tests/" in f"/{path}"

@@ -14,6 +14,7 @@ Exit codes (`cli.py`): `0` ok, `2` usage/configuration error, `3` refusal (`Tran
 uv sync                        # Python 3.12 (.python-version), dependencies from uv.lock
 uv run pytest                  # offline; live tests are skipped
 (cd tools/openspec && npm ci)  # only if node_modules is missing; version in factory.lock.json
+uv sync --project tools/graphify  # pinned graphify, needed for repos with a knowledge graph or an Obsidian vault
 ```
 
 The Claude CLI must be installed (`runtime.claude_binary`, default `claude` in `PATH`) and logged in
@@ -406,7 +407,32 @@ uv run factory plan approve <id> [--budget 60]     # sets the job limit (default
 uv run factory resume <id>
 ```
 
+## Knowledge graph and Obsidian vault (`knowledge.py`)
+
+A repository opts in by tracking `graphify-out/graph.json` (graphify) and/or a folder with `.obsidian/`
+(an Obsidian vault). Then the controller, not a prompt:
+
+- **plans with it**: before the decomposition review it builds a fresh code graph offline in the sandbox
+  (`graphify extract --code-only`, outside the worktree) and gives the reviewer and each builder `dependents`:
+  per file in a task's `file_scope`, the files that import, call or reference it. Planner, reviewer and builder
+  also get `knowledge` (the graph report and the vaults);
+- **keeps it current at integration** (mandatory): `graphify update` rebuilds the code graph; when the job changed
+  docs (`.md/.mdx/.txt/.rst`, the exported spec included) the docs are re-extracted with the small model
+  (haiku, graphify's own recommendation; the per-repo extraction cache in `<data_dir>/knowledge/cache/<repo>` keeps it to
+  the changed files); communities are named again (haiku); the graph is exported into `<vault>/graph/` with
+  `GRAPH_REPORT.md`; the result is committed as `factory: refresh knowledge graph and Obsidian vault`
+  (event `knowledge.refreshed`);
+- **holds the vault to its links**: a `[[wikilink]]` in a vault note that names no file of the vault sends the job
+  back to rework with the list of broken links.
+
+Fail-closed: a repo with a graph or a vault and no pinned graphify, a graphify error, or a model call that graphify
+degraded to placeholders stops the job in `BLOCKED_ENV` instead of merging a stale graph. Model calls run with the
+agents' sandbox policy (the claude CLI's own login), everything else with network `none`.
+
 ## A task that exhausted its attempts
+
+An attempt whose agent run died (a killed process, no agent slot: `BLOCKED_ENV`) or that the budget refused before
+the builder ran is given back, so `resume` repeats it instead of charging the task.
 
 The task moves to `FAILED` on its own: its rejected attempts are reverted from the job branch (patch stored as an artifact),
 and independent tasks keep building. When nothing is left to build, the job waits in `NEEDS_HUMAN`

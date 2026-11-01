@@ -267,6 +267,22 @@ def test_screens_a_later_task_mounts_need_screenshots_but_no_visual_scores(make_
     assert env.events(job, "ui_review.not_rendered")
 
 
+def test_a_task_with_no_screen_on_show_is_not_held_to_the_design_doc(make_env, tmp_path, repo):
+    """Live finding (LearnEnglish F4 TASK-10): sync plumbing in a .tsx provider triggered the UI review, which
+    rightly said no touched screen renders, yet was ruled inconclusive three times for not judging DESIGN.md."""
+    (repo / "docs").mkdir()
+    (repo / "docs" / "DESIGN.md").write_text("# Design\n")
+    _push(repo, "design doc")
+    plumbing = {"viewports": [{"name": "mobile", "width": 390, "evidence_ids": ["home-390.png"]}],
+                "design_direction": {"status": "NOT_APPLICABLE"},
+                "touched_screens_rendered": False, "not_rendered_reason": "TASK changes the sync provider only"}
+    ui = UiReviewer([(True, plumbing)], [(True, walkthrough(design="PASS"))])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE", env.store.job(job)["blocked_reason"]
+    assert [v for v, _ in _ui_results(env, job)][0] == "PASS"
+
+
 def test_not_rendered_still_needs_the_screenshots_of_what_the_app_shows(make_env, tmp_path, repo):
     unmounted = {"viewports": [{"name": "mobile", "width": 390, "evidence_ids": []}],
                  "touched_screens_rendered": False, "not_rendered_reason": "not mounted yet"}
@@ -374,3 +390,17 @@ def test_walkthrough_findings_go_to_the_last_task_with_user_visible_files(make_e
     assert any("feature walkthrough" in r.get("reason", "") for r in rework)
     builds = [c for c in env.runtime.calls if c.skill == "factory-implement"]
     assert sum("task=TASK-01" in c.prompt for c in builds) == 2 and sum("task=TASK-02" in c.prompt for c in builds) == 1
+
+
+def test_the_walkthrough_gets_the_controller_checks_up_front_and_resume_restores_its_retry(make_env, tmp_path, repo):
+    """Live finding (LearnEnglish F4b): three walkthroughs left out three different required items, and after the
+    operator's resume the stage had no retry left."""
+    partial = {**walkthrough(), "flows": []}
+    ui = UiReviewer([(True, ui_payload())], [(True, partial), (True, partial), (True, walkthrough())])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "NEEDS_HUMAN"
+    checks = ui.feature_inputs[0]["controller_checks"]
+    assert any(c.startswith("viewports:") and "phone" in c for c in checks) and any("checked+focus" in c for c in checks)
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE", env.store.job(job)["blocked_reason"]

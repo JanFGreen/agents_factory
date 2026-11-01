@@ -61,3 +61,4 @@ GoogleService-Info.plist
 
 # Local notes
 TODO.md
+tools/graphify/.venv/

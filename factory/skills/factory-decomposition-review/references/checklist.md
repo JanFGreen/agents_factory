@@ -12,6 +12,7 @@ Blueprint §7.6 and `workflow.yaml: decomposition`. All eight points are mandato
    not proof of atomicity.
 4. **No conflicts.** No duplicated work; no two `parallel_safe_with` tasks sharing a
    `file_scope`; lockfile and public API changes owned by exactly one task; no impossible parallelism.
+   Judge scopes by the `file_scope_rule` input: test files are always in the builder's scope.
 5. **Early vertical integration.** API, UI and data are connected incrementally;
    avoid building large disconnected layers that meet only at the end.
 6. **Completeness of supporting work.** Migrations (with rollback), seed/test data,

@@ -27,6 +27,8 @@ features this review is not run; the controller records
 - Limits: `decomposition.max_depth` (3), `max_leaf_tasks_per_feature` (20),
   `target_task_minutes` (45), per-task attempt limit, remaining feature budget.
 - `plan_digest`, `spec_digest`, `analysis_round_id`, previous findings.
+- `file_scope_rule`: the scope rule the controller enforces on every build diff. Judge
+  `file_scope` by it, not by a stricter rule of your own.
 
 ## Procedure
 
@@ -47,7 +49,11 @@ features this review is not run; the controller records
    `outputs`, test cases in `verification`) is a blocking finding; a `hard` leaf must be split
    unless `difficulty_reasons` says `indivisible:` with a convincing reason.
 5. Conflicts: overlapping `file_scope` between tasks marked `parallel_safe_with`,
-   uncontrolled lockfile/API changes, duplicated work.
+   uncontrolled lockfile/API changes, duplicated work. Apply `file_scope_rule`: a missing
+   non-test file (production caller of a changed signature) is a finding; a test file
+   missing from `file_scope` is not, because test files are always in the builder's scope.
+   Parallel tasks that both have to change one file (test files included) are a finding
+   whose fix is to drop `parallel_safe_with` and order them.
 6. Vertical integration: API/UI/data joined incrementally, not separate big layers at the end.
 7. Completeness: migrations with rollback, seed/test data, error paths,
    observability and docs within feature scope.
