@@ -28,7 +28,7 @@ budget:
   unknown_price_policy: require_operator_limit
   plan_approval: required             # after the plan: cost estimate for approval (`factory plan approve`)
   auto_approve_below_usd: 5            # small changes start without approval
-  max_cost_per_agent_call: 1.50        # conservative reservation and --max-budget-usd per call
+  max_cost_per_agent_call: 3.00        # reservation and --max-budget-usd per call; large plans cost $1.5-1.9 (LearnEnglish F4-F5)
 policy:
   mode: local                          # offline | local | pr | automerge | release
   deploy: false
