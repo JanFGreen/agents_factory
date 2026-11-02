@@ -137,6 +137,11 @@ FILE_SCOPE_RULE = (
     "parallel_safe_with must not both need to change the same file, test files included; when they would, drop "
     "parallel_safe_with and order them with depends_on."
 )
+SCOPE_SELF_CHECK = (
+    "Before you hand over, list what you changed (`git status --porcelain`) and check each non-test path against "
+    "file_scope. A helper that only tests use goes inside the test file or into a directory named tests/ (both count "
+    "as test files); anything else moves into a file_scope file. One file outside the scope refuses the whole attempt."
+)
 
 
 def is_test_file(path: str) -> bool:

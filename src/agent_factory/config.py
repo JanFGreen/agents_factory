@@ -158,6 +158,9 @@ class Implementation(Strict):
     max_build_attempts_per_feature: int
     integration_rebuilds: int
     attempts_do_not_reset_after_reclassification: bool
+    gate_fixups_per_attempt: int = 1  # a refused gate first gets one builder pass that fixes only what it refused
+    gate_fixup_model: str | None = None  # None keeps the attempt's builder model
+    demote_medium_after_review_rounds: int = 0  # 0: off; else medium findings stop blocking after that many review rounds
 
 
 class WorkflowConfig(Strict):

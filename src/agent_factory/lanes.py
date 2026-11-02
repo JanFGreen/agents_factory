@@ -241,27 +241,35 @@ class ParallelLanes:
             except budgets.BudgetExhausted as exc:
                 return LaneOutcome(task_id, "budget", reason=str(exc))
             WorkspaceManager.commit_all(lane, f"factory: {task_id} attempt {task['attempts']} (lane)")
-        head = WorkspaceManager.head(lane)
-        if not self._is_ancestor(lane, start, head):
-            return self._lane_fail(job_id, task_id, "FAIL_POLICY", "history before the build was rewritten")
-        report = evaluate_diff(WorkspaceManager.diff(lane, start), self.cfg.factory.policy, task_file_scope=spec.file_scope or None)
-        lane_diff = [d for d in WorkspaceManager.diff(lane, job["base_sha"]) if not d.path.startswith("openspec/")]
-        risk_report = evaluate_diff(lane_diff, self.cfg.factory.policy)
-        risk = max_risk(job["risk"] or "low", risk_report.risk)
-        surfaces = sorted(set(self._ctx(job_id).get("surfaces", [])) | risk_report.surfaces)
-        if not report.ok:
-            return self._lane_fail(job_id, task_id, "FAIL_POLICY", "; ".join(report.violations))
-        if not lane_diff:
-            return self._lane_fail(job_id, task_id, "FAIL_CODE", "feature has no change versus base")
-        ident = self._identity(job_id, task_id)
-        gate_ok, _ = self.evidence.current_pass(job_id, ResultKind.GATE, ident, task_id)
-        if not gate_ok:  # a parked lane keeps its gate result while nothing changed
+        while True:  # a refused gate may get a fix-up pass in the same attempt, then the checks run again
+            head = WorkspaceManager.head(lane)
+            if not self._is_ancestor(lane, start, head):
+                return self._lane_fail(job_id, task_id, "FAIL_POLICY", "history before the build was rewritten")
+            report = evaluate_diff(WorkspaceManager.diff(lane, start), self.cfg.factory.policy, task_file_scope=spec.file_scope or None)
+            lane_diff = [d for d in WorkspaceManager.diff(lane, job["base_sha"]) if not d.path.startswith("openspec/")]
+            risk_report = evaluate_diff(lane_diff, self.cfg.factory.policy)
+            risk = max_risk(job["risk"] or "low", risk_report.risk)
+            surfaces = sorted(set(self._ctx(job_id).get("surfaces", [])) | risk_report.surfaces)
+            if not report.ok:
+                if build and self._gate_fixup(job_id, task_id, "FAIL_POLICY", "; ".join(report.violations), {}, lane):
+                    continue
+                return self._lane_fail(job_id, task_id, "FAIL_POLICY", "; ".join(report.violations))
+            if not lane_diff:
+                return self._lane_fail(job_id, task_id, "FAIL_CODE", "feature has no change versus base")
+            ident = self._identity(job_id, task_id)
+            gate_ok, _ = self.evidence.current_pass(job_id, ResultKind.GATE, ident, task_id)
+            if gate_ok:  # a parked lane keeps its gate result while nothing changed
+                break
             gate = self._gate(job_id, "task", lane, head_sha=head, tree_sha=WorkspaceManager.tree(lane))
             self._record(job_id, ResultKind.GATE, str(gate.verdict), gate.as_payload(), producer=Producer("trusted-runner", "gate"), task_id=task_id)
             if gate.verdict not in (GateVerdict.PASS, GateVerdict.FAIL_CODE, GateVerdict.FAIL_POLICY, GateVerdict.TIMEOUT):
                 return LaneOutcome(task_id, "blocked", reason=f"gate {gate.verdict}: {gate.reason}", blocked_state=S.BLOCKED_ENV)
-            if gate.verdict is not GateVerdict.PASS:
-                return self._lane_fail(job_id, task_id, str(gate.verdict), gate.reason, {c.name: c.excerpt[-1500:] for c in gate.checks})
+            if gate.verdict is GateVerdict.PASS:
+                break
+            failed = {c.name: c.excerpt[-1500:] for c in gate.checks if c.verdict != str(GateVerdict.PASS)}
+            if build and gate.verdict is not GateVerdict.TIMEOUT and self._gate_fixup(job_id, task_id, str(gate.verdict), gate.reason, failed, lane):
+                continue
+            return self._lane_fail(job_id, task_id, str(gate.verdict), gate.reason, {c.name: c.excerpt[-1500:] for c in gate.checks})
         required = self._required_reviews(self._task_surfaces(job_id, task_id, spec, surfaces, WorkspaceManager.diff(lane, start)))
         for _ in range(3):  # inconclusive reviews re-run, as in the sequential REVIEW state
             verdicts, error_class = self._run_reviews(job_id, task_id, json.loads(task["spec_json"]), lane, ident, required,

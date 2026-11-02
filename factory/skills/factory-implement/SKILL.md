@@ -30,6 +30,9 @@ controller decides. You never approve, merge or close findings.
 - `spec_advisories`: non-blocking spec findings (unrequested edge cases). Handle them
   when it is cheap and inside `file_scope`; never widen scope or change requested behavior for them.
 - `design`: path of the design direction document (`doc`, `exists`) and reference images.
+- `file_scope_rule`: what the policy gate enforces on changed files, and the self-check to run before handing over.
+- `gate_fixup` (only on a fix-up pass): the gate refused this attempt (`verdict`, `reason`, failing check `excerpt`).
+  See "Gate fix-up" below.
 
 ## Procedure
 
@@ -60,8 +63,18 @@ controller decides. You never approve, merge or close findings.
 8. Senior self-review (`references/senior-bar.md`): read your whole diff as a senior
    engineer reviewing a stranger's pull request and fix what they would send back; rerun
    the quick checks after the fixes.
-9. Write the handoff per `references/handoff.md` and stop. Leave the worktree with all
+9. Scope self-check (`file_scope_rule`): `git status --porcelain`, every non-test path must be in `file_scope`.
+   A helper only tests use belongs inside the test file or under a `tests/` directory.
+10. Write the handoff per `references/handoff.md` and stop. Leave the worktree with all
    changes committed or staged exactly as the controller instructs.
+
+## Gate fix-up
+
+When `gate_fixup` is present, the attempt is already built and the trusted gate refused it. Do not start
+the task over and do not revisit review findings: make the smallest change that fixes exactly the listed
+failures. A change outside `file_scope` moves into a `file_scope` file or a test file. A SAST, hygiene or
+lint finding is fixed in the code, never suppressed. Removed tests are restored. Run the failing check
+when you can, then hand over as usual with `handoff` naming each fix.
 
 ## Output
 

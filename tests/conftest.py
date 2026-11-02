@@ -79,14 +79,20 @@ def make_factory_dir(tmp_path: Path, **overrides: Any) -> Path:
     cfg["data_dir"] = str(tmp_path / "data")
     cfg["budget"]["plan_approval"] = "off"  # tests that exercise the approval stop turn it back on
     models["decision_model"]["provider"] = "none"  # tests never call an external decision model
+    workflow = yaml.safe_load((target / "workflow.yaml").read_text())
+    impl = workflow["implementation"]  # tests that exercise the gate fix-up or the demotion turn them back on
+    impl["gate_fixups_per_attempt"], impl["demote_medium_after_review_rounds"] = 0, 0
     for dotted, value in overrides.items():
         prefix = next((k for k in _MODEL_KEYS if dotted == k or dotted.startswith(k + ".")), None)
-        if prefix is None:
+        if dotted.startswith("workflow."):
+            _set(workflow, dotted.removeprefix("workflow."), value)
+        elif prefix is None:
             _set(cfg, dotted, value)
         else:
             _set(models, _MODEL_KEYS[prefix] + dotted[len(prefix):], value)
     (target / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
     (target / "models.yaml").write_text(yaml.safe_dump(models, sort_keys=False))
+    (target / "workflow.yaml").write_text(yaml.safe_dump(workflow, sort_keys=False))
     return target
 
 

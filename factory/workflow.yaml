@@ -64,3 +64,6 @@ implementation:
   max_build_attempts_per_feature: 30
   integration_rebuilds: 2
   attempts_do_not_reset_after_reclassification: true
+  gate_fixups_per_attempt: 1            # FAIL_CODE/FAIL_POLICY: one narrow builder pass in the same attempt before a new build
+  gate_fixup_model: claude-sonnet-5-5   # a SAST rule or a file outside the scope does not need the hard-task model
+  demote_medium_after_review_rounds: 3  # from round 4 a task's medium code/test/UI findings are follow-ups, not blockers

@@ -40,7 +40,7 @@ from .features import NormalizedFeature, classify, load_feature, path_rank, reco
 from .identities import InputIdentity, ResultKind, digest
 from .lanes import ParallelLanes
 from . import knowledge
-from .policy import FILE_SCOPE_RULE, RISK_ORDER, effect_sites, evaluate_diff, is_test_file, is_ui_path, max_risk, security_triggers
+from .policy import FILE_SCOPE_RULE, RISK_ORDER, SCOPE_SELF_CHECK, effect_sites, evaluate_diff, is_test_file, is_ui_path, max_risk, security_triggers
 from .preview import PreviewServer
 from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
@@ -79,6 +79,7 @@ REVIEW_SKILLS = {
 }
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep"]
 BROWSER_REVIEWS = ("ui-review", "product-verify")  # reviews that look at the served web build when there is one
+DEMOTABLE_REVIEWS = ("code-review", "test-adequacy", "ui-review")  # security and product verification always block
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 _FOLLOW = re.compile(r"^Follow \.\./_shared/([\w.-]+\.md)\s*$", re.M)  # shared documents a skill names
 
@@ -1351,10 +1352,10 @@ class Factory(ParallelLanes):
                          (max(0, max_attempts - attempts), job_id, task_id))
             self.store.event(conn, job_id, "task.retry", {"task_id": task_id, "attempts": attempts, "reason": reason})
 
-    def _run_builder(self, job_id: str, task_id: str, task, ctx: dict) -> None:
+    def _run_builder(self, job_id: str, task_id: str, task, ctx: dict, gate_fixup: dict | None = None) -> None:
         root_cause = None
         fps = ctx.get("failure_fingerprints", {}).get(task_id, [])
-        if len(fps) >= 2 and fps[-1] == fps[-2]:
+        if len(fps) >= 2 and fps[-1] == fps[-2] and gate_fixup is None:
             rc = self.call_agent(job_id, "factory-root-cause", {
                 "task": json.loads(task["spec_json"]), "repeated_failure": ctx.get("last_failure", {}).get(task_id),
             }, task_id=task_id, purpose="build")
@@ -1370,9 +1371,36 @@ class Factory(ParallelLanes):
             "operator_note": ctx.get("operator_notes", {}).get(task_id),
             "spec_advisories": ctx.get("spec_advisories", []), "design": self._design_context(job_id),
             "test_scope": "test files (tests/, test_*.py, *.test.ts(x), *.spec.ts(x)) are always in scope: add or extend the tests that prove this task's acceptance",
+            "file_scope_rule": FILE_SCOPE_RULE + " " + SCOPE_SELF_CHECK,
             "knowledge": self._knowledge_context(job_id),
             "dependents": self._dependents(job_id, json.loads(task["spec_json"]).get("file_scope", [])),
-        }, task_id=task_id, writable=True, purpose="build", model=self._builder_model(job_id, task_id, self._task(job_id, task_id)["attempts"]))
+            **({"gate_fixup": gate_fixup} if gate_fixup else {}),
+        }, task_id=task_id, writable=True, purpose="build",
+            model=(self.cfg.workflow.implementation.gate_fixup_model if gate_fixup else None)
+            or self._builder_model(job_id, task_id, self._task(job_id, task_id)["attempts"]))
+
+    def _gate_fixup(self, job_id: str, task_id: str, verdict: str, reason: str, excerpt: dict, wt: Path) -> bool:
+        """One narrow builder pass, inside the same attempt, that fixes only what the gate refused; False when none is left.
+
+        Live finding (LearnEnglish F4-F5a): every FAIL_CODE was a SAST rule the builder cannot run and most FAIL_POLICY
+        a helper file outside the scope; each cost a full rebuild (~$2.20) and a task attempt.
+        """
+        task = self._task(job_id, task_id)
+        key = f"{task_id}#{task['attempts']}"
+        used = self._ctx(job_id).get("gate_fixups", {})
+        if "rewritten" in reason or used.get(key, 0) >= self.cfg.workflow.implementation.gate_fixups_per_attempt:
+            return False
+        self._set_ctx(job_id, gate_fixups={**used, key: used.get(key, 0) + 1})
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "gate.fixup", {"task_id": task_id, "verdict": verdict, "reason": reason[:300]})
+        self._run_builder(job_id, task_id, task, self._ctx(job_id), gate_fixup={
+            "verdict": verdict, "reason": reason[:4000], "excerpt": excerpt,
+            "how": "The trusted gate refused this attempt. Change only what fixes exactly these failures, keep the rest of the "
+                   "attempt as it is, and do not start the task over. A change outside file_scope moves into a file_scope file "
+                   "or a test file; a SAST or lint finding is fixed in the code, never suppressed; removed tests are restored.",
+        })
+        WorkspaceManager.commit_all(wt, f"factory: {task_id} attempt {task['attempts']} gate fix-up")
+        return True
 
     def _fail_build(self, job_id: str, task_id: str, verdict: str, reason: str, evidence_payload: dict) -> None:
         ctx = self._ctx(job_id)
@@ -1421,6 +1449,9 @@ class Factory(ParallelLanes):
             return
         if not report.ok:
             self._record(job_id, ResultKind.GATE, str(GateVerdict.FAIL_POLICY), {"violations": report.violations}, task_id=task_id)
+            if self._gate_fixup(job_id, task_id, "FAIL_POLICY", "; ".join(report.violations), {}, wt):
+                self._sync_head(job_id)
+                return  # same attempt: the checks run again
             return self._fail_build(job_id, task_id, "FAIL_POLICY", "; ".join(report.violations), {})
         if not job_diff:
             # An unchanged attempt is fine when earlier work already satisfies the (re-evaluated) spec;
@@ -1433,6 +1464,10 @@ class Factory(ParallelLanes):
             self._route_reviews(job_id, task_id, task_spec, surfaces, new_risk, builder_diff)
             self.controller.transition(job_id, S.REVIEW)
         elif gate.verdict in (GateVerdict.FAIL_CODE, GateVerdict.FAIL_POLICY, GateVerdict.TIMEOUT):
+            failed = {c.name: c.excerpt[-1500:] for c in gate.checks if c.verdict != str(GateVerdict.PASS)}
+            if gate.verdict is not GateVerdict.TIMEOUT and self._gate_fixup(job_id, task_id, str(gate.verdict), gate.reason, failed, wt):
+                self._sync_head(job_id)
+                return  # same attempt: the checks run again
             self._fail_build(job_id, task_id, str(gate.verdict), gate.reason, {c.name: c.excerpt[-1500:] for c in gate.checks})
         else:
             raise StageBlocked(S.BLOCKED_ENV, f"gate {gate.verdict}: {gate.reason}")
@@ -1487,7 +1522,27 @@ class Factory(ParallelLanes):
         """
         ui = (any(is_ui_path(p) for p in task.file_scope) or any(is_ui_path(d.path) for d in diff or [])
               or self.evidence.latest(job_id, ResultKind.UI_REVIEW, task_id) is not None)
+        if ui and self._ui_still_not_rendered(job_id, task_id):
+            ui = False
         return sorted((set(surfaces) - {"ui"}) | ({"ui"} if ui else set()))
+
+    def _job_ui_files(self, job_id: str) -> list[str]:
+        return sorted(d.path for d in WorkspaceManager.diff(self._active_worktree(job_id), self._job(job_id)["base_sha"])
+                      if is_ui_path(d.path))
+
+    def _ui_still_not_rendered(self, job_id: str, task_id: str) -> bool:
+        """An earlier UI review of this task found no touched screen on show, nothing it flagged is open, and no new UI file
+        was touched since: a new review would only say "not rendered" again (LearnEnglish F5a TASK-14: 6 x $0.35)."""
+        seen = self._ctx(job_id).get("ui_not_rendered", {}).get(task_id)
+        if seen is None:
+            return False
+        open_ui = self.store.one("SELECT 1 FROM findings WHERE job_id = ? AND task_id = ? AND kind = 'ui-review' AND status = 'open'"
+                                 " AND blocking = 1", (job_id, task_id))
+        if open_ui is not None or not set(self._job_ui_files(job_id)) <= set(seen):
+            return False
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "ui_review.skipped", {"task_id": task_id, "reason": "no touched screen on show, no new UI file"})
+        return True
 
     def _route_reviews(self, job_id: str, task_id: str, task: TaskSpec, surfaces: list[str], risk: str, diff) -> None:
         ctx = self._ctx(job_id)
@@ -1575,6 +1630,8 @@ class Factory(ParallelLanes):
                 if problem:
                     payload["controller"] = {"verdict": verdict, "problem": problem}
                 self._set_review_note(job_id, task_id, review, problem)
+                if task_id and verdict == "PASS" and isinstance(res.payload, UiReviewPayload) and not res.payload.touched_screens_rendered:
+                    self._set_ctx(job_id, ui_not_rendered={**ctx.get("ui_not_rendered", {}), task_id: self._job_ui_files(job_id)})
             findings = self._keep_escalations(job_id, task_id, review, findings)
             if review == "security-review":
                 verdict, findings = self._triage_security(job_id, task_id, verdict, findings, {d.path for d in files})
@@ -1586,6 +1643,8 @@ class Factory(ParallelLanes):
                 if problem:
                     payload["controller"] = {"verdict": verdict, "problem": problem}
                 self._set_review_note(job_id, task_id, review, problem)
+            if review in DEMOTABLE_REVIEWS:
+                verdict, findings = self._demote_after_rounds(job_id, task_id, review, verdict, findings)
             self._record(job_id, kind, verdict, payload, ident=ident,
                          producer=self._agent_producer(res, skill), task_id=task_id, findings=findings)
             verdicts[review] = verdict
@@ -1675,6 +1734,28 @@ class Factory(ParallelLanes):
                  "expected_fix": "Make the probed failure mode safe and keep the probe as a regression test.", "status": "open"}
                 for i, (fid, p) in enumerate(confirmed.items())]
         return "CHANGES", out, None
+
+    def _demote_after_rounds(self, job_id: str, task_id: str | None, review: str, verdict: str,
+                             findings: list[dict]) -> tuple[str, list[dict]]:
+        """After N rounds of one review on a task, its low and medium findings are follow-ups: open, on record, not blocking.
+
+        Live finding (LearnEnglish F5a TASK-14): every round found a new medium race in the same state machine and six
+        rounds cost $26. High and critical findings still block; open follow-ups go to feature acceptance, which can
+        make a user-facing one blocking again.
+        """
+        after = self.cfg.workflow.implementation.demote_medium_after_review_rounds
+        if not after or not task_id or verdict != "CHANGES":
+            return verdict, findings
+        rounds = self.store.one("SELECT COUNT(*) AS n FROM results WHERE job_id = ? AND task_id = ? AND kind = ?",
+                                (job_id, task_id, review))["n"]
+        demoted = [f["id"] for f in findings if f["blocking"] and f["severity"] in ("low", "medium")] if rounds >= after else []
+        if not demoted:
+            return verdict, findings
+        out = [{**f, "blocking": False, "problem": f"[follow-up after {rounds} review rounds] {f['problem']}"[:4000]}
+               if f["id"] in demoted else f for f in findings]
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "findings.demoted", {"task_id": task_id, "review": review, "rounds": rounds, "findings": demoted})
+        return ("CHANGES" if any(f["blocking"] for f in out) else "PASS"), out
 
     # --- security review: triggers, known findings, triage -----------------------------
 
