@@ -158,9 +158,11 @@ class Implementation(Strict):
     max_build_attempts_per_feature: int
     integration_rebuilds: int
     attempts_do_not_reset_after_reclassification: bool
+    # Cost guards with code defaults: not written to workflow.yaml, whose text is part of the policy digest, so adding
+    # them does not make the evidence of running jobs stale. Set them in workflow.yaml to override.
     gate_fixups_per_attempt: int = 1  # a refused gate first gets one builder pass that fixes only what it refused
-    gate_fixup_model: str | None = None  # None keeps the attempt's builder model
-    demote_medium_after_review_rounds: int = 0  # 0: off; else medium findings stop blocking after that many review rounds
+    gate_fixup_model: str | None = "claude-sonnet-5-5"  # None keeps the attempt's builder model
+    demote_medium_after_review_rounds: int = 3  # 0: off; from the next round low/medium code/test/UI findings are follow-ups
 
 
 class WorkflowConfig(Strict):

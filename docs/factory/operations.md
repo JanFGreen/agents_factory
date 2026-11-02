@@ -473,7 +473,9 @@ uv run factory resume <id>
 
 ## Rebuild and review-loop guards (`workflow.implementation`)
 
-Measured on LearnEnglish F4-F5a, where one task cost $30 in six review rounds:
+Measured on LearnEnglish F4-F5a, where one task cost $30 in six review rounds. The defaults live in `config.py`,
+not in `workflow.yaml`. That file's text is part of the policy digest, and adding keys to it would make the evidence of every
+running job stale. Set a key in `workflow.yaml` to override it.
 
 - `gate_fixups_per_attempt` (default 1): a gate that refuses an attempt (`FAIL_CODE` or a `FAIL_POLICY` such as a file
   outside the scope) first gets a narrow builder pass in the same attempt. The pass gets `gate_fixup` in its inputs and
