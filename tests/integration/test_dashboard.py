@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from agent_factory.adapters.fake import FakeReply, envelope
-from agent_factory.dashboard import make_handler
+from agent_factory.dashboard import data, make_handler
 from agent_factory.dashboard.actions import ActionError, ActionRunner, build_argv
 from agent_factory.evidence import EvidenceStore, Producer
 
@@ -185,3 +185,103 @@ def test_answers_become_single_argv_entries():
     assert build_argv("resume", "job-0123456789ab", {}) == (["resume", "job-0123456789ab"], True)
     with pytest.raises(ActionError):
         build_argv("resume", "job-../../etc", {})
+
+
+@pytest.mark.parametrize("action, body, problem", [
+    ("task-retry", {"task_id": "TASK-14; rm", "attempts": 2, "reason": "x"}, "TASK-NN"),
+    ("task-retry", {"task_id": "TASK-14", "attempts": 4, "reason": "x"}, "between 1 and 3"),
+    ("task-retry", {"task_id": "TASK-14", "attempts": True, "reason": "x"}, "between 1 and 3"),
+    ("task-retry", {"task_id": "TASK-14", "attempts": 2}, "reason"),
+    ("attempts-raise", {"to": 501, "reason": "x"}, "between 1 and 500"),
+    ("attempts-raise", {"to": 60, "reason": "  "}, "reason"),
+    ("reopen", {}, "reason"),
+])
+def test_decision_action_arguments_are_validated(action, body, problem):
+    with pytest.raises(ActionError, match=problem):
+        build_argv(action, "job-0123456789ab", body)
+
+
+def test_decision_actions_map_to_the_cli_commands():
+    job = "job-0123456789ab"
+    note = "Fix F-1 --attempts 3 && echo"
+    assert build_argv("task-retry", job, {"task_id": "TASK-14", "attempts": 2, "reason": note}) == (
+        ["task", "retry", job, "TASK-14", "--attempts", "2", "--reason", note], False)
+    assert build_argv("attempts-raise", job, {"to": 70, "reason": "more"}) == (["attempts", "raise", job, "--to", "70", "--reason", "more"], False)
+    assert build_argv("reopen", job, {"reason": "old cap"}) == (["reopen", job, "--reason", "old cap"], False)
+
+
+def test_decision_actions_reach_the_controller(make_env, dashboard):
+    """The argv is what the CLI parses: the controller refuses (exit 3), not argparse (exit 2)."""
+    env = make_env("trivial")
+    job = env.submit()
+    d = dashboard(env, ActionRunner(env.cfg.data_dir(), env.factory_dir, cwd=ROOT))
+    for action, body in (("task-retry", {"task_id": "TASK-01", "attempts": 2, "reason": "fix it"}),
+                         ("attempts-raise", {"to": 80, "reason": "more"}), ("reopen", {"reason": "old cap"})):
+        status, out = d.post(f"/api/job/{job}/{action}", body)
+        assert status == 409 and out["exit_code"] == 3, (action, out)
+    assert env.store.job(job)["state"] == "FEATURE_RECEIVED"
+
+
+def _task(task_id, state, depends_on=()):
+    return {"task_id": task_id, "state": state, "attempts": 3, "depends_on": list(depends_on), "file_scope": [], "acceptance": "",
+            "requirement_ids": [], "difficulty": "hard"}
+
+
+def _finding(fid, task_id, blocking, fix, status="open"):
+    return {"finding_id": fid, "task_id": task_id, "kind": "code-review", "severity": "medium", "blocking": int(blocking),
+            "status": status, "problem": f"problem {fid}", "expected_fix": fix}
+
+
+def test_a_failed_task_asks_for_a_retry_with_the_blocking_fixes_as_the_note():
+    tasks = [_task("TASK-01", "ACCEPTED"), _task("TASK-02", "FAILED", ["TASK-01"]), _task("TASK-03", "PENDING", ["TASK-02"])]
+    findings = [_finding("F-1", "TASK-02", True, "guard the double sign-in"), _finding("F-2", "TASK-02", False, "nice to have"),
+                _finding("F-3", "TASK-02", True, "stale fix", status="fixed")]
+    ask = data.human("NEEDS_HUMAN", "tasks ['TASK-02'] used all their attempts", {}, tasks, findings,
+                     {"limit": 100.0, "committed": 10.0, "spent": 10.0}, {"TASK-02": 6.0}, waiting=True)
+    assert ask["kind"] == "task_failed" and ask["failed_tasks"] == ["TASK-02"] and ask["blocked_by"] == {"TASK-02": ["TASK-03"]}
+    assert "TASK-02 used all its attempts ($6.00 so far) with 1 blocking finding(s) open; it holds up TASK-03." in ask["asks"]
+    retry = ask["proposals"][0]
+    assert (retry["action"], retry["body"], retry["then_resume"]) == ("task-retry", {"task_id": "TASK-02", "attempts": 2}, True)
+    assert "F-1 (code-review): guard the double sign-in" in retry["reason"]
+    assert "nice to have" not in retry["reason"] and "stale fix" not in retry["reason"]
+    assert [p["action"] for p in ask["proposals"]] == ["task-retry", "resume", "cancel"]  # the budget still fits
+
+
+def test_a_budget_that_will_not_last_is_proposed_with_the_retry():
+    tasks = ([_task(f"TASK-{i:02d}", "ACCEPTED") for i in range(1, 15)] + [_task("TASK-15", "FAILED")]
+             + [_task(f"TASK-{i:02d}", "PENDING") for i in range(16, 21)])
+    ask = data.human("NEEDS_HUMAN", "", {}, tasks, [], {"limit": 150.0, "committed": 104.48, "spent": 104.48}, {}, waiting=True)
+    budget = next(p for p in ask["proposals"] if p["action"] == "raise-budget")
+    assert budget["body"] == {"to": 200} and budget["then_resume"] is False  # $7.46 per task, 6 left: (104.48 + 44.78) / 0.75
+    assert any("do not fit in the budget" in a for a in ask["asks"])
+
+
+@pytest.mark.parametrize("state, reason, ctx, kind, first", [
+    ("NEEDS_HUMAN", "feature used all 40 build attempts; to go on: ...", {}, "attempt_cap", "attempts-raise"),
+    ("FAILED", "feature used all 30 build attempts", {}, "reopen", "reopen"),
+    ("NEEDS_INFO", "", {"decisions": [{"id": "Q-1", "answer": None}]}, "decisions", "cancel"),
+    ("BUDGET_EXHAUSTED", "reserving $3.00 would exceed", {}, "budget", "raise-budget"),
+    ("BLOCKED_ENV", "node missing", {}, "environment", "resume"),
+])
+def test_each_halt_says_what_is_asked(state, reason, ctx, kind, first):
+    tasks = [_task("TASK-01", "ACCEPTED"), _task("TASK-02", "PENDING")]
+    ask = data.human(state, reason, ctx, tasks, [], {"limit": 20.0, "committed": 10.0, "spent": 10.0}, {},
+                     waiting=state in data.WAITING)
+    assert ask["kind"] == kind and ask["asks"] and ask["proposals"][0]["action"] == first
+    assert ask["proposals"][-1]["action"] == "cancel"
+    if kind == "attempt_cap":
+        assert ask["proposals"][0]["body"] == {"to": 50}
+
+
+def test_a_running_or_finished_job_asks_nothing_and_a_halted_one_is_flagged(make_env, dashboard):
+    nothing = {"limit": 1.0, "committed": 0.0, "spent": 0.0}
+    assert data.human("BUILD_TASK", None, {}, [], [], nothing, {}, waiting=False) is None
+    assert data.human("FAILED", "checks failed", {}, [], [], nothing, {}, waiting=False) is None
+    env = make_env("trivial", responders={"factory-intake": _guided_intake()})
+    job = env.submit(mode="guided")
+    assert env.factory.run(job) == "NEEDS_INFO"
+    d = dashboard(env)
+    view = json.loads(d.get(f"/api/job/{job}")[2])
+    assert view["human"]["kind"] == "decisions" and view["human"]["history"] == []
+    listed = next(j for j in json.loads(d.get("/api/jobs")[2]) if j["job_id"] == job)
+    assert listed["needs_human"] and listed["failed_tasks"] == 0

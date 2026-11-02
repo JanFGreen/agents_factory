@@ -21,6 +21,7 @@ from typing import Any
 
 JOB_ID = re.compile(r"^job-[0-9a-f]{12}$")
 DECISION_ID = re.compile(r"^Q-\d{1,2}$")
+TASK_ID = re.compile(r"^TASK-\d{2,3}$")
 MAX_TEXT = 2000
 
 
@@ -50,6 +51,12 @@ def _money(value: Any, field: str) -> float:
     return float(value)
 
 
+def _count(value: Any, field: str, low: int, high: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise ActionError(f"{field}: whole number between {low} and {high} expected")
+    return value
+
+
 def build_argv(action: str, job_id: str, body: dict[str, Any]) -> tuple[list[str], bool]:
     """(CLI arguments, runs in background) for a whitelisted action; ActionError otherwise."""
     if not JOB_ID.match(job_id):
@@ -76,6 +83,17 @@ def build_argv(action: str, job_id: str, body: dict[str, Any]) -> tuple[list[str
     if action == "raise-budget":
         return ["budget", "raise", job_id, "--to", f"{_money(body.get('to'), 'to'):.2f}",
                 "--reason", _text(body.get("reason"), "reason")], False
+    if action == "task-retry":  # the reason is the operator's note the builder reads on the retry
+        task_id = body.get("task_id")
+        if not isinstance(task_id, str) or not TASK_ID.match(task_id):
+            raise ActionError("task_id: TASK-NN expected")
+        return ["task", "retry", job_id, task_id, "--attempts", str(_count(body.get("attempts"), "attempts", 1, 3)),
+                "--reason", _text(body.get("reason"), "reason")], False
+    if action == "attempts-raise":
+        return ["attempts", "raise", job_id, "--to", str(_count(body.get("to"), "to", 1, 500)),
+                "--reason", _text(body.get("reason"), "reason")], False
+    if action == "reopen":
+        return ["reopen", job_id, "--reason", _text(body.get("reason"), "reason")], False
     if action == "cancel":
         return ["cancel", job_id], False
     if action == "run":
