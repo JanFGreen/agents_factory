@@ -108,10 +108,10 @@ async function withBusy(button, fn) {
 function renderJobs() {
   const nav = document.getElementById("jobs");
   const groups = [
-    ["Needs you", state.jobs.filter((j) => j.waiting)],
-    ["Running", state.jobs.filter((j) => !j.waiting && !j.terminal && j.state !== "READY_TO_MERGE")],
+    ["Needs you", state.jobs.filter((j) => j.needs_human)],
+    ["Running", state.jobs.filter((j) => !j.needs_human && !j.terminal && j.state !== "READY_TO_MERGE")],
     ["Ready to merge", state.jobs.filter((j) => j.state === "READY_TO_MERGE")],
-    ["Finished", state.jobs.filter((j) => j.terminal)],
+    ["Finished", state.jobs.filter((j) => j.terminal && !j.needs_human)],
   ];
   nav.replaceChildren(...groups.filter(([, list]) => list.length).flatMap(([label, list]) => [
     h("div", { class: "section-label" }, `${label} (${list.length})`),
@@ -120,10 +120,13 @@ function renderJobs() {
 }
 
 function jobCard(job) {
-  const cls = ["job-card", job.waiting && "waiting", job.terminal && "terminal", job.job_id === state.jobId && "selected"].filter(Boolean).join(" ");
+  const cls = ["job-card", job.needs_human && "waiting", job.terminal && !job.needs_human && "terminal",
+               job.job_id === state.jobId && "selected"].filter(Boolean).join(" ");
   const t = job.tasks;
   return h("a", { class: cls, href: `#/job/${job.job_id}`, "aria-current": job.job_id === state.jobId ? "page" : null },
     h("div", { class: "row" }, h("span", { class: "feature" }, job.feature_id), badge(job.state)),
+    job.needs_human ? h("div", { class: "ask-chip" }, "Needs your decision",
+      job.failed_tasks ? ` · ${job.failed_tasks} failed task${job.failed_tasks > 1 ? "s" : ""}` : "") : null,
     h("div", { class: "row small muted" }, h("span", { class: "mono" }, job.job_id), h("span", {}, since(job.updated_at))),
     t.total ? h("div", { class: "small muted" }, `tasks ${t.accepted}/${t.total}`, t.building ? ` · ${t.building} in progress` : "") : null,
     t.total ? bar(t.accepted / t.total) : null,
@@ -153,6 +156,7 @@ function renderJobView() {
       h("span", { class: "badge" }, `path ${job.path || "—"}`), h("span", { class: "badge" }, `risk ${job.risk || "—"}`),
       h("span", { class: "mono muted" }, job.job_id)),
     h("p", { class: "goal" }, job.goal || ""),
+    askBanner(job),
     keep,
     kpis(job),
     h("div", { class: "grid" },
@@ -271,6 +275,129 @@ function mergeForm(job) {
       h("button", { class: "danger", onclick: (e) => withBusy(e.target, () => act("merge-reject", { revision: job.criteria_digest, reason: reason.value })) }, "Reject")));
 }
 
+// --- the operator's decision ------------------------------------------------------------------
+// `job.human` (data.human) says what is asked, in plain words, and proposes whitelisted actions.
+
+function askBanner(job) {
+  const ask = job.human;
+  if (!ask) return null;
+  return h("section", { class: "ask-banner", "aria-label": "Needs your decision" },
+    h("div", { class: "ask-title" }, "Needs your decision"),
+    h("ul", {}, ask.asks.map((a) => h("li", {}, a))),
+    h("div", { class: "actions" },
+      h("button", { class: "primary", "data-key": "open-decision", onclick: () => openDecision(ask.failed_tasks[0] || null) }, "Open decision")));
+}
+
+function findingItem(f) {
+  return h("li", { class: "finding" },
+    h("div", { class: "head" }, h("span", { class: "mono" }, f.finding_id), badge(f.blocking ? "BLOCKING" : f.severity),
+      h("span", { class: "small muted" }, `${f.kind} · ${f.severity}`)),
+    h("p", {}, f.problem),
+    f.expected_fix ? h("p", { class: "fix" }, h("strong", {}, "Expected fix: "), f.expected_fix) : null);
+}
+
+function taskQuestion(job, taskId) {
+  const open = job.findings.filter((f) => f.task_id === taskId && f.status === "open")
+    .sort((a, b) => a.finding_id.localeCompare(b.finding_id, undefined, { numeric: true }));
+  const blocking = open.filter((f) => f.blocking);
+  const other = open.filter((f) => !f.blocking);
+  const t = job.tasks.find((x) => x.task_id === taskId);
+  return h("section", {},
+    h("h3", {}, `${taskId}: blocking findings (${blocking.length})`),
+    t ? h("p", { class: "small muted" }, `${t.difficulty || "?"} · attempts ${t.attempts} · ${usd(job.costs.by_task[taskId])} · ${short(t.acceptance, 300)}`) : null,
+    blocking.length ? h("ul", { class: "findings" }, blocking.map(findingItem))
+      : h("p", { class: "muted" }, "No blocking finding is open: the attempts ran out on checks or the file-scope policy (see the timeline)."),
+    other.length ? h("details", {}, h("summary", {}, `Non-blocking findings (${other.length})`), h("ul", { class: "findings" }, other.map(findingItem))) : null);
+}
+
+function openDecision(taskId) {
+  const job = state.job;
+  const ask = job && job.human;
+  if (!ask) return;
+  const dialog = document.getElementById("decision");
+  const parts = [
+    h("div", { class: "head" }, h("h2", { id: "decision-title" }, `Your decision · ${job.feature_id}`), badge(job.state),
+      h("button", { type: "button", class: "close", "aria-label": "Close", onclick: () => dialog.close() }, "×")),
+    h("section", {}, h("h3", {}, "What is asked of you"), h("ul", {}, ask.asks.map((a) => h("li", {}, a)))),
+  ];
+  if (ask.kind === "decisions") parts.push(decisionsForm(job.decisions.filter((d) => d.answer === null || d.answer === undefined)));
+  else if (ask.kind === "plan") parts.push(planForm(job));
+  else if (ask.kind === "merge" && job.criteria_digest) parts.push(mergeForm(job));
+  parts.push(proposalsForm(ask, taskId, dialog));  // the choice first; what it is based on below
+  (taskId ? [taskId] : ask.failed_tasks).forEach((id) => parts.push(taskQuestion(job, id)));
+  if (ask.reason) parts.push(h("details", {}, h("summary", {}, "Why the factory stopped (controller message)"), h("pre", {}, ask.reason)));
+  if (ask.history && ask.history.length) {
+    parts.push(h("details", {}, h("summary", {}, `Earlier decisions on this job (${ask.history.length})`),
+      h("ol", { class: "history" }, ask.history.map((e) => h("li", {},
+        h("div", { class: "small muted" }, `${new Date(e.at).toLocaleString()} · ${e.what}${e.actor ? ` · ${e.actor}` : ""}`),
+        h("p", {}, e.note))))));
+  }
+  dialog.replaceChildren(h("div", { class: "dialog-body" }, parts));
+  if (!dialog.open) dialog.showModal();
+}
+
+function proposalsForm(ask, taskId, dialog) {
+  const list = ask.proposals.filter((p) => !taskId || !p.task_id || p.task_id === taskId);
+  const note = h("textarea", { rows: 7, maxlength: 2000, "aria-label": "Your decision in your own words",
+                               placeholder: "Write what to do and why, in your own words." });
+  const hint = h("p", { class: "small muted" });
+  const resume = h("input", { type: "checkbox" });
+  const submit = h("button", { type: "submit", class: "primary" }, "Do it");
+  const numbers = {};
+  let edited = false;
+  note.addEventListener("input", () => { edited = true; });
+  const pick = (i) => {
+    const p = list[i];
+    if (!edited) note.value = p.reason || "";
+    note.required = p.needs_reason;
+    note.disabled = !p.needs_reason;
+    hint.textContent = p.needs_reason
+      ? (p.action === "task-retry" ? "Your note is recorded as the reason and the builder reads it on the retry." : "Your note is recorded as the reason.")
+      : "This action takes no note.";
+    resume.checked = p.then_resume;
+    submit.className = p.danger ? "danger" : "primary";
+  };
+  const options = list.map((p, i) => {
+    let extra = null;
+    if (p.body.attempts !== undefined || p.body.to !== undefined) {
+      const field = p.body.attempts !== undefined ? "attempts" : "to";
+      const label = field === "attempts" ? "attempts" : p.action === "raise-budget" ? "USD" : "cap";
+      numbers[i] = { field, el: h("input", { type: "number", min: "1", max: field === "attempts" ? "3" : null, step: "1",
+                                             value: String(p.body[field]), "aria-label": `${p.label}: ${label}` }) };
+      extra = h("label", { class: "inline small" }, `${label} `, numbers[i].el);
+    }
+    return h("label", { class: `opt proposal${p.danger ? " danger" : ""}` },
+      h("input", { type: "radio", name: "proposal", value: String(i), checked: i === 0, onchange: () => pick(i) }),
+      h("span", {}, h("strong", {}, p.label), h("span", { class: "small muted block" }, p.detail), extra));
+  });
+  const form = h("form", { class: "proposals", "aria-label": "Proposals" },
+    h("h3", {}, "Proposals"), options,
+    h("label", { class: "block" }, h("span", { class: "section-label" }, "Your decision"), note), hint,
+    h("label", { class: "opt" }, resume, h("span", {}, "Resume the job afterwards")),
+    h("div", { class: "actions" }, submit, h("button", { type: "button", onclick: () => dialog.close() }, "Close")));
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const picked = form.querySelector('input[name="proposal"]:checked');
+    if (!picked) return;
+    const i = Number(picked.value);
+    const p = list[i];
+    const body = { ...p.body };
+    if (numbers[i]) body[numbers[i].field] = Number(numbers[i].el.value);
+    if (p.needs_reason) {
+      body.reason = note.value.trim();
+      if (!body.reason) { toast("Write your decision first: it is recorded as the reason.", true); note.focus(); return; }
+    }
+    withBusy(submit, async () => {
+      const out = await act(p.action, body, p.danger ? `${p.label}? This cannot be undone.` : null);
+      if (!out || !out.ok) return;
+      if (resume.checked && p.action !== "resume") await act("resume");
+      dialog.close();
+    });
+  });
+  if (list.length) pick(0);
+  return form;
+}
+
 // --- task graph -------------------------------------------------------------------------------
 
 function levels(tasks) {
@@ -305,7 +432,11 @@ function taskGraph(job) {
   const cost = job.costs.by_task;
   const nodes = job.tasks.map((t) => {
     const p = pos[t.task_id];
-    const select = () => { state.task = t.task_id; renderJob(); };
+    const select = () => {
+      state.task = t.task_id;
+      renderJob();
+      if (t.state === "FAILED" && job.human) openDecision(t.task_id);  // a failed task is a question for the operator
+    };
     return svg("g", { class: `node ${t.state}${state.task === t.task_id ? " selected" : ""}`, transform: `translate(${p.x},${p.y})`, tabindex: 0, "data-key": `task-${t.task_id}`,
                       role: "button", "aria-label": `${t.task_id} ${t.state}`, onclick: select,
                       onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); } } },
@@ -330,6 +461,8 @@ function taskDetail(job) {
     h("div", { class: "head" }, h("h2", {}, t.task_id), badge(t.state), h("span", { class: "badge" }, t.difficulty || "?"),
       h("span", { class: "small muted" }, `attempts ${t.attempts} · ${usd(job.costs.by_task[t.task_id])} · depends on ${t.depends_on.join(", ") || "nothing"}`)),
     h("div", { class: "chips" }, Object.entries(reviews).map(([kind, verdict]) => h("span", { class: badgeClass(verdict) }, `${kind}: ${verdict}`))),
+    t.state === "FAILED" && job.human ? h("div", { class: "actions" },
+      h("button", { class: "primary", onclick: () => openDecision(t.task_id) }, `Decide what to do with ${t.task_id}`)) : null,
     h("p", {}, t.acceptance),
     h("p", { class: "small muted" }, "Files: ", h("span", { class: "mono" }, t.file_scope.join(", "))),
     findings.length ? h("div", {}, h("div", { class: "section-label" }, "Open findings"),

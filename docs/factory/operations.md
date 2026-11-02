@@ -336,6 +336,22 @@ fixed argv list, no shell), so the controller's guards work unchanged:
 | Run / Resume | `factory run --job <id>` / `factory resume <id>` | background (`caffeinate -i` on macOS) |
 | Approve merge / Reject | `factory approve|reject <id> --revision <digest>` | background |
 | Cancel job | `factory cancel <id>` | immediate |
+| Retry TASK-NN (decision window) | `factory task retry <id> <task> --attempts N --reason …` | immediate |
+| Raise the attempt cap (decision window) | `factory attempts raise <id> --to N --reason …` | immediate |
+| Reopen the job (decision window) | `factory reopen <id> --reason …` | immediate |
+
+**What the factory asks of you.** A job waiting for the operator shows "Needs your decision" in the
+job list and a banner on the job page, with the questions in plain words (`data.human`: which task
+failed and what it holds up, whether the remaining tasks fit in the budget, which cap was reached).
+"Open decision", or selecting a FAILED task in the graph, opens a window with: proposals prefilled
+from the state (retry the task with N attempts, raise the budget to an amount computed from the
+cost per accepted task so far, raise the attempt cap, resume, cancel), a "Your decision" field and
+"Resume the job afterwards". For a retry, the field starts with the expected fixes of the task's
+open blocking findings; what you write there is the `--reason`, and the builder reads it as the
+operator's instruction. Below it are the blocking findings (problem and expected fix), the
+non-blocking ones collapsed, the controller message and the earlier decisions on the job with their
+notes. The proposals are suggestions only: each runs the CLI command in the table above, and the
+controller still refuses what it does not allow.
 
 Background runs: one per job at a time; log in `data_dir/dashboard/runs/`. A controller refusal
 (exit 3) comes back as a message, not as success.
