@@ -471,6 +471,21 @@ uv run factory task retry <id> TASK-04 --attempts 1 --reason "..."  # more attem
 uv run factory resume <id>
 ```
 
+## Rebuild and review-loop guards (`workflow.implementation`)
+
+Measured on LearnEnglish F4-F5a, where one task cost $30 in six review rounds:
+
+- `gate_fixups_per_attempt` (default 1): a gate that refuses an attempt (`FAIL_CODE` or a `FAIL_POLICY` such as a file
+  outside the scope) first gets a narrow builder pass in the same attempt. The pass gets `gate_fixup` in its inputs and
+  runs on `gate_fixup_model`. Then the checks run again. Event `gate.fixup`. `TIMEOUT` and rewritten history never get one.
+- Every builder gets `file_scope_rule` with a self-check: compare `git status` with `file_scope` before handing over.
+- A task whose UI review found no touched screen on show (`touched_screens_rendered: false`) is not UI-reviewed again.
+  That holds until it touches a new UI file or has an open blocking UI finding. Event `ui_review.skipped`.
+- `demote_medium_after_review_rounds` (default 3): from the next round on, low and medium findings of code review, test
+  adequacy and UI review become open, non-blocking follow-ups with the prefix `[follow-up after N review rounds]`.
+  Event `findings.demoted`. High and critical findings, security review and product verification still block. Feature
+  acceptance sees the open follow-ups and can make a user-facing one blocking again.
+
 ## Review cost (`review`)
 
 Task reviews run in tiers (`review.tiers`): CHANGES in the first tier (code, test adequacy,
