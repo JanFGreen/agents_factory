@@ -257,6 +257,12 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX escaped_defects_repo ON escaped_defects (repo_path, reported_at)
         """,
     ),
+    (
+        4,
+        """
+        ALTER TABLE attempts ADD COLUMN reservation_id TEXT
+        """,
+    ),
 ]
 
 

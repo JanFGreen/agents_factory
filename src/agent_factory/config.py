@@ -435,6 +435,10 @@ class Routing(Strict):
     builder_models: dict[Difficulty, str] = {}
     # Each further attempt of a task uses the model one difficulty level up (hard stays hard).
     escalate_on_retry: bool = True
+    # With escalation on: go up a level only when an attempt failed the same way as the one before it (same verdict
+    # and reason), not after any failure; the task's last attempt gets one level up in any case. Code default, not in
+    # models.yaml (part of the policy digest).
+    escalate_only_on_repeat: bool = True
     # First attempt of a trivial-path feature (atomic, low risk, known pattern); retries use `builder_models`.
     trivial_path_model: str | None = None
 

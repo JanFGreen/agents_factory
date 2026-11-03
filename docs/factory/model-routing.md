@@ -150,8 +150,11 @@ a controller problem: the planner must split it. The atomicity criteria are in
 Builder model: `routing.builder_models[level]` (easy and medium: Sonnet, hard: Opus). Haiku only
 for the first feature attempt on the trivial path (`routing.trivial_path_model`: atomic change,
 low risk, known pattern); the next attempt already follows the map. Principle: better to pay for
-Sonnet up front than for fixes; with `escalate_on_retry` each subsequent attempt of a
-task goes one level higher (easy → medium → hard). The `task.routed` event records the level and
-model of each attempt. An empty `builder_models` map keeps the `builder` role binding.
+Sonnet up front than for fixes. With `escalate_on_retry`, a task's model goes one level higher
+(easy → medium → hard) each time an attempt fails the same way as the attempt before it, by the
+same failure fingerprint (verdict and reason). The task's last allowed attempt goes up one level in
+any case. `routing.escalate_only_on_repeat` (code default on; off: every further attempt goes one
+level higher). One finding no longer moves a medium task to Opus (LearnEnglish F5a TASK-16: $2.32 of
+$5.15). The `task.routed` event records the level and model of each attempt. An empty `builder_models` map keeps the `builder` role binding.
 `factory doctor` shows `routing` and whether the decision model is active; `factory status` shows
 the difficulty of each task.

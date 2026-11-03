@@ -182,3 +182,54 @@ def _delivered_structured_output(events: list[dict]) -> dict | None:
                 if not block.get("is_error") and "provided successfully" in text:
                     return calls[block["tool_use_id"]]
     return None
+
+
+# Input price per million tokens; cache reads cost 0.05x, 5-minute cache writes 1.25x, 1-hour writes 2x, output 5x.
+# Fitted to the CLI's own `total_cost_usd` over the factory's runs (2026-11: 638 Sonnet, 407 Opus results).
+# A model not listed here has no estimate: its killed run is charged the full reservation.
+INPUT_PRICE_PER_MTOK = {"claude-opus-5-5": 4.0, "claude-sonnet-5-5": 2.0}
+
+
+def estimate_from_log(path: Path) -> dict | None:
+    """Usage and cost of a run from its event log, for a run killed before its result event.
+
+    A result event, when present, gives the exact cost. Otherwise every assistant message's usage counts once (the
+    CLI repeats a message per content block) at the listed prices, with the output estimated from its length. None
+    when the log or the model's price is missing.
+    """
+    try:
+        events = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    except (OSError, ValueError):
+        return None
+    model = next((e.get("model") for e in events if e.get("type") == "system" and e.get("subtype") == "init"), None)
+    result = next((e for e in reversed(events) if e.get("type") == "result"), None)
+    messages: dict[str, dict] = {}
+    blocks: dict[str, int] = {}  # visible output: text, tool inputs and thinking, each block once
+    for event in events:
+        message = event.get("message") or {}
+        if event.get("type") != "assistant" or message.get("model") == "<synthetic>":
+            continue
+        if message.get("usage"):
+            messages[message.get("id") or str(len(messages))] = message["usage"]
+        for block in message.get("content") or []:
+            if isinstance(block, dict):
+                text = block.get("text") or block.get("thinking") or (json.dumps(block["input"]) if "input" in block else "")
+                blocks[json.dumps(block, sort_keys=True)] = len(text)
+    usages = [result["usage"]] if result and result.get("usage") else list(messages.values())
+    tokens = {k: sum(u.get(k) or 0 for u in usages) for k in ("input_tokens", "cache_read_input_tokens", "output_tokens")}
+    if not result:
+        # Streamed messages carry their input and cache tokens but not the final output count; the factory's runs
+        # average 1.87 visible characters per output token (hidden thinking included), 1.8 errs on the high side.
+        tokens["output_tokens"] = max(tokens["output_tokens"], round(sum(blocks.values()) / 1.8))
+    m5 = sum((u.get("cache_creation") or {}).get("ephemeral_5m_input_tokens") or 0 for u in usages)
+    h1 = sum((u.get("cache_creation") or {}).get("ephemeral_1h_input_tokens", u.get("cache_creation_input_tokens") or 0)
+             for u in usages)
+    summary = {"model": model, "input_tokens": tokens["input_tokens"] + tokens["cache_read_input_tokens"] + m5 + h1,
+               "output_tokens": tokens["output_tokens"]}
+    if result and result.get("total_cost_usd") is not None:
+        return {**summary, "cost_usd": result["total_cost_usd"], "estimated": False}
+    price = INPUT_PRICE_PER_MTOK.get(model or "")
+    if price is None or not usages:
+        return None
+    units = tokens["input_tokens"] + 0.05 * tokens["cache_read_input_tokens"] + 1.25 * m5 + 2 * h1 + 5 * tokens["output_tokens"]
+    return {**summary, "cost_usd": round(units * price / 1e6, 6), "estimated": True}

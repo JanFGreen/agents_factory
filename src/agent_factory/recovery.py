@@ -65,7 +65,9 @@ def recover_job(factory, job_id: str) -> RecoveryReport:
         with store.tx() as conn:
             conn.execute("UPDATE attempts SET state = 'lost', ended_at = ? WHERE attempt_id = ?", (now(), attempt["attempt_id"]))
             store.event(conn, job_id, "recovery.attempt_lost", {"attempt_id": attempt["attempt_id"], "handle": handle})
-        report.actions.append(f"attempt {attempt['attempt_id']} process is gone: marked lost")
+        charged = factory.charge_dead_attempt(attempt)
+        report.actions.append(f"attempt {attempt['attempt_id']} process is gone: marked lost"
+                              + (f", charged ${charged:.2f}" if charged is not None else ""))
     # leases whose holders are dead and expired
     with store.tx() as conn:
         for lease in conn.execute("SELECT * FROM leases WHERE lease_key LIKE ?", (f"{job_id}:%",)).fetchall():

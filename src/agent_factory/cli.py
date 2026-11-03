@@ -7,8 +7,10 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+from contextlib import contextmanager
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -322,6 +324,38 @@ def _preflight(cfg) -> str | None:
     return cli_too_old(binary, cfg.factory.runtime.min_cli_version) if binary else "claude CLI not found"
 
 
+@contextmanager
+def _stop_on_signal(factory, job_ids: list[str]):
+    """First Ctrl-C/SIGTERM: pause at the next safe point (running agents finish). Second: end the agents now.
+
+    Live finding (LearnEnglish F5a): SIGINT did not stop `factory resume` (the lane pool waits for its threads) and a
+    kill left two builds half done.
+    """
+    hits: list[int] = []
+
+    def handler(signum, frame):
+        hits.append(signum)
+        if len(hits) == 1:
+            factory.stop_requested = f"signal {signal.Signals(signum).name}"
+            print("stopping at the next safe point: running agents finish, nothing new starts; signal again to stop now",
+                  file=sys.stderr)
+            return
+        killed = factory.stop_agents_now(job_ids)
+        print(f"stopped {killed} agent runs; run `factory recover --all`, then `factory resume`", file=sys.stderr)
+        os._exit(130)
+
+    previous = {sig: signal.signal(sig, handler) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        yield
+    finally:
+        for sig, old in previous.items():
+            signal.signal(sig, old)
+
+
+def _only(args) -> list[str]:
+    return [t.strip() for t in (getattr(args, "only", None) or "").split(",") if t.strip()]
+
+
 def cmd_run(args) -> int:
     cfg, store = _load(args)
     if (problem := _preflight(cfg)) is not None:
@@ -329,7 +363,13 @@ def cmd_run(args) -> int:
         return EXIT_BLOCKED
     factory = _make_factory(cfg, store)
     jobs = [args.job] if args.job else [r["job_id"] for r in store.all("SELECT job_id FROM jobs WHERE active = 1 ORDER BY created_at LIMIT ?", (args.max_jobs,))]
-    results = {job_id: factory.run(job_id) for job_id in jobs}
+    if _only(args):
+        if not args.job:
+            print("--only needs --job", file=sys.stderr)
+            return EXIT_BLOCKED
+        factory.request_pause(args.job, _only(args), "run --only")
+    with _stop_on_signal(factory, jobs):
+        results = {job_id: factory.run(job_id) for job_id in jobs}
     _out(args, results)
     return EXIT_BLOCKED if any(s in {str(h) for h in HALTED} for s in results.values()) else EXIT_OK
 
@@ -341,7 +381,27 @@ def cmd_resume(args) -> int:
         return EXIT_BLOCKED
     factory = _make_factory(cfg, store)
     factory.resume(args.id)
-    _out(args, {"job_id": args.id, "state": factory.run(args.id)})
+    if _only(args):
+        factory.request_pause(args.id, _only(args), "resume --only")
+    with _stop_on_signal(factory, [args.id]):
+        _out(args, {"job_id": args.id, "state": factory.run(args.id)})
+    return EXIT_OK
+
+
+def cmd_pause(args) -> int:
+    cfg, store = _load(args)
+    factory = _make_factory(cfg, store)
+    if args.clear:
+        factory.clear_pause(args.id)
+        _out(args, {"job_id": args.id, "pause": None})
+        return EXIT_OK
+    try:
+        request = factory.request_pause(args.id, _only(args), args.reason)
+    except TransitionRefused as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_BLOCKED
+    _out(args, {"job_id": args.id, "pause": request,
+                "note": "the running factory stops at its next safe point (running agents finish); then the job is PAUSED"})
     return EXIT_OK
 
 
@@ -632,13 +692,22 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--job")
     s.add_argument("--queue", action="store_true")
     s.add_argument("--max-jobs", type=int, default=1)
+    s.add_argument("--only", metavar="TASK-1,TASK-2", help="build just these tasks of --job, then pause")
     s.set_defaults(fn=cmd_run)
+    s = sub.add_parser("pause", help="stop a job at its next safe point (running agents finish), or after some tasks")
+    s.add_argument("id")
+    s.add_argument("--after", dest="only", metavar="TASK-1,TASK-2", help="build just these tasks, then pause")
+    s.add_argument("--reason", default="operator pause")
+    s.add_argument("--clear", action="store_true", help="withdraw a pause that has not taken effect")
+    s.set_defaults(fn=cmd_pause)
     s = sub.add_parser("status")
     s.add_argument("--job")
     s.set_defaults(fn=cmd_status)
     for name, fn in (("inspect", cmd_inspect), ("resume", cmd_resume), ("cancel", cmd_cancel), ("verify", cmd_verify)):
         s = sub.add_parser(name)
         s.add_argument("id")
+        if name == "resume":
+            s.add_argument("--only", metavar="TASK-1,TASK-2", help="build just these tasks, then pause")
         s.set_defaults(fn=fn)
     s = sub.add_parser("approve")
     s.add_argument("id")

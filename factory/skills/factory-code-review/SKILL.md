@@ -79,7 +79,9 @@ complexity than the classification assumed.
 
 ## Fix-check rounds
 
-With `review_mode: fix_check` the task was reviewed before and the builder answered your findings.
+With `review_mode: fix_check` you reviewed the task before (`previous_review.verdict`), and the builder
+changed it: to answer your findings, or another review's when your verdict was `PASS` (then
+`open_findings` may be empty).
 
 1. For each finding in `previous_review.open_findings`: read `fix_delta` and the code it names, then
    report the finding again with the same `id`: `fixed` when the change removes the failing scenario

@@ -78,8 +78,13 @@ def settle(
     output_tokens: int | None,
     attempt_id: str | None,
     source: str,
+    estimated: bool = False,
 ) -> None:
-    """Record actual usage. Unknown cost keeps the full reservation as spend (conservative)."""
+    """Record actual usage. Unknown cost keeps the full reservation as spend (conservative).
+
+    ``estimated``: the cost was computed from the agent's log (a killed run never reports it); it is charged, but the
+    usage row keeps ``cost_known = 0``.
+    """
     with store.tx() as conn:
         row = conn.execute("SELECT amount_usd, state FROM budget_reservations WHERE reservation_id = ?", (reservation_id,)).fetchone()
         if row is None or row["state"] != "open":
@@ -91,7 +96,8 @@ def settle(
         )
         conn.execute(
             "INSERT INTO usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (new_id("use"), job_id, attempt_id, reservation_id, model_id, input_tokens, output_tokens, cost_usd, int(known), source, now()),
+            (new_id("use"), job_id, attempt_id, reservation_id, model_id, input_tokens, output_tokens, cost_usd, int(known and not estimated),
+             source, now()),
         )
         if known and cost_usd > row["amount_usd"]:
             store.event(conn, job_id, "budget.overrun", {"reserved": row["amount_usd"], "actual": cost_usd})

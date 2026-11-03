@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import shutil
+import signal
 import threading
 import time
 import urllib.request
@@ -27,6 +28,7 @@ from typing import Any
 import yaml
 
 from . import analysis, budgets, escapes, outbox
+from .adapters.claude import estimate_from_log
 from .adapters.protocol import AgentRequest, AgentRuntime, RunHandle
 from .adapters.typesafe import PRICE_PER_INPUT_TOKEN_USD, make_decider
 from .config import LoadedConfig, RoleBinding
@@ -134,6 +136,7 @@ class Factory(ParallelLanes):
         self.checks_path = checks_path or cfg.factory_dir / "checks" / "default.yaml"
         self.owner_id = owner_id or f"controller-{os.getpid()}-{uuid.uuid4().hex[:6]}"
         self.poll_interval = poll_interval
+        self.stop_requested: str | None = None  # set by a signal handler (cli.py): pause every job at its next safe point
         # Set inside a parallel task lane: agents, checks and identities use the lane's worktree.
         self._lane = threading.local()
         self._previews: dict[str, PreviewServer] = {}  # served web build per worktree (UI review in a browser)
@@ -190,6 +193,9 @@ class Factory(ParallelLanes):
                 return str(state)
             if state is S.READY_TO_MERGE and not self.cfg.factory.merge.enabled:
                 return str(state)
+            if (paused := self._pause_due(job_id)) is not None:
+                self._halt(job_id, S.PAUSED, paused)
+                continue
             try:
                 self.step(job_id)
             except StageBlocked as blocked:
@@ -380,6 +386,7 @@ class Factory(ParallelLanes):
                 result_text, snapshot, handle, attempt_id, pdigest = self._run_agent_once(
                     job_id, skill, role, binding, inputs, task_id=task_id, writable=writable,
                     note=extra_note + error_note, max_budget=self.cfg.factory.budget.max_cost_per_agent_call, browser=browser, scratch=scratch,
+                    reservation=reservation,
                 )
             except BaseException:
                 budgets.release(self.store, reservation)
@@ -405,7 +412,8 @@ class Factory(ParallelLanes):
                 raise StageBlocked(S.NEEDS_HUMAN, f"{skill} returned invalid structured output twice: {exc}") from exc
             return AgentResult(env, payload, handle.run_id, snapshot.model_id or binding.model, attempt_id, pdigest)
 
-    def _run_agent_once(self, job_id, skill, role, binding, inputs, *, task_id, writable, note, max_budget, browser=None, scratch=None):
+    def _run_agent_once(self, job_id, skill, role, binding, inputs, *, task_id, writable, note, max_budget, browser=None, scratch=None,
+                        reservation=None):
         job = self._job(job_id)
         lane = getattr(self._lane, "worktree", None)
         worktree = lane or (Path(job["worktree"]) if job["worktree"] else Path(job["repo_path"]))
@@ -467,9 +475,9 @@ class Factory(ParallelLanes):
         )
         with self.store.tx() as conn:
             conn.execute(
-                "INSERT INTO attempts (attempt_id, job_id, task_id, role, state, lease_epoch, runtime, model_id, started_at)"
-                " VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)",
-                (attempt_id, job_id, task_id, role, lease.epoch, binding.runtime, binding.model, now()),
+                "INSERT INTO attempts (attempt_id, job_id, task_id, role, state, lease_epoch, runtime, model_id, started_at, reservation_id)"
+                " VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)",
+                (attempt_id, job_id, task_id, role, lease.epoch, binding.runtime, binding.model, now(), reservation),
             )
         try:
             snapshot, handle = asyncio.run(self._drive(request, lease, attempt_id))
@@ -581,6 +589,28 @@ class Factory(ParallelLanes):
         with self.store.tx() as conn:
             conn.execute("UPDATE attempts SET state = ?, ended_at = ? WHERE attempt_id = ?", (snapshot.state, now(), row["attempt_id"]))
         return snapshot.output_text, snapshot, handle, row["attempt_id"]
+
+    def charge_dead_attempt(self, attempt) -> float | None:
+        """Settle the budget reservation of an agent run that was killed or lost before it reported its cost.
+
+        Without this a killed run cost nothing in the books (recovery released its reservation; LearnEnglish F5a,
+        TASK-18/19). The cost comes from the run's event log (adapters/claude.py: estimate_from_log); with no log or
+        no price the full reservation is charged, as for any run of unknown cost.
+        """
+        if not attempt["reservation_id"]:
+            return None
+        with self.store.tx() as conn:  # an interrupted call loop released it on the way out: the run still cost money
+            conn.execute("UPDATE budget_reservations SET state = 'open' WHERE reservation_id = ? AND state = 'released'"
+                         " AND NOT EXISTS (SELECT 1 FROM usage WHERE reservation_id = ?)",
+                         (attempt["reservation_id"], attempt["reservation_id"]))
+        handle =json.loads(attempt["handle_json"]) if attempt["handle_json"] else {}
+        estimate = estimate_from_log(Path(handle["log"])) if attempt["runtime"] == "claude" and handle.get("log") else None
+        budgets.settle(self.store, attempt["job_id"], attempt["reservation_id"], cost_usd=estimate and estimate["cost_usd"],
+                       model_id=(estimate and estimate["model"]) or attempt["model_id"], input_tokens=estimate and estimate["input_tokens"],
+                       output_tokens=estimate and estimate["output_tokens"], attempt_id=attempt["attempt_id"],
+                       source=f"recovery:{attempt['runtime']}", estimated=bool(estimate and estimate["estimated"]))
+        row = self.store.one("SELECT settled_usd FROM budget_reservations WHERE reservation_id = ?", (attempt["reservation_id"],))
+        return row["settled_usd"] if row else None
 
     async def _drive(self, request: AgentRequest, lease, attempt_id: str):
         handle: RunHandle = await self.runtime.start(request)
@@ -1018,7 +1048,14 @@ class Factory(ParallelLanes):
         assessed = (self._ctx(job_id).get("task_difficulty") or {}).get("tasks", {}).get(task_id)
         if not routing.builder_models or assessed is None:
             return None
-        level = builder_level(assessed["difficulty"], attempt, routing.escalate_on_retry)
+        effective = attempt
+        if routing.escalate_on_retry and routing.escalate_only_on_repeat:
+            # Live finding (LearnEnglish F5a TASK-16): a second attempt after one UI finding went to Opus, $2.32 of $5.15.
+            fps = self._ctx(job_id).get("failure_fingerprints", {}).get(task_id, [])
+            effective = 1 + sum(1 for a, b in zip(fps, fps[1:]) if a == b)
+            if attempt > 1 and attempt >= self.cfg.workflow.implementation.max_attempts_per_leaf_task:
+                effective = max(effective, 2)  # the last attempt still gets one level up
+        level = builder_level(assessed["difficulty"], effective, routing.escalate_on_retry)
         model = routing.builder_models.get(level)
         if routing.trivial_path_model and self._job(job_id)["path"] == "trivial" and attempt <= 1:
             level, model = "trivial", routing.trivial_path_model
@@ -1221,6 +1258,10 @@ class Factory(ParallelLanes):
                 return self._run_wave(job_id, wave)
         if idle:
             ready = ready_tasks(self.store, job_id)
+            if ready and not (ready := self._pause_filter(job_id, ready)):
+                request = self.pause_request(job_id) or {}
+                raise StageBlocked(S.PAUSED, f"paused: none of {request.get('only')} is ready to build "
+                                             f"({request.get('reason')}); `factory resume {job_id}` goes on")
             if not ready:
                 raise StageBlocked(S.NEEDS_HUMAN, self._stuck_reason(job_id))
             task_id = ready[0]
@@ -1271,6 +1312,7 @@ class Factory(ParallelLanes):
             self.store.cas_update_job(conn, job_id, row["version"], build_attempts=row["build_attempts"] - 1)
 
     def _fail_task(self, job_id: str, task_id: str, reason: str) -> None:
+        self._drop_lane_rework(job_id, task_id)
         bases = self._ctx(job_id).get("task_base", {})
         base = bases.pop(task_id, None)
         wt = self._worktree(job_id)
@@ -1347,6 +1389,7 @@ class Factory(ParallelLanes):
         max_attempts = self.cfg.workflow.implementation.max_attempts_per_leaf_task
         bases = self._ctx(job_id).get("task_base", {})
         bases.pop(task_id, None)  # the retry starts from the head at that time
+        self._drop_lane_rework(job_id, task_id)
         notes = {**self._ctx(job_id).get("operator_notes", {}), task_id: reason}  # the builder reads why and how to retry
         self._set_ctx(job_id, task_base=bases, operator_notes=notes)
         with self.store.tx() as conn:
@@ -1779,11 +1822,12 @@ class Factory(ParallelLanes):
         return model
 
     def _fix_check(self, job_id: str, task_id: str | None, review: str, wt: Path, base: str, head: str) -> dict | None:
-        """From the second round of a review on a task: inputs to check its open findings against the change since then.
+        """From the second round of a review on a task: inputs to check its open findings and the change since then.
 
         Live finding (LearnEnglish F5a TASK-14): each of seven rounds re-read everything and found a new race elsewhere.
         A fix-check round gets the delta since the reviewed head and the open findings instead of the whole diff; None
-        means a full review (first round, the last one passed, or the history was rewritten, as after a failed task).
+        means a full review (first round, an inconclusive last one, or rewritten history, as after a failed task). After
+        a PASS the round reviews only the delta (another review asked for the change; LearnEnglish F5a TASK-16).
         """
         if review not in self.cfg.factory.review.fix_check_reviews or not task_id:
             return None
@@ -1792,24 +1836,25 @@ class Factory(ParallelLanes):
         except EvidenceError:
             return None
         prev_head = prev.identity.head_sha if prev else None
-        if (prev is None or prev.verdict != "CHANGES" or not prev_head or prev_head in (head, base)
+        # A rework lane moved the reviewed attempt onto a newer job head: the moved commit stands for the reviewed one.
+        prev_head = self._ctx(job_id).get("review_head_alias", {}).get(task_id, {}).get(prev_head, prev_head)
+        if (prev is None or prev.verdict not in ("CHANGES", "PASS") or not prev_head or prev_head in (head, base)
                 or not self._is_ancestor(wt, base, prev_head) or not self._is_ancestor(wt, prev_head, head)):
             return None
         open_findings = [{"id": f["finding_id"], "severity": f["severity"], "blocking": bool(f["blocking"]), "problem": f["problem"],
                           "expected_fix": f["expected_fix"], "location": json.loads(f["location_json"] or "null")}
                          for f in self.store.all("SELECT finding_id, severity, blocking, problem, expected_fix, location_json FROM findings"
                                                  " WHERE job_id = ? AND task_id = ? AND kind = ? AND status = 'open'", (job_id, task_id, review))]
-        if not open_findings:
-            return None
         delta = git(wt, "diff", f"{prev_head}..HEAD", "--", ".", ":(exclude)openspec")
         delta_files = set(git(wt, "diff", "--name-only", f"{prev_head}..HEAD", "--", ".", ":(exclude)openspec").splitlines())
         return {"open_ids": {f["id"] for f in open_findings}, "delta_files": delta_files, "inputs": {
             "review_mode": "fix_check",
-            "previous_review": {"reviewed_head_sha": prev_head, "open_findings": open_findings},
+            "previous_review": {"reviewed_head_sha": prev_head, "verdict": prev.verdict, "open_findings": open_findings},
             "fix_delta": delta[:60000],
             "task_files": git(wt, "diff", "--name-status", f"{base}..HEAD", "--", ".", ":(exclude)openspec").splitlines()[:300],
-            "how": "Fix-check round: you reviewed this task at reviewed_head_sha. Check each open finding against fix_delta "
-                   "(and the files it names) and report it again with the same id: status fixed with evidence, or open. Report "
+            "how": "Fix-check round: you reviewed this task at reviewed_head_sha (verdict above; another review may have asked "
+                   "for the change). Check each open finding against fix_delta (and the files it names) and report it again "
+                   "with the same id: status fixed with evidence, or open. Report "
                    "new findings only for code fix_delta adds or changes; a new low or medium finding outside it is recorded "
                    "as a follow-up, not a blocker. Read any task file you need; the full task diff is not repeated."}}
 
@@ -2541,11 +2586,69 @@ class Factory(ParallelLanes):
                 asyncio.run(self.runtime.cancel(handle))
             with self.store.tx() as conn:
                 conn.execute("UPDATE attempts SET state = 'cancelled', ended_at = ? WHERE attempt_id = ?", (now(), attempt["attempt_id"]))
+            self.charge_dead_attempt(attempt)
         self.controller.transition(job_id, S.CANCELLED, "operator cancel")
         with self.store.tx() as conn:
             row = conn.execute("SELECT version FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
             self.store.cas_update_job(conn, job_id, row["version"], active=0)
         return str(S.CANCELLED)
+
+    # ------------------------------------------------------------------ pause --
+
+    def request_pause(self, job_id: str, only: list[str] | None = None, reason: str = "operator pause") -> dict:
+        """Stop the job at its next safe point: running agents finish, nothing new starts; then the job is PAUSED.
+
+        With ``only`` the job builds just those tasks and pauses once they are accepted or failed (LearnEnglish F5a:
+        two tasks were asked for, the next two started as soon as their dependency landed). `resume` clears it.
+        """
+        known = {r["task_id"] for r in self.store.all("SELECT task_id FROM tasks WHERE job_id = ?", (job_id,))}
+        if unknown := sorted(set(only or []) - known):
+            raise TransitionRefused(f"unknown tasks {unknown}")
+        request = {"only": sorted(set(only or [])), "reason": reason}
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "pause.requested", request)
+        return request
+
+    def clear_pause(self, job_id: str) -> None:
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "pause.cleared", {})
+
+    def pause_request(self, job_id: str) -> dict | None:
+        """The pause in force: a signal to this process, or the latest request not cleared or resumed since."""
+        if self.stop_requested:
+            return {"only": [], "reason": self.stop_requested}
+        row = self.store.one("SELECT kind, payload_json FROM events WHERE job_id = ? AND kind IN"
+                             " ('pause.requested', 'pause.cleared', 'state.resumed') ORDER BY seq DESC LIMIT 1", (job_id,))
+        return json.loads(row["payload_json"]) if row and row["kind"] == "pause.requested" else None
+
+    def _pause_filter(self, job_id: str, task_ids: list[str]) -> list[str]:
+        """Tasks that may start under the pause in force."""
+        request = self.pause_request(job_id)
+        return task_ids if request is None else [t for t in task_ids if t in request["only"]]
+
+    def _pause_due(self, job_id: str) -> str | None:
+        """Why the job pauses now, or None: a plain pause at once, a task-list pause once its tasks are done."""
+        request = self.pause_request(job_id)
+        if request is None:
+            return None
+        if not request["only"]:
+            return f"paused: {request['reason']}; `factory resume {job_id}` goes on"
+        states = {r["task_id"]: r["state"] for r in self.store.all("SELECT task_id, state FROM tasks WHERE job_id = ?", (job_id,))}
+        if all(states.get(t) in ("ACCEPTED", "FAILED") for t in request["only"]):
+            return f"paused after {', '.join(request['only'])}: {request['reason']}; `factory resume {job_id}` goes on"
+        return None
+
+    def stop_agents_now(self, job_ids: list[str]) -> int:
+        """Second signal: end the running agents of these jobs at once; `factory recover --all` settles their cost."""
+        killed = 0
+        for job_id in job_ids:
+            for row in self.store.all("SELECT pid FROM attempts WHERE job_id = ? AND state = 'running' AND pid IS NOT NULL", (job_id,)):
+                try:
+                    os.killpg(row["pid"], signal.SIGTERM)
+                    killed += 1
+                except (ProcessLookupError, PermissionError):
+                    pass
+        return killed
 
     def resume(self, job_id: str) -> None:
         """Operator resume from a halted state back to the recorded state (guards still apply)."""

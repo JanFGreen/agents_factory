@@ -179,6 +179,22 @@ spec or policy change) is invalidated (`approval.invalidated`). Rework passes th
 builder's `human_feedback` and returns to `BUILD_TASK` of the last task. All three commands require
 `--revision`.
 
+## Pausing
+
+```sh
+uv run factory pause <id>                              # at the next safe point
+uv run factory pause <id> --after TASK-16,TASK-17      # build just these tasks, then pause
+uv run factory resume <id> --only TASK-16,TASK-17      # the same when resuming (also `run --job <id> --only ...`)
+uv run factory pause <id> --clear                      # withdraw a pause that has not taken effect
+```
+
+A pause never kills an agent: running calls finish, nothing new starts, then the job is `PAUSED`. A
+plain pause halts at the next step boundary. With a task list, only those tasks are built: lanes and
+the sequential build skip every other ready task, and the job pauses once the listed tasks are accepted
+or failed, before feature acceptance. `resume` clears the pause (event `state.resumed` after
+`pause.requested`). In `run` and `resume`, the first Ctrl-C or SIGTERM is such a pause. A second one
+ends the job's agent runs at once (`os.killpg`). Then run `factory recover --all` before `resume`.
+
 ## Recovery after a crash
 
 ```sh
@@ -191,6 +207,16 @@ exists and is on `factory/<job-id>` → live agent processes are kept for adopti
 retrying; a confirmed merge in `MERGING` → `MERGED`, `active=0` and `_post_merge_cleanup`) →
 release orphaned budget reservations. `actions`/`problems` report in JSON. Then
 `factory run --job <id>`.
+
+A run that was killed or lost before it reported its cost is charged to its reservation
+(`Factory.charge_dead_attempt`, also on `cancel` and when a lane pool is recovered). Earlier its
+reservation was released, so the run cost nothing in the books. The cost comes from the run's
+event log (`adapters/claude.py::estimate_from_log`): the exact `total_cost_usd` when a result event
+exists. Otherwise each assistant message's input and cache tokens count once, and the output is
+estimated at 1.8 visible characters per token. Measured against reported costs, the estimate came
+to 0.97x for Opus and 1.03x for Sonnet. Prices are in `INPUT_PRICE_PER_MTOK`. A model without a
+price, or a run without a log, is charged the full reservation. The usage row keeps
+`cost_known = 0` and `source = recovery:<runtime>`.
 
 ## Cleanup
 
@@ -510,6 +536,13 @@ characters of a 256k feature diff. The defaults live in `config.py`, as with the
 - `lighter_models` and `lighter_models_for_difficulty` (default `code_reviewer: claude-sonnet-5-5` for easy and medium
   tasks): these tasks and every fix-check round get the lighter model at any risk. A hard task's first round keeps the
   role binding. Event `review.routed`.
+- Rework in a parallel lane builds on the rejected attempt. The lane starts at the attempt's head,
+  rebased onto the current job head when other tasks landed meanwhile (event `lanes.rework_continued`).
+  The job context's `review_head_alias` maps the reviewed head to the moved one, so the next code and
+  test reviews are fix-check rounds. A conflicting
+  rebase starts from the job head as before (`lanes.rework_restarted`). After a `FAIL_POLICY`, a
+  requeue (another lane won), a failed task or `task retry`, the next attempt starts fresh. A review
+  that passed while another one asked for changes also reviews only the delta in the next round.
 - `execution.short_cache_for_read_only` (default on): read-only claude calls run with `FORCE_PROMPT_CACHING_5M=1`, so the
   CLI writes a 5-minute prompt cache instead of a 1-hour one. Read-only calls are reviewers, analysis and planning. A
   5-minute write costs 1.25x the input price, a 1-hour write 2x. Builders keep the 1-hour cache, because a long test run

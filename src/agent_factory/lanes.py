@@ -109,7 +109,8 @@ class ParallelLanes:
                 self._fail_task(job_id, task_id, f"used all {max_attempts} attempts")  # independent tasks go on
                 continue
             candidates.append((task_id, TaskSpec.model_validate(json.loads(task["spec_json"])).file_scope))
-        return candidates
+        allowed = set(self._pause_filter(job_id, [c[0] for c in candidates]))  # a pause lets running lanes finish
+        return [c for c in candidates if c[0] in allowed]
 
     def _parallel_wave(self: "Factory", job_id: str) -> list[str]:
         """Tasks to start the lane pool with, or [] to build sequentially."""
@@ -117,8 +118,8 @@ class ParallelLanes:
         if limit < 2:
             return []
         wave = pick_wave(self._lane_candidates(job_id), limit)
-        parked = self._ctx(job_id).get("parked_lanes", {})
-        return wave if len(wave) >= 2 or any(t in parked for t in wave) else []
+        kept = {**self._ctx(job_id).get("parked_lanes", {}), **self._ctx(job_id).get("lane_rework", {})}
+        return wave if len(wave) >= 2 or any(t in kept for t in wave) else []
 
     def _recover_wave(self: "Factory", job_id: str) -> None:
         """A controller that died with lanes running left them behind: stop their agents, drop the lanes."""
@@ -138,6 +139,7 @@ class ParallelLanes:
                         pass
                 with self.store.tx() as conn:
                     conn.execute("UPDATE attempts SET state = 'abandoned' WHERE attempt_id = ?", (row["attempt_id"],))
+                self.charge_dead_attempt(self.store.one("SELECT * FROM attempts WHERE attempt_id = ?", (row["attempt_id"],)))
             refund = 0 if task_id in parked else 1  # a parked lane's re-review never took an attempt
             with self.store.tx() as conn:
                 conn.execute(
@@ -171,7 +173,7 @@ class ParallelLanes:
                         if any(task_id == b[0] or scopes_overlap(scope, b[3]) for b in busy):
                             continue
                         path, start = self._start_lane(job_id, task_id, repo, wt, links)  # git bookkeeping on one thread
-                        running[pool.submit(self._lane_run, job_id, task_id, path)] = (task_id, path, start, scope)
+                        running[pool.submit(self._lane_run, job_id, task_id, path, start)] = (task_id, path, start, scope)
                         self._set_ctx(job_id, parallel_wave=[b[0] for b in running.values()])
                 if not running:
                     break
@@ -204,17 +206,60 @@ class ParallelLanes:
             self.store.event(conn, job_id, "lanes.started", {"task": task_id, "start_sha": head, "parked": bool(parked)})
         path = self._lane_path(job_id, task_id)
         self._remove_lane(repo, path)
-        git(repo, "worktree", "add", "--quiet", "--detach", str(path), head)
+        rework = None if parked else self._ctx(job_id).get("lane_rework", {}).get(task_id)
+        git(repo, "worktree", "add", "--quiet", "--detach", str(path), rework["head"] if rework else head)
+        if rework:
+            self._continue_rework(job_id, task_id, repo, path, rework, head)
         WorkspaceManager.link_from_checkout(repo, path, links)
         return path, parked["start"] if parked else head
 
+    def _continue_rework(self: "Factory", job_id: str, task_id: str, repo: Path, path: Path, rework: dict, head: str) -> None:
+        """A rework lane starts from the rejected attempt, moved onto the current job head, not from scratch.
+
+        Live finding (LearnEnglish F5a TASK-16): after one UI finding the next lane began at the job head; the builder
+        wrote the task again and every review ran in full. Rebased, the builder fixes what was found and the reviews
+        check the change (fix-check rounds, see Factory._fix_check). A conflicting rebase falls back to the job head.
+        """
+        moved = rework["head"]
+        if rework["start"] != head:
+            rebased = subprocess.run(["git", *AUTHOR, "rebase", "--quiet", "--onto", head, rework["start"]], cwd=path,
+                                     capture_output=True, text=True)
+            if rebased.returncode != 0:
+                subprocess.run(["git", "rebase", "--abort"], cwd=path, capture_output=True)
+                git(path, "checkout", "--quiet", "--detach", head)
+                self._drop_lane_rework(job_id, task_id)
+                with self.store.tx() as conn:
+                    self.store.event(conn, job_id, "lanes.rework_restarted", {"task": task_id, "reason": (rebased.stderr or rebased.stdout)[-500:]})
+                return
+            moved = WorkspaceManager.head(path)
+        aliases = self._ctx(job_id).get("review_head_alias", {})
+        self._set_ctx(job_id, review_head_alias={**aliases, task_id: {rework["head"]: moved}})
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "lanes.rework_continued", {"task": task_id, "from": rework["head"], "head": moved, "onto": head})
+
+    def _keep_lane_rework(self: "Factory", job_id: str, task_id: str, lane: Path, start: str) -> None:
+        head = WorkspaceManager.head(lane)
+        if head == start or not self._is_ancestor(lane, start, head):
+            return self._drop_lane_rework(job_id, task_id)
+        git(lane, "update-ref", f"refs/factory/rework/{job_id}/{task_id}", head)  # keeps the commits after the lane is removed
+        self._set_ctx(job_id, lane_rework={**self._ctx(job_id).get("lane_rework", {}), task_id: {"start": start, "head": head}})
+
+    def _drop_lane_rework(self: "Factory", job_id: str, task_id: str) -> None:
+        ctx = self._ctx(job_id)
+        rework, aliases = ctx.get("lane_rework", {}), ctx.get("review_head_alias", {})
+        if task_id in rework or task_id in aliases:
+            rework.pop(task_id, None)
+            aliases.pop(task_id, None)
+            self._set_ctx(job_id, lane_rework=rework, review_head_alias=aliases)
+            git(self._worktree(job_id), "update-ref", "-d", f"refs/factory/rework/{job_id}/{task_id}", check=False)
+
     # --- one lane (runs on a worker thread) ---------------------------------------------
 
-    def _lane_run(self: "Factory", job_id: str, task_id: str, lane: Path) -> LaneOutcome:
+    def _lane_run(self: "Factory", job_id: str, task_id: str, lane: Path, start: str | None = None) -> LaneOutcome:
         self._lane.worktree = lane
         built = task_id not in self._ctx(job_id).get("parked_lanes", {})
         try:
-            outcome = self._lane_body(job_id, task_id, lane, built)
+            outcome = self._lane_body(job_id, task_id, lane, built, start)
         except budgets.BudgetExhausted as exc:
             outcome = LaneOutcome(task_id, "budget", reason=str(exc))
         except Exception as exc:  # StageBlocked and anything else: stop this lane, never the others
@@ -229,12 +274,12 @@ class ParallelLanes:
         outcome.built = built
         return outcome
 
-    def _lane_body(self: "Factory", job_id: str, task_id: str, lane: Path, build: bool) -> LaneOutcome:
+    def _lane_body(self: "Factory", job_id: str, task_id: str, lane: Path, build: bool, start: str | None = None) -> LaneOutcome:
         job = self._job(job_id)
         task = self._task(job_id, task_id)
         spec = TaskSpec.model_validate(json.loads(task["spec_json"]))
         parked = self._ctx(job_id).get("parked_lanes", {}).get(task_id)
-        start = parked["start"] if parked else WorkspaceManager.head(lane)
+        start = parked["start"] if parked else start or WorkspaceManager.head(lane)
         if build:
             try:
                 self._run_builder(job_id, task_id, task, self._ctx(job_id))
@@ -335,6 +380,7 @@ class ParallelLanes:
                 return self._lane_requeue(job_id, task_id, f"COMBINED_{gate.verdict}",
                                           f"checks fail when combined with tasks accepted meanwhile: {gate.reason}", outcome.built)
         head = self._sync_head(job_id)
+        self._drop_lane_rework(job_id, task_id)
         with self.store.tx() as conn:
             conn.execute("UPDATE tasks SET state = 'ACCEPTED', accepted_head_sha = ? WHERE job_id = ? AND task_id = ?",
                          (head, job_id, task_id))
@@ -372,6 +418,7 @@ class ParallelLanes:
 
     def _lane_requeue(self: "Factory", job_id: str, task_id: str, verdict: str, reason: str, built: bool) -> None:
         """Not the task's fault (another lane won): rebuild on the new head without using an attempt."""
+        self._drop_lane_rework(job_id, task_id)
         last = self._ctx(job_id).get("last_failure", {})
         last[task_id] = {"verdict": verdict, "reason": reason, "excerpt": {}}
         self._set_ctx(job_id, last_failure=last)
@@ -392,6 +439,10 @@ class ParallelLanes:
             return
         patch = git(lane, "diff", f"{start}..HEAD", check=False)
         self.evidence.put(patch.encode(), "rejected-attempt-patch", Producer("controller", "lane"), job_id)
+        if outcome.verdict == "FAIL_POLICY":  # as in the sequential flow: work outside the rules is not built on
+            self._drop_lane_rework(job_id, task_id)
+        else:
+            self._keep_lane_rework(job_id, task_id, lane, start)
         ctx = self._ctx(job_id)
         fps = ctx.get("failure_fingerprints", {})
         fps.setdefault(task_id, []).append(digest([outcome.verdict, outcome.reason])[:16])
