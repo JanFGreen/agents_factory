@@ -404,3 +404,25 @@ def test_the_walkthrough_gets_the_controller_checks_up_front_and_resume_restores
     assert any(c.startswith("viewports:") and "phone" in c for c in checks) and any("checked+focus" in c for c in checks)
     env.factory.resume(job)
     assert env.factory.run(job) == "READY_TO_MERGE", env.store.job(job)["blocked_reason"]
+
+
+def test_walkthrough_changes_with_only_non_blocking_findings_passes_with_follow_ups(make_env, tmp_path, repo):
+    """Live finding (LearnEnglish F5a): a non-blocking focus ring and <form> remark sent an accepted task to rework."""
+    ui = UiReviewer([(True, ui_payload())])
+
+    def review(request) -> FakeReply:
+        reply = ui(request)
+        if ui.feature_inputs and "mode" in request.prompt and '"mode": "feature"' in request.prompt:
+            remark = {"id": "UI-1", "severity": "medium", "blocking": False, "requirement_ids": [], "location": None,
+                      "problem": "focus ring is the browser default, not the design token", "expected_fix": "use focusRing",
+                      "status": "open"}
+            reply = FakeReply({**reply.envelope, "verdict": "CHANGES", "findings": [remark]})
+        return reply
+
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": review})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert [v for v, _ in _feature_results(env, job)] == ["PASS"] and env.events(job, "ui_feature.follow_ups")
+    assert env.calls("factory-implement") == 1  # no rework for a remark
+    row = env.store.one("SELECT blocking, status FROM findings WHERE job_id = ? AND finding_id = 'UI-1'", (job,))
+    assert row["blocking"] == 0 and row["status"] == "open"

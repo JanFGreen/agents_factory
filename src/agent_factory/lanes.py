@@ -108,7 +108,7 @@ class ParallelLanes:
             if task["attempts"] >= max_attempts and task_id not in parked:
                 self._fail_task(job_id, task_id, f"used all {max_attempts} attempts")  # independent tasks go on
                 continue
-            candidates.append((task_id, TaskSpec.model_validate(json.loads(task["spec_json"])).file_scope))
+            candidates.append((task_id, self.task_scope(job_id, task_id, TaskSpec.model_validate(json.loads(task["spec_json"])).file_scope)))
         allowed = set(self._pause_filter(job_id, [c[0] for c in candidates]))  # a pause lets running lanes finish
         return [c for c in candidates if c[0] in allowed]
 
@@ -290,7 +290,8 @@ class ParallelLanes:
             head = WorkspaceManager.head(lane)
             if not self._is_ancestor(lane, start, head):
                 return self._lane_fail(job_id, task_id, "FAIL_POLICY", "history before the build was rewritten")
-            report = evaluate_diff(WorkspaceManager.diff(lane, start), self.cfg.factory.policy, task_file_scope=spec.file_scope or None)
+            report = evaluate_diff(WorkspaceManager.diff(lane, start), self.cfg.factory.policy,
+                                   task_file_scope=self.task_scope(job_id, task_id, spec.file_scope) or None)
             lane_diff = [d for d in WorkspaceManager.diff(lane, job["base_sha"]) if not d.path.startswith("openspec/")]
             risk_report = evaluate_diff(lane_diff, self.cfg.factory.policy)
             risk = max_risk(job["risk"] or "low", risk_report.risk)

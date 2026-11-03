@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent_factory.adapters.fake import FakeReply, envelope
 from agent_factory.controller import TransitionRefused
 
-from ..conftest import FAREWELL, FAREWELL_TEST, GREET_BANG, GREET_TEST, plan_reply
+from ..conftest import FAREWELL, FAREWELL_TEST, GREET_BANG, GREET_TEST, plan_reply, request_inputs
 
 BROKEN_TEST = 'from app.greet import greet\n\n\ndef test_greet_broken():\n    assert greet("Ada") == "nope"\n'
 
@@ -129,3 +131,39 @@ def test_reopen_brings_back_only_a_job_failed_for_the_attempt_cap(make_env):
     env.factory.reopen(job, "the cap is a halt now")
     assert env.state(job) == "NEEDS_HUMAN" and env.events(job, "job.reopened")
     assert env.store.job_context(job)["resume_state"] == "BUILD_TASK"
+
+
+@pytest.mark.parametrize("builders", [1, 2])
+def test_a_retry_can_allow_a_file_outside_the_task_scope(make_env, builders):
+    """Live finding (LearnEnglish F5a): a defect in a shared Button no task owned; the owner task could not touch it."""
+    builder = Builder()
+    env = make_env("standard", responders={"factory-plan": plan_reply(_tasks(False)), "factory-implement": builder},
+                   **{"execution.max_builders_per_job": builders})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "NEEDS_HUMAN"
+    builder.fixed = True
+    seen = []
+
+    def implement(request):
+        reply = builder(request)
+        if "task=TASK-01" in request.prompt:
+            seen.append(request_inputs(request)["task"]["file_scope"])
+            reply = FakeReply(reply.envelope, edits={**reply.edits, "app/shared.py": "X = 1\n"})  # outside its scope
+        return reply
+
+    env.runtime.responders["factory-implement"] = implement
+    env.factory.retry_task(job, "TASK-01", 1, "fix the shared helper too", allow_files=["app/shared.py"])
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert seen and all("app/shared.py" in scope for scope in seen)
+    retry = [json.loads(e["payload_json"]) for e in env.store.events_for(job) if e["kind"] == "task.retry"]
+    assert retry[-1]["allow_files"] == ["app/shared.py"]
+
+
+def test_allow_file_takes_repo_relative_paths(make_env):
+    env = make_env("standard", responders={"factory-plan": plan_reply(_tasks(False)), "factory-implement": Builder()},
+                   **{"execution.max_builders_per_job": 1})
+    job = env.submit("Add exclamation greeting and farewell")
+    env.factory.run(job)
+    with pytest.raises(TransitionRefused):
+        env.factory.retry_task(job, "TASK-01", 1, "no", allow_files=["../outside.py"])

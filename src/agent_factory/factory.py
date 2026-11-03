@@ -1379,8 +1379,18 @@ class Factory(ParallelLanes):
                              to_state=str(S.NEEDS_HUMAN), from_version=job["version"], to_version=version)
         self.store.update_job_context(job_id, resume_state=str(S.BUILD_TASK))
 
-    def retry_task(self, job_id: str, task_id: str, attempts: int, reason: str) -> None:
-        """Operator decision: give a FAILED task more attempts (the job must be halted)."""
+    def task_scope(self, job_id: str, task_id: str, spec: list[str]) -> list[str]:
+        """The task's file_scope plus the files an operator allowed it on retry (``task retry --allow-file``)."""
+        extra = self._ctx(job_id).get("scope_extensions", {}).get(task_id, [])
+        return [*spec, *(f for f in extra if f not in spec)]
+
+    def retry_task(self, job_id: str, task_id: str, attempts: int, reason: str, allow_files: list[str] | None = None) -> None:
+        """Operator decision: give a FAILED task more attempts (the job must be halted).
+
+        ``allow_files`` extends the task's file_scope for its next attempts. Live finding (LearnEnglish F5a): the
+        feature walkthrough found a focus-ring defect in a shared Button no task owned; the owner task could not
+        touch it and failed its last attempt with no change.
+        """
         task = self._task(job_id, task_id)
         if task is None or task["state"] != "FAILED":
             raise TransitionRefused(f"{task_id} is not FAILED")
@@ -1391,11 +1401,17 @@ class Factory(ParallelLanes):
         bases.pop(task_id, None)  # the retry starts from the head at that time
         self._drop_lane_rework(job_id, task_id)
         notes = {**self._ctx(job_id).get("operator_notes", {}), task_id: reason}  # the builder reads why and how to retry
-        self._set_ctx(job_id, task_base=bases, operator_notes=notes)
+        if bad := [f for f in allow_files or [] if f.startswith("/") or ".." in f.split("/")]:
+            raise TransitionRefused(f"--allow-file takes repo-relative paths: {bad}")
+        extensions = self._ctx(job_id).get("scope_extensions", {})
+        if allow_files:
+            extensions = {**extensions, task_id: sorted({*extensions.get(task_id, []), *allow_files})}
+        self._set_ctx(job_id, task_base=bases, operator_notes=notes, scope_extensions=extensions)
         with self.store.tx() as conn:
             conn.execute("UPDATE tasks SET state = 'REWORK', attempts = ? WHERE job_id = ? AND task_id = ?",
                          (max(0, max_attempts - attempts), job_id, task_id))
-            self.store.event(conn, job_id, "task.retry", {"task_id": task_id, "attempts": attempts, "reason": reason})
+            self.store.event(conn, job_id, "task.retry", {"task_id": task_id, "attempts": attempts, "reason": reason,
+                                                          **({"allow_files": allow_files} if allow_files else {})})
 
     def _run_builder(self, job_id: str, task_id: str, task, ctx: dict, gate_fixup: dict | None = None) -> None:
         root_cause = None
@@ -1409,8 +1425,10 @@ class Factory(ParallelLanes):
         open_findings = [dict(f) for f in self.store.all(
             "SELECT finding_id, kind, severity, problem, expected_fix, location_json FROM findings"
             " WHERE job_id = ? AND (task_id = ? OR task_id IS NULL) AND status = 'open'", (job_id, task_id))]
+        spec = json.loads(task["spec_json"])
+        spec["file_scope"] = self.task_scope(job_id, task_id, spec.get("file_scope") or [])
         self.call_agent(job_id, "factory-implement", {
-            "task": json.loads(task["spec_json"]), "spec": ctx.get("spec"), "feature_goal": self._feature(job_id)["goal"],
+            "task": spec, "spec": ctx.get("spec"), "feature_goal": self._feature(job_id)["goal"],
             "open_findings": open_findings, "last_failure": ctx.get("last_failure", {}).get(task_id),
             "root_cause": root_cause, "human_feedback": ctx.get("human_feedback"),
             "operator_note": ctx.get("operator_notes", {}).get(task_id),
@@ -1478,7 +1496,8 @@ class Factory(ParallelLanes):
             self._record(job_id, ResultKind.GATE, str(GateVerdict.FAIL_POLICY), {"reason": "builder rewrote history"}, task_id=task_id)
             return self._fail_build(job_id, task_id, "FAIL_POLICY", "history before the build was rewritten", {})
         builder_diff = WorkspaceManager.diff(wt, start)
-        report = evaluate_diff(builder_diff, self.cfg.factory.policy, task_file_scope=task_spec.file_scope or None)
+        report = evaluate_diff(builder_diff, self.cfg.factory.policy,
+                               task_file_scope=self.task_scope(job_id, task_id, task_spec.file_scope) or None)
         # Risk and surfaces from the whole job diff; risk only rises.
         job_diff = [d for d in WorkspaceManager.diff(wt, job["base_sha"]) if not d.path.startswith("openspec/")]
         risk_report = evaluate_diff(job_diff, self.cfg.factory.policy)
@@ -2018,6 +2037,12 @@ class Factory(ParallelLanes):
                 verdict = "CHANGES"
         if problem is not None:
             verdict = "UNKNOWN"
+        if verdict == "CHANGES" and not any(f["blocking"] and f.get("status", "open") == "open" for f in findings):
+            # Non-blocking remarks are follow-ups, as in task reviews. Live finding (LearnEnglish F5a): a focus ring and a
+            # missing <form>, both non-blocking, sent an accepted task back to rework on a job at its build-attempt cap.
+            verdict = "PASS"
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "ui_feature.follow_ups", {"findings": [f["id"] for f in findings]})
         if verdict in ("BLOCKED", "UNKNOWN"):
             kept = self.evidence.put_json(res.envelope.model_dump(), "inconclusive-review",  # for the operator, though not a verdict
                                           self._agent_producer(res, "factory-ui-review"), job_id)
@@ -2648,6 +2673,10 @@ class Factory(ParallelLanes):
                     killed += 1
                 except (ProcessLookupError, PermissionError):
                     pass
+        with self.store.tx() as conn:  # this process exits next: its leases and slots must not hold up the resume
+            conn.execute("DELETE FROM leases WHERE owner_id = ?", (self.owner_id,))
+            conn.execute("UPDATE resource_allocations SET released_at = ? WHERE owner = ? AND released_at IS NULL",
+                         (now(), self.owner_id))
         return killed
 
     def resume(self, job_id: str) -> None:

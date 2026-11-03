@@ -205,3 +205,31 @@ def test_recovery_charges_a_killed_run_from_its_log(make_env, tmp_path, released
     assert any("charged" in a for a in report.actions)
     recover_job(env.factory, job)  # idempotent
     assert env.store.one("SELECT COUNT(*) AS n FROM usage WHERE attempt_id = 'att-dead'")["n"] == 1
+
+
+def test_a_dead_controllers_lease_and_slot_are_freed(make_env):
+    """Live finding (LearnEnglish F5a): after a hard stop the next run halted on 'another worker holds lease'."""
+    env = make_env("standard", responders={"factory-plan": plan_reply(TASKS)})
+    job = env.submit("Add exclamation greeting and farewell")
+    dead = "controller-999999-abcdef"
+    with env.store.tx() as conn:
+        conn.execute("INSERT INTO leases VALUES (?, ?, 1, ?, NULL)", (f"{job}:-:ui_reviewer", dead, 4e9))  # not expired
+        conn.execute("INSERT INTO resource_allocations (alloc_id, kind, value, job_id, owner, created_at) VALUES"
+                     " ('slot-dead', 'slot:agent_process', '1', ?, ?, '2026-11-03')", (job, dead))
+    report = recover_job(env.factory, job)
+    assert not env.store.one("SELECT 1 FROM leases WHERE owner_id = ?", (dead,))
+    assert env.store.one("SELECT released_at FROM resource_allocations WHERE alloc_id = 'slot-dead'")["released_at"]
+    assert len(report.actions) == 2
+
+
+def test_a_hard_stop_frees_its_own_leases_and_slots(make_env):
+    env = make_env("standard", responders={"factory-plan": plan_reply(TASKS)})
+    job = env.submit("Add exclamation greeting and farewell")
+    me = env.factory.owner_id
+    with env.store.tx() as conn:
+        conn.execute("INSERT INTO leases VALUES (?, ?, 1, ?, NULL)", (f"{job}:TASK-01:builder", me, 4e9))
+        conn.execute("INSERT INTO resource_allocations (alloc_id, kind, value, job_id, owner, created_at) VALUES"
+                     " ('slot-mine', 'slot:agent_process', '1', ?, ?, '2026-11-03')", (job, me))
+    env.factory.stop_agents_now([job])
+    assert not env.store.one("SELECT 1 FROM leases WHERE owner_id = ?", (me,))
+    assert env.store.one("SELECT released_at FROM resource_allocations WHERE alloc_id = 'slot-mine'")["released_at"]

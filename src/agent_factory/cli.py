@@ -507,7 +507,7 @@ def cmd_task(args) -> int:
     cfg, store = _load(args)
     factory = _make_factory(cfg, store)
     try:
-        factory.retry_task(args.job_id, args.task_id, args.attempts, args.reason)
+        factory.retry_task(args.job_id, args.task_id, args.attempts, args.reason, allow_files=args.allow_file)
     except TransitionRefused as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_REFUSED
@@ -687,6 +687,8 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("task_id")
     t.add_argument("--attempts", type=int, default=1, choices=range(1, 4))
     t.add_argument("--reason", required=True)
+    t.add_argument("--allow-file", action="append", default=[], metavar="PATH",
+                   help="let the task change this file too (outside its file_scope), e.g. a shared component a review found")
     s.set_defaults(fn=cmd_task)
     s = sub.add_parser("run")
     s.add_argument("--job")

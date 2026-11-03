@@ -33,6 +33,12 @@ def pid_alive(pid: int | None) -> bool:
     return True
 
 
+def _controller_pid(owner_id: str) -> int | None:
+    """The PID in a controller's owner id (``controller-<pid>-<random>``): a lease of a dead controller is free at once."""
+    parts = owner_id.split("-")
+    return int(parts[1]) if len(parts) == 3 and parts[0] == "controller" and parts[1].isdigit() else None
+
+
 def recover_job(factory, job_id: str) -> RecoveryReport:
     store: Store = factory.store
     report = RecoveryReport(job_id)
@@ -71,9 +77,18 @@ def recover_job(factory, job_id: str) -> RecoveryReport:
     # leases whose holders are dead and expired
     with store.tx() as conn:
         for lease in conn.execute("SELECT * FROM leases WHERE lease_key LIKE ?", (f"{job_id}:%",)).fetchall():
-            if lease["expires_at"] < time.time() and not pid_alive(lease["pid"]):
+            holder = lease["pid"] or _controller_pid(lease["owner_id"])
+            if not pid_alive(holder) and (lease["expires_at"] < time.time() or holder):
                 conn.execute("DELETE FROM leases WHERE lease_key = ?", (lease["lease_key"],))
-                report.actions.append(f"expired lease {lease['lease_key']} released")
+                report.actions.append(f"lease {lease['lease_key']} of a dead holder released")
+    # agent slots of dead controllers (a hard stop): otherwise each one lowers max_agent_processes for good
+    with store.tx() as conn:
+        for slot in conn.execute("SELECT alloc_id, owner FROM resource_allocations WHERE job_id = ? AND released_at IS NULL"
+                                 " AND kind LIKE 'slot:%'", (job_id,)).fetchall():
+            holder = _controller_pid(slot["owner"] or "")
+            if holder and not pid_alive(holder):
+                conn.execute("UPDATE resource_allocations SET released_at = ? WHERE alloc_id = ?", (now(), slot["alloc_id"]))
+                report.actions.append(f"slot {slot['alloc_id']} of dead {slot['owner']} released")
     # 4. outbox: reconcile unknown/inflight effects by looking them up before any retry
     for op in outbox.pending_ops(store, job_id):
         if factory.merge_handler is None:
