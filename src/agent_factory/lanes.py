@@ -273,7 +273,7 @@ class ParallelLanes:
         required = self._required_reviews(self._task_surfaces(job_id, task_id, spec, surfaces, WorkspaceManager.diff(lane, start)))
         for _ in range(3):  # inconclusive reviews re-run, as in the sequential REVIEW state
             verdicts, error_class = self._run_reviews(job_id, task_id, json.loads(task["spec_json"]), lane, ident, required,
-                                                      self._security_depth(risk, surfaces), surfaces)
+                                                      self._security_depth(risk, surfaces), surfaces, task_base=start)
             if not any(v in ("UNKNOWN", "BLOCKED") for v in verdicts.values()) or any(v == "CHANGES" for v in verdicts.values()):
                 break
         else:

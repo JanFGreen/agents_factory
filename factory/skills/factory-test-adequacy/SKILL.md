@@ -17,7 +17,14 @@ does not fix tests and does not trust the builder's description of them.
 
 ## Required inputs
 
-- Current `head_sha` and the task diff against its base (test and source files).
+- Current `head_sha` and the task diff against `diff_base_sha` (test and source files). With
+  `diff_scope` the diff holds this task's changes only; `other_feature_files` lists what earlier,
+  already accepted tasks of the feature changed.
+- `review_mode: fix_check` (from the second round): `previous_review` (your open findings and the
+  `reviewed_head_sha`), `fix_delta` (the change since then) and `task_files` instead of the full diff.
+  Report each earlier finding again with the same `id`, `fixed` with evidence or `open`; judge the
+  tests `fix_delta` adds or changes (steps 2-6) and do not re-review unchanged tests. A new low or
+  medium finding outside `fix_delta` is recorded as a non-blocking follow-up.
 - `test-plan.md` scenarios for the task's `requirement_ids` (from `factory-test-design`).
 - Trusted runner evidence for this snapshot: argv, exit code, number of tests
   executed, per-test results, and (if configured) mutation or coverage reports.

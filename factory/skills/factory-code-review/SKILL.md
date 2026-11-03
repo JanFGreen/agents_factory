@@ -22,7 +22,13 @@ complexity than the classification assumed.
 
 ## Required inputs
 
-- `head_sha`, `base_sha` and the task diff; trusted gate result PASS for this `head_sha`.
+- `head_sha`, `diff_base_sha` and the task diff; trusted gate result PASS for this `head_sha`. With
+  `diff_scope` the diff holds this task's changes only: `other_feature_files` lists what earlier,
+  already accepted tasks of the feature changed. Read those files when a change depends on them,
+  but review and report on this task's changes.
+- `review_mode: fix_check` (from the second round): `previous_review` (your open findings and the
+  `reviewed_head_sha`), `fix_delta` (the change since then) and `task_files` instead of the full diff.
+  See "Fix-check rounds".
 - Task record (`requirement_ids`, `file_scope`, `acceptance`, `verification`) and the
   spec scenarios for those requirements; `design.md` contracts when present.
 - Classification of the feature (`complexity_path`, `risk`) and repo-map conventions.
@@ -70,6 +76,18 @@ complexity than the classification assumed.
 10. Severity follows the contract's "Severity and blocking" table: lost, duplicated or wrong
    user data and a stuck user are blocking even when the fix is small. Style-only remarks
    are `low`, non-blocking, and few.
+
+## Fix-check rounds
+
+With `review_mode: fix_check` the task was reviewed before and the builder answered your findings.
+
+1. For each finding in `previous_review.open_findings`: read `fix_delta` and the code it names, then
+   report the finding again with the same `id`: `fixed` when the change removes the failing scenario
+   (name the line or test), else `open` with what is still wrong.
+2. Review `fix_delta` itself with steps 3-7: a fix can add a defect. `effect_sites` lists only the
+   files the delta changed.
+3. Do not re-review code the delta did not change. A new low or medium finding outside `fix_delta`
+   is recorded as a non-blocking follow-up; report a high or critical one wherever it is.
 
 ## Output
 

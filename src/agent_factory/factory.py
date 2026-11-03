@@ -35,7 +35,7 @@ from .decisions import DecisionError, select, verify_ai_choice
 from .difficulty import Decider, assess, builder_level, indivisible
 from .environment import node_bin_dir
 from .estimate import estimate_plan
-from .evidence import EvidenceStore, Producer
+from .evidence import EvidenceError, EvidenceStore, Producer
 from .features import NormalizedFeature, classify, load_feature, path_rank, record_classification, store_feature
 from .identities import InputIdentity, ResultKind, digest
 from .lanes import ParallelLanes
@@ -445,7 +445,9 @@ class Factory(ParallelLanes):
         own = lane or (Path(job["worktree"]) if job["worktree"] else None)
         denied = tuple(default_denied_reads(self.data_dir, own))
         granted = ((worktree,) if writable else ()) + ((Path(browser["evidence_dir"]),) if browser else ()) + ((scratch,) if scratch else ())
-        policy = SandboxPolicy(writable=granted, denied_read=denied, env={**self._toolchain_env(job_id), **(browser or {}).get("env", {})})
+        short_cache = {"FORCE_PROMPT_CACHING_5M": "1"} if not writable and self.cfg.factory.execution.short_cache_for_read_only else {}
+        policy = SandboxPolicy(writable=granted, denied_read=denied,
+                               env={**self._toolchain_env(job_id), **(browser or {}).get("env", {}), **short_cache})
         tools = binding.tools if writable else [t for t in binding.tools if t in READ_ONLY_TOOLS + ["Bash"]]
         if (browser or scratch) and "Bash" not in tools:
             tools = [*tools, "Bash"]  # the browser CLI and probe tests are driven through the shell
@@ -1578,12 +1580,20 @@ class Factory(ParallelLanes):
         self._fail_build(job_id, task_id, "CHANGES", f"review verdicts {verdicts}", {})
 
     def _run_reviews(self, job_id: str, task_id: str, task: dict, wt: Path, ident: InputIdentity, required: list[str],
-                     security_depth: str | None, surfaces: list[str] | None) -> tuple[dict[str, str], str | None]:
+                     security_depth: str | None, surfaces: list[str] | None,
+                     task_base: str | None = None) -> tuple[dict[str, str], str | None]:
         """Run every required review that has no current PASS; reviewers are read-only on ``wt``."""
         ctx = self._ctx(job_id)
         frozen_head = WorkspaceManager.head(wt)
-        diff_text = git(wt, "diff", f"{self._job(job_id)['base_sha']}..HEAD", "--", ".", ":(exclude)openspec")
-        files = [d for d in WorkspaceManager.diff(wt, self._job(job_id)["base_sha"]) if not d.path.startswith("openspec/")]
+        job_base = self._job(job_id)["base_sha"]
+        base = self._review_base(job_id, task_id, wt, task_base, frozen_head)
+        diff_text = git(wt, "diff", f"{base}..HEAD", "--", ".", ":(exclude)openspec")
+        files = [d for d in WorkspaceManager.diff(wt, job_base) if not d.path.startswith("openspec/")]  # the feature's
+        task_files = files if base == job_base else [d for d in WorkspaceManager.diff(wt, base) if not d.path.startswith("openspec/")]
+        earlier = [] if base == job_base else git(wt, "diff", "--name-status", f"{job_base}..{base}", "--", ".",
+                                                   ":(exclude)openspec").splitlines()
+        scope = {"diff_base_sha": base, **({"other_feature_files": earlier[:300], "diff_scope": "task: the diff holds this "
+                                            "task's changes only; earlier tasks of the feature are already accepted"} if earlier else {})}
         gate = self.evidence.latest(job_id, ResultKind.GATE, task_id)
         verdicts: dict[str, str] = {}
         error_class = None
@@ -1600,11 +1610,14 @@ class Factory(ParallelLanes):
             skill = REVIEW_SKILLS[review]
             browser = self._browser_session(job_id) if review in BROWSER_REVIEWS else None
             notes = ctx.get("review_notes", {}).get(task_id, {})
-            sites = effect_sites(files) if review == "code-review" else []
+            fix = self._fix_check(job_id, task_id, review, wt, base, frozen_head)
+            reviewed = [d for d in task_files if d.path in fix["delta_files"]] if fix else task_files
+            sites = effect_sites(reviewed) if review == "code-review" else []
             probe = self._probe_workspace(job_id, wt) if sites else None
+            diff_inputs = fix["inputs"] if fix else {"diff": diff_text[:60000]}
             try:
                 res = self.call_agent(job_id, skill, {
-                    "task": task, "spec": ctx.get("spec"), "diff": diff_text[:60000], "head_sha": frozen_head,
+                    "task": task, "spec": ctx.get("spec"), **diff_inputs, **scope, "head_sha": frozen_head,
                     "gate_evidence": gate.payload if gate else None, "risk": self._job(job_id)["risk"],
                     "security_depth": security_depth, "surfaces": surfaces,
                     "spec_advisories": ctx.get("spec_advisories", []), **self._verification_context(job_id, "task", browser),
@@ -1613,7 +1626,7 @@ class Factory(ParallelLanes):
                     **({"effect_sites": sites, "probe_workspace": self._probe_inputs(job_id, probe)} if sites else {}),
                     **({"controller_note": notes[review]} if notes.get(review) else {}),
                 }, task_id=task_id, purpose="review", browser=browser, scratch=probe,
-                    model=self.cfg.factory.review.security.baseline_model if review == "security-review" and security_depth == "baseline" else None)
+                    model=self._review_model(job_id, task_id, review, security_depth, fix is not None))
             except BaseException:
                 if probe is not None:  # the probe copy must not outlive a failed call
                     self._drop_probe(job_id, probe)
@@ -1643,6 +1656,8 @@ class Factory(ParallelLanes):
                 if problem:
                     payload["controller"] = {"verdict": verdict, "problem": problem}
                 self._set_review_note(job_id, task_id, review, problem)
+            if fix:
+                verdict, findings = self._hold_fix_check(job_id, task_id, review, fix, verdict, findings)
             if review in DEMOTABLE_REVIEWS:
                 verdict, findings = self._demote_after_rounds(job_id, task_id, review, verdict, findings)
             self._record(job_id, kind, verdict, payload, ident=ident,
@@ -1734,6 +1749,84 @@ class Factory(ParallelLanes):
                  "expected_fix": "Make the probed failure mode safe and keep the probe as a regression test.", "status": "open"}
                 for i, (fid, p) in enumerate(confirmed.items())]
         return "CHANGES", out, None
+
+    def _review_base(self, job_id: str, task_id: str | None, wt: Path, task_base: str | None, head: str) -> str:
+        """Base of the diff task reviewers read: where this task's series of attempts began, else the feature base.
+
+        Live finding (LearnEnglish F5a TASK-14): reviewers got the first 60k characters of the whole feature diff
+        (256k), so the task's own SessionProvider.tsx, the 36th file, was cut off while earlier tasks were re-read.
+        """
+        job_base = self._job(job_id)["base_sha"]
+        base = task_base or self._ctx(job_id).get("task_base", {}).get(task_id)
+        if (not self.cfg.factory.review.task_diff_only or not task_id or not base or base == job_base
+                or not self._is_ancestor(wt, job_base, base) or not self._is_ancestor(wt, base, head)):
+            return job_base
+        return base
+
+    def _review_model(self, job_id: str, task_id: str | None, review: str, security_depth: str | None, fix_check: bool) -> str | None:
+        """Model of one task review; None keeps the role binding (at low risk call_agent may still pick `cheaper_models`)."""
+        policy = self.cfg.factory.review
+        if review == "security-review" and security_depth == "baseline":
+            return policy.security.baseline_model
+        model = policy.lighter_models.get(SKILL_ROLE[REVIEW_SKILLS[review]])
+        assessed = (self._ctx(job_id).get("task_difficulty") or {}).get("tasks", {}).get(task_id)
+        difficulty = assessed["difficulty"] if assessed else None
+        if model is None or not (fix_check or difficulty in policy.lighter_models_for_difficulty):
+            return None
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "review.routed", {"task_id": task_id, "review": review, "model": model,
+                                                             "reason": "fix_check" if fix_check else f"difficulty {difficulty}"})
+        return model
+
+    def _fix_check(self, job_id: str, task_id: str | None, review: str, wt: Path, base: str, head: str) -> dict | None:
+        """From the second round of a review on a task: inputs to check its open findings against the change since then.
+
+        Live finding (LearnEnglish F5a TASK-14): each of seven rounds re-read everything and found a new race elsewhere.
+        A fix-check round gets the delta since the reviewed head and the open findings instead of the whole diff; None
+        means a full review (first round, the last one passed, or the history was rewritten, as after a failed task).
+        """
+        if review not in self.cfg.factory.review.fix_check_reviews or not task_id:
+            return None
+        try:
+            prev = self.evidence.latest(job_id, ResultKind(review), task_id)
+        except EvidenceError:
+            return None
+        prev_head = prev.identity.head_sha if prev else None
+        if (prev is None or prev.verdict != "CHANGES" or not prev_head or prev_head in (head, base)
+                or not self._is_ancestor(wt, base, prev_head) or not self._is_ancestor(wt, prev_head, head)):
+            return None
+        open_findings = [{"id": f["finding_id"], "severity": f["severity"], "blocking": bool(f["blocking"]), "problem": f["problem"],
+                          "expected_fix": f["expected_fix"], "location": json.loads(f["location_json"] or "null")}
+                         for f in self.store.all("SELECT finding_id, severity, blocking, problem, expected_fix, location_json FROM findings"
+                                                 " WHERE job_id = ? AND task_id = ? AND kind = ? AND status = 'open'", (job_id, task_id, review))]
+        if not open_findings:
+            return None
+        delta = git(wt, "diff", f"{prev_head}..HEAD", "--", ".", ":(exclude)openspec")
+        delta_files = set(git(wt, "diff", "--name-only", f"{prev_head}..HEAD", "--", ".", ":(exclude)openspec").splitlines())
+        return {"open_ids": {f["id"] for f in open_findings}, "delta_files": delta_files, "inputs": {
+            "review_mode": "fix_check",
+            "previous_review": {"reviewed_head_sha": prev_head, "open_findings": open_findings},
+            "fix_delta": delta[:60000],
+            "task_files": git(wt, "diff", "--name-status", f"{base}..HEAD", "--", ".", ":(exclude)openspec").splitlines()[:300],
+            "how": "Fix-check round: you reviewed this task at reviewed_head_sha. Check each open finding against fix_delta "
+                   "(and the files it names) and report it again with the same id: status fixed with evidence, or open. Report "
+                   "new findings only for code fix_delta adds or changes; a new low or medium finding outside it is recorded "
+                   "as a follow-up, not a blocker. Read any task file you need; the full task diff is not repeated."}}
+
+    def _hold_fix_check(self, job_id: str, task_id: str, review: str, fix: dict, verdict: str,
+                        findings: list[dict]) -> tuple[str, list[dict]]:
+        """In a fix-check round a new low/medium finding about code the delta did not touch is a follow-up, not a blocker."""
+        if verdict != "CHANGES":
+            return verdict, findings
+        outside = [f["id"] for f in findings if f["blocking"] and f["id"] not in fix["open_ids"] and f["severity"] in ("low", "medium")
+                   and not (f.get("location") and f["location"]["path"] in fix["delta_files"])]
+        if not outside:
+            return verdict, findings
+        out = [{**f, "blocking": False, "problem": f"[follow-up: outside the fix delta] {f['problem']}"[:4000]}
+               if f["id"] in outside else f for f in findings]
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "findings.outside_delta", {"task_id": task_id, "review": review, "findings": outside})
+        return ("CHANGES" if any(f["blocking"] and f.get("status", "open") == "open" for f in out) else "PASS"), out
 
     def _demote_after_rounds(self, job_id: str, task_id: str | None, review: str, verdict: str,
                              findings: list[dict]) -> tuple[str, list[dict]]:

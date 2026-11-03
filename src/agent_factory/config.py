@@ -234,6 +234,9 @@ class Execution(Strict):
     reviewer_timeout_seconds: int
     agent_stall_seconds: int = Field(default=300, ge=30)  # no new runtime event for this long => stalled run
     job_deadline_minutes: int
+    # Read-only claude calls write a 5-minute prompt cache (1.25x input price instead of 2x for 1 hour); builders keep
+    # 1 hour, a long test run between two of their turns would expire the short one. Code default, as above.
+    short_cache_for_read_only: bool = True
 
     @model_validator(mode="after")
     def _lanes_fit_agent_slots(self) -> "Execution":
@@ -379,6 +382,12 @@ class ReviewPolicy(Strict):
     cheaper_models_for_risk: list[Literal["low", "medium", "high"]] = ["low"]
     cheaper_models: dict[str, str] = {}
     security: SecurityReviewPolicy = SecurityReviewPolicy()
+    # Cost guards with code defaults (not in config.yaml, whose text is part of the policy digest; set them there to override).
+    task_diff_only: bool = True  # task reviewers get the task's own diff; the rest of the feature as a list of files
+    fix_check_reviews: list[_REVIEWS] = ["code-review", "test-adequacy"]  # from round 2: the earlier findings and the delta
+    # Role -> model for task reviews of tasks at these difficulty levels and for every fix-check round, at any risk.
+    lighter_models: dict[str, str] = {"code_reviewer": "claude-sonnet-5-5"}
+    lighter_models_for_difficulty: list[Literal["easy", "medium", "hard"]] = ["easy", "medium"]
 
     @model_validator(mode="after")
     def _every_review_once(self) -> "ReviewPolicy":

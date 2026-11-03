@@ -51,7 +51,9 @@ def test_low_risk_task_reviews_use_the_cheaper_models_but_acceptance_does_not(ma
 
 
 def test_medium_risk_jobs_keep_the_full_reviewers(make_env):
-    env = make_env("standard", responders={"factory-classify-feature": classify_reply(4, risk="medium", atomic=False)})
+    # Risk alone: the routing by task difficulty and fix-check rounds is tested in test_review_cost_guards.py.
+    env = make_env("standard", responders={"factory-classify-feature": classify_reply(4, risk="medium", atomic=False)},
+                   **{"review.lighter_models_for_difficulty": [], "review.fix_check_reviews": []})
     job = env.submit("Add exclamation greeting and farewell")
     env.factory.run(job)
     assert env.store.job(job)["risk"] == "medium"

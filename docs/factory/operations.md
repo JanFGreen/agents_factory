@@ -495,6 +495,26 @@ UI) skips the expensive product-verify and security-review in that attempt; they
 Tasks of jobs whose risk is in `cheaper_models_for_risk` (default `low`) get cheaper reviewers
 (`cheaper_models`); feature acceptance and integration always use the full role bindings.
 
+Guards measured on LearnEnglish F5a. There, an Opus code review cost $1.30 a round, and reviewers re-read the first 60k
+characters of a 256k feature diff. The defaults live in `config.py`, as with the build guards above.
+
+- `task_diff_only` (default on): task reviewers get the diff of the task's own attempts (`diff_base_sha`). The files that
+  earlier, accepted tasks of the feature changed arrive only as a list in `other_feature_files`, and only effect sites in the
+  task's files need a failure-mode table. Security inputs and triage still use the whole feature's files.
+- `fix_check_reviews` (default code review and test adequacy): when the last review of a task asked for changes and the
+  new head builds on the reviewed one, the next round is a fix check. The reviewer gets `review_mode: fix_check`,
+  `previous_review` (its open findings), `fix_delta` (the change since the reviewed head) and `task_files`, but not the
+  full diff. A new low or medium finding outside the delta becomes an open, non-blocking follow-up with the prefix
+  `[follow-up: outside the fix delta]` (event `findings.outside_delta`). High and critical findings still block. After a
+  failed task, or when the history was rewritten, the next review is a full one again.
+- `lighter_models` and `lighter_models_for_difficulty` (default `code_reviewer: claude-sonnet-5-5` for easy and medium
+  tasks): these tasks and every fix-check round get the lighter model at any risk. A hard task's first round keeps the
+  role binding. Event `review.routed`.
+- `execution.short_cache_for_read_only` (default on): read-only claude calls run with `FORCE_PROMPT_CACHING_5M=1`, so the
+  CLI writes a 5-minute prompt cache instead of a 1-hour one. Read-only calls are reviewers, analysis and planning. A
+  5-minute write costs 1.25x the input price, a 1-hour write 2x. Builders keep the 1-hour cache, because a long test run
+  between two of their turns would let a 5-minute cache expire.
+
 ## Security: tools, triggers, deduplication (`review.security`)
 
 Deterministic checks run before the agent review:
