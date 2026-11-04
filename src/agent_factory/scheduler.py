@@ -130,7 +130,7 @@ def acquire_lease(store: Store, key: str, owner_id: str, ttl: float, *, pid: int
         if row is None:
             epoch = 1
             conn.execute("INSERT INTO leases VALUES (?, ?, ?, ?, ?)", (key, owner_id, epoch, t + ttl, pid))
-        elif row["owner_id"] == owner_id and row["expires_at"] > t:
+        elif row["owner_id"] == owner_id:  # its own lease, also past expiry: a live holder's lease is never taken over
             epoch = row["epoch"]
             conn.execute("UPDATE leases SET expires_at = ? WHERE lease_key = ?", (t + ttl, key))
         elif row["expires_at"] > t or (row["pid"] and _pid_alive(row["pid"])):

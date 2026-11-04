@@ -179,10 +179,24 @@ class Factory(ParallelLanes):
     # ------------------------------------------------------------------ main loop --
 
     def run(self, job_id: str, max_steps: int = 200) -> str:
+        """Drive the job; one controller at a time.
+
+        Live finding (LearnEnglish F5a): `factory resume` in a terminal and the dashboard's Resume ran the job at once.
+        The second controller adopted the first one's security reviewer as a leftover of a restart (two results for one
+        run), then met its walkthrough lease and stopped the job in NEEDS_HUMAN while that walkthrough went on.
+        The lease names the process: a dead controller's lease is free at once (scheduler.acquire_lease).
+        """
+        key = f"{job_id}:controller"
+        lease = acquire_lease(self.store, key, self.owner_id, self.cfg.factory.execution.lease_ttl_seconds, pid=os.getpid())
+        if lease is None:
+            holder = self.store.one("SELECT owner_id, pid FROM leases WHERE lease_key = ?", (key,))
+            raise TransitionRefused(f"another controller is running {job_id} ({holder['owner_id'] if holder else '?'}, "
+                                    f"pid {holder['pid'] if holder else '?'}); wait for it, or stop it and `factory recover --all`")
         try:
             return self._run_steps(job_id, max_steps)
         finally:
             self._stop_previews(job_id)
+            release_lease(self.store, lease)
 
     def _run_steps(self, job_id: str, max_steps: int) -> str:
         for _ in range(max_steps):

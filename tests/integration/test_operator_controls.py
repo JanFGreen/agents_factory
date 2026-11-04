@@ -10,6 +10,7 @@ import pytest
 from agent_factory import budgets
 from agent_factory.adapters.claude import estimate_from_log
 from agent_factory.adapters.fake import FakeReply, envelope
+from agent_factory.controller import TransitionRefused
 from agent_factory.recovery import recover_job
 
 from ..conftest import ALL_SCENARIOS_PASS, FAREWELL, FAREWELL_TEST, GREET_BANG, GREET_TEST, plan_reply, request_inputs
@@ -233,3 +234,21 @@ def test_a_hard_stop_frees_its_own_leases_and_slots(make_env):
     env.factory.stop_agents_now([job])
     assert not env.store.one("SELECT 1 FROM leases WHERE owner_id = ?", (me,))
     assert env.store.one("SELECT released_at FROM resource_allocations WHERE alloc_id = 'slot-mine'")["released_at"]
+
+
+def test_one_controller_runs_a_job_at_a_time(make_env):
+    """Live finding (LearnEnglish F5a): the terminal's `factory resume` and the dashboard's Resume ran one job at once;
+    the second adopted the first one's reviewer and then stopped the job on its walkthrough lease."""
+    env = make_env("standard", responders={"factory-plan": plan_reply(TASKS)})
+    job = env.submit("Add exclamation greeting and farewell")
+    before = env.state(job)
+    other = "controller-1-other"
+    with env.store.tx() as conn:  # a live controller (pid 1 is always alive) holds the job
+        conn.execute("INSERT INTO leases VALUES (?, ?, 1, ?, 1)", (f"{job}:controller", other, 0))
+    with pytest.raises(TransitionRefused, match="another controller is running"):
+        env.factory.run(job)
+    assert env.state(job) == before  # untouched, not halted
+    with env.store.tx() as conn:  # that controller exited (its pid is gone): the lease is free at once
+        conn.execute("UPDATE leases SET pid = 999999 WHERE lease_key = ?", (f"{job}:controller",))
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert not env.store.one("SELECT 1 FROM leases WHERE lease_key = ?", (f"{job}:controller",))  # released at the end
