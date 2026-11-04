@@ -6,6 +6,11 @@ link_from_checkout: ["node_modules"]
 preview:                                 # build of the web-build check, served for UI review in a browser
   static_dir: dist
   spa_fallback: true
+  backend:                               # the app's API server for the feature walkthrough (screens behind sign-in)
+    argv: ["node", "--import", "tsx", "src/server/main.ts"]   # not the tsx CLI: its IPC socket path in TMPDIR is too long
+    env: {HOST: "127.0.0.1", PORT: "{port}", JWT_SECRET: "{secret}", LEARNENGLISH_DB: "{scratch}/preview.db", CORS_ORIGIN: "{origin}"}
+    build_url: "http://127.0.0.1:3000"   # expo.extra.apiBaseUrl in app.json; the preview serves the build with the real URL
+    ready_path: /health
 checks:
   - name: unit
     argv: ["{worktree}/node_modules/.bin/vitest", "run", "--configLoader", "runner", "--reporter=default", "--reporter=junit", "--outputFile.junit={report}"]

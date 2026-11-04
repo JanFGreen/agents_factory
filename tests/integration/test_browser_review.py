@@ -7,12 +7,13 @@ import os
 import urllib.request
 from pathlib import Path
 
+import pytest
 import yaml
 
 from agent_factory.adapters.fake import FakeReply, envelope
 from agent_factory.schemas import HEURISTICS, VISUAL_ASPECTS
 
-from ..conftest import UNIT_CHECK, git_commit_all, implement_by_task, sh
+from ..conftest import UNIT_CHECK, git_commit_all, implement_by_task, request_inputs, sh
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"fake-image"
 BUILD = {"name": "web-build", "argv": ["{python}", "-c", "import pathlib; d = pathlib.Path('dist'); d.mkdir(exist_ok=True); "
@@ -426,3 +427,49 @@ def test_walkthrough_changes_with_only_non_blocking_findings_passes_with_follow_
     assert env.calls("factory-implement") == 1  # no rework for a remark
     row = env.store.one("SELECT blocking, status FROM findings WHERE job_id = ? AND finding_id = 'UI-1'", (job,))
     assert row["blocking"] == 0 and row["status"] == "open"
+
+
+BACKEND_SERVER = (
+    "import http.server, os\n"
+    "class H(http.server.BaseHTTPRequestHandler):\n"
+    "    def do_GET(self):\n"
+    "        self.send_response(200); self.end_headers(); self.wfile.write(os.environ['ORIGIN'].encode())\n"
+    "    def log_message(self, *a): pass\n"
+    "http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), H).serve_forever()\n"
+)
+
+
+def test_the_walkthrough_gets_the_apps_backend_and_the_build_calls_it(make_env, tmp_path, repo):
+    """Live finding (LearnEnglish F5c): the changed screen needed a session and the API; the static preview redirected it
+    to onboarding and the walkthrough came back UNKNOWN twice."""
+    build = {**BUILD, "argv": ["{python}", "-c", "import pathlib; d = pathlib.Path('dist'); d.mkdir(exist_ok=True); "
+                                                 "(d / 'index.html').write_text('<script>api=\"http://127.0.0.1:3000\"</script>')"]}
+    seen = []
+    ui = UiReviewer([(True, ui_payload())])
+
+    def review(request):
+        inputs = request_inputs(request)
+        environment = inputs["environment"]
+        page = urllib.request.urlopen(environment["url"], timeout=5).read().decode()
+        api = environment.get("backend_url")
+        origin = urllib.request.urlopen(api + "/anything", timeout=5).read().decode() if api else None
+        seen.append({"mode": inputs.get("mode"), "page": page, "api": api, "origin": origin, "how": environment["how"],
+                     "allowed": request.sandbox_policy.env.get("PLAYWRIGHT_MCP_ALLOWED_ORIGINS")})
+        return ui(request)
+
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": review})
+    (env.factory_dir / "checks" / "default.yaml").write_text(yaml.safe_dump({
+        "schema_version": 1, "checks": [UNIT_CHECK, build],
+        "preview": {"static_dir": "dist", "backend": {
+            "argv": ["{python}", "-c", BACKEND_SERVER], "env": {"PORT": "{port}", "ORIGIN": "{origin}"},
+            "build_url": "http://127.0.0.1:3000", "ready_path": "/health", "ready_timeout_seconds": 20}}}))
+    env.reload()
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE", env.store.job(job)["blocked_reason"]
+    task, feature = next(s for s in seen if s["mode"] != "feature"), next(s for s in seen if s["mode"] == "feature")
+    assert task["api"] is None and "3000" in task["page"]  # task reviews stay on the static build
+    assert feature["api"] and feature["api"] in feature["page"] and "127.0.0.1:3000" not in feature["page"]
+    assert feature["origin"] == feature["allowed"].split(";")[0]  # the server allows the preview's origin (CORS)
+    assert feature["allowed"].split(";")[1] == feature["api"] and "sign-up" in feature["how"]
+    with pytest.raises(OSError):  # stopped with the run
+        urllib.request.urlopen(feature["api"] + "/anything", timeout=2)

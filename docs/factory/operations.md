@@ -648,8 +648,28 @@ acceptance) get the `served` environment instead of `local-checkout`:
 
 Without a build (no `dist/index.html`) or without the program (`factory doctor` → `browser.present: false`)
 the review stays `local-checkout`. Installation: `cd tools/playwright-cli && npm ci`; the browser comes
-from the Playwright cache (`playwright-cli install-browser`, if it is missing). The app in the preview runs
-without a backend (the API server is not started).
+from the Playwright cache (`playwright-cli install-browser`, if it is missing).
+
+### The app's backend at feature acceptance (`preview.backend`)
+
+Task reviews see the static build only. With `preview.backend` in the checks manifest, the feature
+walkthrough and product-verify also get the app's own server, so screens behind sign-in can be reached
+(LearnEnglish F5c: the Account plan section; the static preview redirected `/account` to onboarding).
+
+- `argv` (`{python}`, `{worktree}`, `{port}`), `env` (values may use `{port}`, `{origin}` = the preview,
+  `{secret}` = 32 random bytes as hex, `{scratch}`), `build_url`, `ready_path`, `ready_timeout_seconds`.
+- The controller reserves two free ports. It starts the server in the sandbox (`runner.start_service`):
+  it writes only to its scratch dir, so the database starts empty; network is localhost only. It waits
+  until `ready_path` answers below 500.
+- The preview serves the build with `build_url` (the API URL baked into it, e.g. `expo.extra.apiBaseUrl`)
+  replaced by the server's URL in html/js/css/json. So the build calls this server, never another app on
+  the same port. `ALLOWED_ORIGINS` = the preview and the server.
+- The reviewer gets `environment.backend_url` and the instruction to create a test account through the
+  app's own sign-up. Event `preview.started` carries `backend`. The server stops with the previews at the
+  end of `factory run`.
+- A server that exits or does not answer stops the job in `BLOCKED_ENV` with its log tail. Linux
+  (bwrap): the fresh network namespace hides the server from the browser, so the factory refuses with
+  `BLOCKED_ENV` rather than give it open network (fail-closed).
 
 ## UX assessment from screenshots and visual direction (`design`)
 

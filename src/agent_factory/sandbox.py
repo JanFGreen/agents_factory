@@ -70,6 +70,7 @@ def _sbpl_quote(path: Path) -> str:
 
 class Sandbox:
     name = "abstract"
+    serves_localhost = False  # bwrap's fresh network namespace hides a server from the host's browser
 
     def wrap(self, argv: list[str], policy: SandboxPolicy) -> list[str]:
         raise NotImplementedError
@@ -77,6 +78,7 @@ class Sandbox:
 
 class MacSandbox(Sandbox):
     name = "macos-sandbox-exec"
+    serves_localhost = True  # a server in it is reachable on 127.0.0.1 while outbound traffic stays local
 
     def __init__(self, binary: str = "/usr/bin/sandbox-exec"):
         self.binary = binary

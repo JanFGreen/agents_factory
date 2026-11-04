@@ -44,7 +44,7 @@ from .lanes import ParallelLanes
 from . import knowledge, repomap
 from .policy import FILE_SCOPE_RULE, RISK_ORDER, SCOPE_SELF_CHECK, effect_sites, evaluate_diff, is_test_file, is_ui_path, max_risk, security_triggers
 from .preview import PreviewServer
-from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, TrustedRunner, load_checks
+from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, RunningService, ServiceError, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
 from .scheduler import (LeaseLost, NoSlot, acquire_lease, acquire_slot, check_fence, heartbeat, ready_tasks, release_allocation,
                         release_lease, validate_dag, wait_for_slot)
@@ -141,6 +141,7 @@ class Factory(ParallelLanes):
         self._lane = threading.local()
         self._previews: dict[str, PreviewServer] = {}  # served web build per worktree (UI review in a browser)
         self._previews_lock = threading.Lock()
+        self._backends: dict[str, RunningService] = {}  # the app's server per worktree, for the feature walkthrough
         self._endpoint_health: dict[str, tuple[bool, float]] = {}  # endpoint -> (reachable, checked at)
 
     # ------------------------------------------------------------------ submission --
@@ -2075,7 +2076,7 @@ class Factory(ParallelLanes):
 
     def _feature_ui_review(self, job_id: str, wt: Path, head: str, gate) -> bool:
         """One walkthrough of the served feature: user flows, first screen, layout shifts, interaction states."""
-        browser = self._browser_session(job_id) if "ui" in (self._ctx(job_id).get("surfaces") or []) else None
+        browser = self._browser_session(job_id, backend=True) if "ui" in (self._ctx(job_id).get("surfaces") or []) else None
         self._set_ctx(job_id, feature_ui_required=browser is not None)
         if browser is None:
             return True
@@ -2263,8 +2264,14 @@ class Factory(ParallelLanes):
                        f"`{cli} console`, `{cli} screenshot --filename {browser['evidence_dir']}/<name>.png`, `{cli} close`. "
                        "Run `snapshot` after open, resize or navigation and before a screenshot (it waits for the render). Save "
                        "files only in evidence_dir and cite their names in findings; the controller keeps them as evidence. The "
-                       "repository is read-only; the app runs without its backend server, accounts or credentials.",
+                       "repository is read-only; " + (
+                           f"the app's backend server runs at {browser['backend_url']} with an empty database: when a flow needs "
+                           "an account, create one through the app's own sign-up (any test email and password; nothing leaves "
+                           "this machine) and sign in with it." if browser.get("backend_url") else
+                           "the app runs without its backend server, accounts or credentials."),
             }
+            if browser.get("backend_url"):
+                environment["backend_url"] = browser["backend_url"]
         return {
             "acceptance_criteria": (ctx.get("spec") or {}).get("acceptance_criteria", []),
             "required_checks": [c.name for c in self._checks(job_id).for_stage(stage) if c.required],
@@ -2274,8 +2281,12 @@ class Factory(ParallelLanes):
 
     # --- browser review of the served web build ----------------------------------------
 
-    def _browser_session(self, job_id: str) -> dict | None:
-        """A served preview of the gate-built web candidate plus browser settings, or None (no web build or no browser)."""
+    def _browser_session(self, job_id: str, backend: bool = False) -> dict | None:
+        """A served preview of the gate-built web candidate plus browser settings, or None (no web build or no browser).
+
+        ``backend``: feature acceptance also starts the app's server when the checks manifest declares one
+        (`preview.backend`); task reviews in parallel lanes stay on the static build.
+        """
         cfg = self.cfg.factory.browser
         preview = self._checks(job_id).preview
         if cfg is None or preview is None:
@@ -2285,18 +2296,48 @@ class Factory(ParallelLanes):
         root = wt / preview.static_dir
         if not binary.exists() or not (root / "index.html").exists():
             return None
-        url = self._preview_url(job_id, root, preview.spa_fallback)
+        api = None
+        if backend and preview.backend:
+            url, api = self._preview_with_backend(job_id, wt, root, preview)
+        else:
+            url = self._preview_url(job_id, root, preview.spa_fallback)
         evidence = self.data_dir / "browser" / job_id / uuid.uuid4().hex[:12]
         evidence.mkdir(parents=True)
         env = {
             "PLAYWRIGHT_MCP_SANDBOX": "false",  # the factory sandbox confines the browser; Chrome's own cannot start inside it
             "PLAYWRIGHT_MCP_ISOLATED": "true",  # profile in memory, nothing left on disk
             "PLAYWRIGHT_MCP_OUTPUT_DIR": str(evidence),  # snapshots go here, not into the read-only worktree
-            "PLAYWRIGHT_MCP_ALLOWED_ORIGINS": url.rstrip("/"),
+            "PLAYWRIGHT_MCP_ALLOWED_ORIGINS": ";".join([url.rstrip("/"), *([api] if api else [])]),
             "PLAYWRIGHT_MCP_IDLE_TIMEOUT": str(cfg.idle_timeout_ms),
         }
         return {"url": url, "binary": str(binary), "evidence_dir": str(evidence), "viewports": cfg.viewports,
-                "env": env, "cwd": str(wt), "job_id": job_id}
+                "env": env, "cwd": str(wt), "job_id": job_id, **({"backend_url": api} if api else {})}
+
+    def _preview_with_backend(self, job_id: str, wt: Path, root: Path, preview) -> tuple[str, str]:
+        """(preview URL, backend URL) for this worktree, started once per run; a backend that fails stops the job.
+
+        Both ports are reserved first: the server is told the preview's origin (CORS), and the preview serves the build
+        with its baked-in API URL replaced by the server's.
+        """
+        key = str(root.resolve()) + "|api"
+        with self._previews_lock:
+            server, service = self._previews.get(key), self._backends.get(key)
+            if server is not None and service is not None and service.proc.poll() is None:
+                return server.url, service.url
+            for stale in (self._previews.pop(key, None), self._backends.pop(key, None)):
+                if stale is not None:
+                    stale.stop()
+            preview_port, api_port = allocate_port(self.store, job_id), allocate_port(self.store, job_id)
+            origin = f"http://127.0.0.1:{preview_port}"
+            try:
+                service = self.runner.start_service(preview.backend, wt, job_id=job_id, port=api_port, origin=origin)
+            except ServiceError as exc:
+                raise StageBlocked(S.BLOCKED_ENV, f"preview backend: {exc}") from exc
+            server = PreviewServer(root, preview_port, preview.spa_fallback, {preview.backend.build_url: service.url})
+            self._previews[key], self._backends[key] = server, service
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "preview.started", {"url": server.url, "root": key, "backend": service.url})
+            return server.url, service.url
 
     def _preview_url(self, job_id: str, root: Path, spa_fallback: bool) -> str:
         key = str(root.resolve())
@@ -2315,6 +2356,8 @@ class Factory(ParallelLanes):
         with self._previews_lock:
             for key in [k for k in self._previews if any(k.startswith(p) for p in prefixes)]:
                 self._previews.pop(key).stop()
+            for key in [k for k in self._backends if any(k.startswith(p) for p in prefixes)]:
+                self._backends.pop(key).stop()
 
     def _close_browser(self, browser: dict) -> None:
         """Close the session the agent may have left open (each worktree has its own browser sessions)."""
@@ -2480,7 +2523,7 @@ class Factory(ParallelLanes):
             return
         if gate.verdict is GateVerdict.PASS and not self._feature_ui_review(job_id, wt, head, gate):
             return
-        browser = self._browser_session(job_id)
+        browser = self._browser_session(job_id, backend=True)
         res = self.call_agent(job_id, "factory-product-verify", {
             "mode": "feature-acceptance", "original_request": self._feature(job_id)["original_request"],
             "feature": self._feature(job_id), "spec": ctx.get("spec"), "acceptance_gate": gate.as_payload(),

@@ -271,3 +271,58 @@ def test_licence_check_refuses_shipped_copyleft_and_unlicensed_packages(setup):
         assert package in bad.excerpt, package
     (wt / ".license-exceptions.json").write_text('{"chart-gpl": "x", "mystery": "x", "both": "x", "devtool": "operator: internal tool only"}')
     assert runner.run_check(licenses, wt, job_id="job-000000000001", head_sha=None, tree_sha=None).verdict == "PASS"
+
+
+SERVICE = (
+    "import http.server, os, pathlib\n"
+    "class H(http.server.BaseHTTPRequestHandler):\n"
+    "    def do_GET(self):\n"
+    "        if self.path == '/write':\n"
+    "            try:\n"
+    "                pathlib.Path('escaped.txt').write_text('x'); body = b'wrote'\n"
+    "            except OSError:\n"
+    "                body = b'denied'\n"
+    "        else:\n"
+    "            body = (os.environ['ORIGIN'] + ' ' + os.environ['SECRET']).encode()\n"
+    "        self.send_response(200); self.end_headers(); self.wfile.write(body)\n"
+    "    def log_message(self, *a): pass\n"
+    "http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), H).serve_forever()\n"
+)
+
+
+def _free_port() -> int:
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_a_preview_backend_runs_in_the_sandbox_until_stopped(setup):
+    import urllib.request
+
+    from agent_factory.runner import PreviewBackend
+    runner, wt, _, _ = setup
+    spec = PreviewBackend(argv=["{python}", "-c", SERVICE], env={"PORT": "{port}", "ORIGIN": "{origin}", "SECRET": "{secret}"},
+                          build_url="http://127.0.0.1:3000", ready_path="/health", ready_timeout_seconds=20)
+    port = _free_port()
+    service = runner.start_service(spec, wt, job_id="job-000000000001", port=port, origin="http://127.0.0.1:9")
+    try:
+        origin, secret = urllib.request.urlopen(service.url + "/env", timeout=5).read().decode().split()
+        assert origin == "http://127.0.0.1:9" and len(secret) == 64
+        assert urllib.request.urlopen(service.url + "/write", timeout=5).read() == b"denied"  # the worktree is read-only
+        assert not (wt / "escaped.txt").exists()
+    finally:
+        service.stop()
+    with pytest.raises(OSError):
+        urllib.request.urlopen(service.url + "/env", timeout=2)
+
+
+def test_a_backend_that_exits_or_a_sandbox_without_localhost_is_an_error(setup):
+    from agent_factory.runner import PreviewBackend, ServiceError
+    runner, wt, _, _ = setup
+    crash = PreviewBackend(argv=["{python}", "-c", "import sys; print('no config'); sys.exit(3)"], build_url="http://127.0.0.1:3000")
+    with pytest.raises(ServiceError, match="exited with 3: no config"):
+        runner.start_service(crash, wt, job_id="job-000000000001", port=_free_port(), origin="http://127.0.0.1:9")
+    runner.sandbox = type("NoLocal", (type(runner.sandbox),), {"serves_localhost": False})()
+    with pytest.raises(ServiceError, match="localhost-only network"):
+        runner.start_service(crash, wt, job_id="job-000000000001", port=_free_port(), origin="http://127.0.0.1:9")
