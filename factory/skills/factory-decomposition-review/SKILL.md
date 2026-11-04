@@ -44,6 +44,8 @@ features this review is not run; the controller records
    Over-decomposition (test-only tasks, empty `file_scope`, several tasks a single
    executor would finish within the target) is a blocking finding: merge them.
    Set `dag_ok` from this check only.
+   A task whose outputs delete a test file or test cases is a blocking finding: the gate refuses
+   removed tests, so its tests are rewritten for the replacing code instead.
 4. Per leaf: one executor can finish it within budget; inputs/outputs explicit;
    acceptance observable; `verification` names real checks; estimate plausible
    (45 minutes is a heuristic, not proof of atomicity). Check the atomicity criteria and the

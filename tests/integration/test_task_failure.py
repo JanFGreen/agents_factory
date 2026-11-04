@@ -200,3 +200,20 @@ def test_allow_file_takes_repo_relative_paths(make_env):
     env.factory.run(job)
     with pytest.raises(TransitionRefused):
         env.factory.retry_task(job, "TASK-01", 1, "no", allow_files=["../outside.py"])
+
+
+def test_a_failed_tasks_patch_is_kept_in_a_form_git_apply_takes(make_env):
+    """Live finding (LearnEnglish F5c): the stored patch lacked its last newline ("corrupt patch") and could not be applied
+    to check whether the rejected attempt was really broken (it was a flaky test elsewhere)."""
+    import subprocess
+    env = make_env("standard", responders={"factory-plan": plan_reply(_tasks(False)), "factory-implement": Builder()},
+                   **{"execution.max_builders_per_job": 1})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "NEEDS_HUMAN"
+    row = env.store.one("SELECT artifact_id FROM artifacts WHERE job_id = ? AND kind = 'rejected-attempt-patch'"
+                        " ORDER BY created_at DESC LIMIT 1", (job,))
+    patch = env.factory.evidence.read(row["artifact_id"])
+    assert patch.endswith(b"\n") and b"test_greet_bang" in patch
+    worktree = env.store.job(job)["worktree"]
+    check = subprocess.run(["git", "apply", "--check", "-"], cwd=worktree, input=patch, capture_output=True)
+    assert check.returncode == 0, check.stderr

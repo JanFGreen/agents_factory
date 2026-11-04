@@ -64,6 +64,9 @@ the micro-spec).
    tasks or tasks with an empty `file_scope`. End-to-end acceptance of the whole
    feature against the original request is the controller's FEATURE_ACCEPTANCE stage;
    do not add a separate end-to-end task for it. Green leaf tasks never mark the parent done.
+   Never plan deleting a test file or test case: the gate refuses removed tests. When a task removes
+   code, its tests are rewritten for the code that replaces it, in the same file or moved with it
+   (LearnEnglish F5c: an output "tier.test.ts deleted" cost a refused build).
 8. UI: when the spec requires the design direction document (`design.exists` is false), the
    first UI task writes `design.doc`, the tokens module and the shared base components it
    lists; every task that builds a screen `depends_on` it. Screens never define their own

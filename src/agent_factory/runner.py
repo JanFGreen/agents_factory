@@ -139,6 +139,7 @@ class TestCounts:
     failed: int = 0
     errors: int = 0
     skipped: int = 0
+    failing_files: list[str] = field(default_factory=list)  # test files with a failed or errored case (junit file/classname)
 
     @property
     def executed(self) -> int:
@@ -167,6 +168,7 @@ class CheckEvidence:
     reason: str
     head_sha: str | None
     tree_sha: str | None
+    flaky_files: list[str] | None = None  # failed first, passed when run again; none of them was changed by the job
 
 
 @dataclass
@@ -193,6 +195,12 @@ def parse_junit(path: Path) -> TestCounts | None:
         counts.failed += int(suite.get("failures", 0))
         counts.errors += int(suite.get("errors", 0))
         counts.skipped += int(suite.get("skipped", 0))
+    for case in root.iter("testcase"):
+        if case.find("failure") is not None or case.find("error") is not None:
+            where = case.get("file") or case.get("classname") or ""
+            if "/" in where or where.endswith((".py", ".ts", ".tsx", ".js", ".jsx")):
+                counts.failing_files.append(where)
+    counts.failing_files = sorted(set(counts.failing_files))
     return counts
 
 
@@ -374,6 +382,21 @@ class TrustedRunner:
         service.stop()
         raise ServiceError(f"backend did not answer {spec.ready_path} within {spec.ready_timeout_seconds}s: {service.log_tail()}")
 
+    def _rerun_if_flaky(self, ev: CheckEvidence, check: CheckSpec, worktree: Path, changed: set[str], **kw) -> CheckEvidence:
+        """A test check that failed only in test files the job did not change runs once more; a pass there is a flake.
+
+        Live finding (LearnEnglish F5c TASK-06): an onboarding test the task never touched failed once under load; the task
+        lost its last attempt, and the retry's builder weakened that test to get green (the gate refused it).
+        """
+        failing = (ev.tests or {}).get("failing_files") or []
+        if ev.verdict != str(GateVerdict.FAIL_CODE) or not failing or any(f in changed for f in failing):
+            return ev
+        again = self.run_check(check, worktree, **kw)
+        if again.verdict != str(GateVerdict.PASS):
+            return ev
+        again.flaky_files = failing
+        return again
+
     def _denied(self, worktree: Path) -> list[Path]:
         from .sandbox import default_denied_reads
 
@@ -421,11 +444,15 @@ class TrustedRunner:
         tree_sha: str | None,
         extra_env: dict[str, str] | None = None,
         base_sha: str | None = None,
+        changed_files: set[str] | None = None,
     ) -> GateResult:
         evidence = [
             self.run_check(c, worktree, job_id=job_id, head_sha=head_sha, tree_sha=tree_sha, extra_env=extra_env, base_sha=base_sha)
             for c in checks
         ]
+        if changed_files is not None:
+            evidence = [self._rerun_if_flaky(e, c, worktree, changed_files, job_id=job_id, head_sha=head_sha, tree_sha=tree_sha,
+                                             extra_env=extra_env, base_sha=base_sha) for e, c in zip(evidence, checks)]
         required = [e for e, c in zip(evidence, checks) if c.required]
         if not required:
             return GateResult(GateVerdict.FAIL_POLICY, "no required checks configured", evidence)

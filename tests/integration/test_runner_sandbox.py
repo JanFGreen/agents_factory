@@ -326,3 +326,27 @@ def test_a_backend_that_exits_or_a_sandbox_without_localhost_is_an_error(setup):
     runner.sandbox = type("NoLocal", (type(runner.sandbox),), {"serves_localhost": False})()
     with pytest.raises(ServiceError, match="localhost-only network"):
         runner.start_service(crash, wt, job_id="job-000000000001", port=_free_port(), origin="http://127.0.0.1:9")
+
+
+FLAKY = (
+    "import pathlib, sys\n"
+    "count = pathlib.Path('runs.txt'); n = int(count.read_text()) if count.exists() else 0; count.write_text(str(n + 1))\n"
+    "fail = n < int(sys.argv[2])\n"
+    "case = '<testcase classname=\"tests/test_onboarding.py\" name=\"t\">' + ('<failure message=\"x\"/>' if fail else '') + '</testcase>'\n"
+    "pathlib.Path(sys.argv[1]).write_text(f'<testsuite tests=\"1\" failures=\"{int(fail)}\" errors=\"0\" skipped=\"0\">{case}</testsuite>')\n"
+    "sys.exit(1 if fail else 0)\n"
+)
+
+
+@pytest.mark.parametrize("fails, changed, verdict, flaky", [
+    (1, set(), "PASS", ["tests/test_onboarding.py"]),               # failed once in a file the job did not touch: a flake
+    (1, {"tests/test_onboarding.py"}, "FAIL_CODE", None),           # the job changed that test: its failure is the build's
+    (2, set(), "FAIL_CODE", None),                                  # fails again: a real failure
+])
+def test_a_test_check_that_failed_only_outside_the_change_runs_once_more(setup, fails, changed, verdict, flaky):
+    runner, wt, _, _ = setup
+    (wt / "runs.txt").unlink(missing_ok=True)
+    spec = CheckSpec(name="unit", argv=[sys.executable, "-c", FLAKY, "{report}", str(fails)], timeout_seconds=30, report="junit")
+    gate = runner.run_gate([spec], wt, job_id="job-000000000001", head_sha=None, tree_sha=None, changed_files=changed)
+    assert str(gate.verdict) == verdict and gate.checks[0].flaky_files == flaky
+    assert (wt / "runs.txt").read_text() == ("2" if not changed else "1")

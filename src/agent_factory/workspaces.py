@@ -41,6 +41,14 @@ def git(cwd: Path, *args: str, check: bool = True, timeout: int = 120) -> str:
     return proc.stdout.strip()
 
 
+def patch_since(cwd: Path, base: str) -> str:
+    """`git diff base..HEAD` as `git apply` takes it: `git()` strips the output, and a patch without its last newline is
+    corrupt (LearnEnglish F5c: a rejected attempt's stored patch could not be applied to check it)."""
+    proc = subprocess.run(["git", "diff", "--binary", f"{base}..HEAD"], cwd=cwd, capture_output=True, text=True, timeout=120,
+                          stdin=subprocess.DEVNULL)
+    return proc.stdout
+
+
 def default_branch(repo: Path, configured: str | None = None) -> str:
     """From config, else origin/HEAD, else the remote's advertised HEAD. Never assume ``main``."""
     if configured:

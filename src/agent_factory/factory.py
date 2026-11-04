@@ -51,7 +51,8 @@ from .scheduler import (LeaseLost, NoSlot, acquire_lease, acquire_slot, check_fe
 from .schemas import (HEURISTICS, VISUAL_ASPECTS, CodeReviewPayload, ContractError, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, UiReviewPayload,
                       envelope_json_schema, parse_envelope)
 from .state import Store, new_id, now
-from .workspaces import GENERATED_EXCLUDES, GitError, WorkspaceManager, allocate_port, default_branch, git, release_job_resources
+from .workspaces import (GENERATED_EXCLUDES, GitError, WorkspaceManager, allocate_port, default_branch, git, patch_since,
+                         release_job_resources)
 
 SKILL_ROLE = {
     "factory-intake": "intake",
@@ -281,8 +282,15 @@ class Factory(ParallelLanes):
         return {"PATH": f"{node}{os.pathsep}{os.environ.get('PATH', '')}"} if node else {}
 
     def _gate(self, job_id: str, stage: str, wt: Path, head_sha: str | None, tree_sha: str | None):
-        return self.runner.run_gate(self._checks(job_id).for_stage(stage), wt, job_id=job_id, head_sha=head_sha,
-                                    tree_sha=tree_sha, extra_env=self._toolchain_env(job_id), base_sha=self._job(job_id)["base_sha"])
+        base = self._job(job_id)["base_sha"]
+        # Test files the job changed are never rerun: a failure there is the build's (runner._rerun_if_flaky).
+        changed = set(git(wt, "diff", "--name-only", f"{base}..HEAD", check=False).splitlines()) if base else None
+        gate = self.runner.run_gate(self._checks(job_id).for_stage(stage), wt, job_id=job_id, head_sha=head_sha,
+                                    tree_sha=tree_sha, extra_env=self._toolchain_env(job_id), base_sha=base, changed_files=changed)
+        if flaky := {e.name: e.flaky_files for e in gate.checks if e.flaky_files}:
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "gate.flaky", {"stage": stage, "checks": flaky})
+        return gate
 
     def _checks(self, job_id: str) -> ChecksManifest:
         """The operator's manifest for the job's repo (fixed at submit), else the factory default."""
@@ -1384,7 +1392,7 @@ class Factory(ParallelLanes):
         wt = self._worktree(job_id)
         if base and WorkspaceManager.head(wt) != base and self._is_ancestor(wt, base, WorkspaceManager.head(wt)):
             # Rejected attempts must not reach the tasks built after this one: keep them as evidence, then drop them.
-            patch = git(wt, "diff", f"{base}..HEAD", check=False)
+            patch = patch_since(wt, base)
             self.evidence.put(patch.encode(), "rejected-attempt-patch", Producer("controller", "task-failed"), job_id)
             git(wt, "reset", "--quiet", "--hard", base)
             git(wt, "clean", "-fdq")
@@ -1479,7 +1487,11 @@ class Factory(ParallelLanes):
         extensions = self._ctx(job_id).get("scope_extensions", {})
         if allow_files:
             extensions = {**extensions, task_id: sorted({*extensions.get(task_id, []), *allow_files})}
-        self._set_ctx(job_id, task_base=bases, operator_notes=notes, scope_extensions=extensions,
+        # Attempt numbers restart after a retry, so the gate fix-up of each new attempt must be free again. Live finding
+        # (LearnEnglish F5c TASK-06): "TASK-06#2" was spent in the first round; two later gate refusals for removed tests
+        # each cost a full Opus rebuild (~$2) instead of a fix-up pass (~$0.20).
+        fixups = {k: v for k, v in self._ctx(job_id).get("gate_fixups", {}).items() if not k.startswith(f"{task_id}#")}
+        self._set_ctx(job_id, task_base=bases, operator_notes=notes, scope_extensions=extensions, gate_fixups=fixups,
                       **({"resume_state": str(S.BUILD_TASK), "current_task": task_id} if reopened else {}))
         with self.store.tx() as conn:
             conn.execute("UPDATE tasks SET state = 'REWORK', attempts = ? WHERE job_id = ? AND task_id = ?",
@@ -1550,7 +1562,7 @@ class Factory(ParallelLanes):
         if verdict == "FAIL_POLICY" and ctx.get("build_start_sha"):
             # Forbidden changes must not persist into the next attempt: keep them as evidence, then revert.
             wt = self._worktree(job_id)
-            patch = git(wt, "diff", f"{ctx['build_start_sha']}..HEAD", check=False)
+            patch = patch_since(wt, ctx["build_start_sha"])
             self.evidence.put(patch.encode(), "rejected-attempt-patch", Producer("controller", "policy"), job_id)
             git(wt, "reset", "--quiet", "--hard", ctx["build_start_sha"])
             git(wt, "clean", "-fdq")

@@ -76,6 +76,24 @@ def test_refused_gate_gets_a_fixup_pass_in_the_same_attempt(make_env, builders, 
     assert [e for e in _events(env, job, "gate.fixup")]
 
 
+def test_a_retried_task_gets_its_gate_fixup_again(make_env):
+    """Live finding (LearnEnglish F5c TASK-06): attempt numbers restart after `task retry`, and the fix-up key of the first
+    round ("TASK-06#2") blocked the fix-up of a later refusal: each removed-test refusal cost a full Opus rebuild."""
+    builder = Builder("code")
+    env = make_env("standard", responders={"factory-plan": plan_reply(_tasks()), "factory-implement": builder},
+                   **{"execution.max_builders_per_job": 1, "workflow.implementation.gate_fixups_per_attempt": 1})
+    job = env.submit("Add exclamation greeting and farewell")
+    while env.state(job) != "BUILD_TASK":
+        env.factory.step(job)
+    env.factory.request_pause(job, ["TASK-01", "TASK-02"], "before feature acceptance")
+    assert env.factory.run(job) == "PAUSED" and len(builder.fixups) == 1
+    builder.builds = 0  # the reopened task's first build is refused by the gate again
+    env.factory.retry_task(job, "TASK-01", 3, "fix the greeting again")  # attempts restart at 0: the next build is #1 again
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert builder.builds == 1 and len(builder.fixups) == 2  # a fix-up pass, not a second full build
+
+
 def test_without_fixups_a_refused_gate_costs_an_attempt(make_env):
     builder = Builder("code")
     env = make_env("standard", responders={"factory-plan": plan_reply(_tasks()), "factory-implement": builder},

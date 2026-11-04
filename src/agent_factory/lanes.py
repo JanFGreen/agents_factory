@@ -30,7 +30,7 @@ from .policy import evaluate_diff, is_test_file, max_risk
 from .runner import GateVerdict
 from .schemas import TaskSpec
 from .scheduler import ready_tasks
-from .workspaces import AUTHOR, WorkspaceManager, git
+from .workspaces import AUTHOR, WorkspaceManager, git, patch_since
 
 if TYPE_CHECKING:
     from .factory import Factory
@@ -438,7 +438,7 @@ class ParallelLanes:
                 conn.execute("UPDATE tasks SET state = CASE WHEN attempts > 0 THEN 'REWORK' ELSE 'PENDING' END"
                              " WHERE job_id = ? AND task_id = ?", (job_id, task_id))
             return
-        patch = git(lane, "diff", f"{start}..HEAD", check=False)
+        patch = patch_since(lane, start)
         self.evidence.put(patch.encode(), "rejected-attempt-patch", Producer("controller", "lane"), job_id)
         if outcome.verdict == "FAIL_POLICY":  # as in the sequential flow: work outside the rules is not built on
             self._drop_lane_rework(job_id, task_id)
