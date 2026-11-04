@@ -15,6 +15,13 @@ Source: blueprint §7.8, §10.1 (Code reviewer), §11.1, §11.4.
 - [ ] errors not swallowed; dependency failures produce defined responses
 - [ ] concurrency: shared state, caches keyed per user/tenant, idempotent writes
 - [ ] data: transactions where needed; migrations reversible
+- [ ] EP-16 what a write depends on (permission, plan, quota, version) is read inside the write's transaction, at one
+      instant; a transaction API cannot take an async callback (`(work: () => T)` accepts a Promise: commit before `await`)
+- [ ] EP-17 fetched UI state: what refreshes it after a sync, a session change, focus or a known expiry, and is a
+      failed read distinguishable from "nothing" (loading / failed / ready) with a retry
+- [ ] EP-18 config and stored values that grant access are validated at startup or at the repository read; trace
+      NaN / Infinity / negative limits and an unparsable date: each must deny, never allow or "never expire"
+- [ ] EP-19 no caller reconstructs a value a lower function dropped (comparing ids to guess an expiry)
 
 ## Scope and integration
 
@@ -35,6 +42,7 @@ Source: blueprint §7.8, §10.1 (Code reviewer), §11.1, §11.4.
 - [ ] EP-11 implementations honour the whole port contract; callers depend on the port
 - [ ] EP-15 state and its rules live in a class; a functional design outside EP-15's exceptions has a reason in the handoff
 - [ ] EP-13 no N+1, unbounded query/list or repeated expensive work on a user path
+- [ ] EP-19 compatibility adapters are named for what they project, not for the concept they replace
 - [ ] names reflect domain (EP-9); dead code removed
 - [ ] tests live next to the change and implement plan scenarios
 

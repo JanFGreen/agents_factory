@@ -53,7 +53,12 @@ maintainability notes alone; do not escalate what you could not confirm.
    `snapshot` again to observe the result, `console` for errors, `screenshot --filename
    <evidence_dir>/<flow>.png` at the key steps) and cite the file names as evidence; finish with
    `close`. Behaviour that needs the backend server (not running) is verified as in
-   `local-checkout`. When `inputs.environment.kind`
+   `local-checkout`. So is a step the UI cannot perform, even with `environment.backend_url`
+   running: an operator action (granting a plan), a moved clock (expiry, a month rollover), a
+   migration of old data. Perform it by running the code, e.g. a node or python snippet that builds
+   the server or service with an injected clock against an in-memory or temp database and calls
+   it; record the command and its output. That is a performed action, not `NOT_RUN`, and its
+   absence from the UI is never a reason for `UNKNOWN` or `BLOCKED`. When `inputs.environment.kind`
    is `local-checkout` (libraries, CLIs, modules without a service) the working directory
    at `head_sha` is the environment: perform each action by running the code read-only
    (e.g. a python snippet importing it against temp files) and record the command and

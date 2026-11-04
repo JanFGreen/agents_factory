@@ -471,5 +471,6 @@ def test_the_walkthrough_gets_the_apps_backend_and_the_build_calls_it(make_env, 
     assert feature["api"] and feature["api"] in feature["page"] and "127.0.0.1:3000" not in feature["page"]
     assert feature["origin"] == feature["allowed"].split(";")[0]  # the server allows the preview's origin (CORS)
     assert feature["allowed"].split(";")[1] == feature["api"] and "sign-up" in feature["how"]
+    assert "A step the UI cannot perform" in feature["how"]  # operator actions and a moved clock: run the code
     with pytest.raises(OSError):  # stopped with the run
         urllib.request.urlopen(feature["api"] + "/anything", timeout=2)

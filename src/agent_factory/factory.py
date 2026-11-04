@@ -2276,7 +2276,10 @@ class Factory(ParallelLanes):
                            f"the app's backend server runs at {browser['backend_url']} with an empty database: when a flow needs "
                            "an account, create one through the app's own sign-up (any test email and password; nothing leaves "
                            "this machine) and sign in with it." if browser.get("backend_url") else
-                           "the app runs without its backend server, accounts or credentials."),
+                           "the app runs without its backend server, accounts or credentials.") +
+                       " A step the UI cannot perform (an operator action, a moved clock, old data to migrate) is performed by "
+                       "running the code read-only, as for a local checkout (a snippet with an injected clock and an in-memory "
+                       "or temp database); that is evidence, and its absence from the UI is not a reason for UNKNOWN or BLOCKED.",
             }
             if browser.get("backend_url"):
                 environment["backend_url"] = browser["backend_url"]

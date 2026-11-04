@@ -606,7 +606,7 @@ Agent review:
 
 ## Engineering principles and quality checks (`_shared/engineering-principles.md`)
 
-Concrete rules instead of SOLID/DRY/KISS slogans: each has an ID (`EP-1`…`EP-15`) and is marked
+Concrete rules instead of SOLID/DRY/KISS slogans: each has an ID (`EP-1`…`EP-19`) and is marked
 as *gate* (checked by a tool) or *review* (judged by the code reviewer). The builder, code reviewer and
 planner have them in their prompt (`Follow ../_shared/engineering-principles.md` in `SKILL.md`). The controller
 appends to the prompt every `_shared` file the skill points to, plus the skill's own `references/*.md`:
@@ -628,6 +628,18 @@ the agent does not read `factory/`, so otherwise the checklists would not reach 
 - **Review**: the code reviewer reports only *review* rules, with ID and cost; it does not repeat what
   the gate checked. The Python, Rust and Java profiles (tools for each *gate* rule) are described in the
   principles document; their checks manifest has to be added with the first such repo.
+- **Time, concurrency and invalid data (EP-16…EP-19)**, from an independent senior review of
+  LearnEnglish F5c that the factory's reviews had missed or rated low:
+  - EP-16: the read a write depends on happens inside its transaction, and transaction APIs run
+    synchronous work only;
+  - EP-17: fetched UI state has loading/failed/ready states and named refresh events;
+  - EP-18: config and stored values that grant access fail closed (NaN limit, unparsable expiry);
+  - EP-19: functions return the whole value their callers decide on.
+
+  The code review checklist and the security threat checklist ask about each of them.
+  Test-adequacy requires, for every claimed guarantee, a test that fails when the mechanism is removed.
+  In JavaScript, `Promise.all` over synchronous handlers does not interleave them. A time-dependent UI test
+  changes the value while the screen stays mounted.
 
 ## UI review in the browser (`browser`, `preview` in the checks manifest)
 

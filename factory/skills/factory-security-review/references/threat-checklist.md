@@ -33,6 +33,11 @@ Controller trigger names in brackets.
 Observed risk = max(intake risk, path rules, diff triggers, new permissions,
 reviewer observations). An LLM never lowers it below the policy minimum.
 
+Authorization race (TOCTOU, EP-16): a permission, plan or quota read before the transaction that writes on
+its basis, when an operator path, another process or another request can change it in between, is at
+least `medium`, also when the handler is synchronous (another process or connection is not). A
+config or stored value that fails open (NaN limit, unparsable expiry; EP-18) is `medium`.
+
 ## Threat categories
 
 `authn`, `authz` (IDOR, missing tenant filter), `injection` (SQL, command, template,

@@ -30,6 +30,10 @@ restructure the code instead.
 | EP-13 | **Performance hygiene.** No query or request inside a loop over data (N+1). No unbounded list, query or payload (paginate, limit). No repeated expensive work per render or per request that can be derived once. No blocking I/O on a hot path. | review (gate when the profile has a benchmark or bundle budget) |
 | EP-14 | **Testable core.** Domain logic sits in domain objects (or pure functions where EP-15 allows them) with I/O behind ports, so tests need no network, real clock or sleeps. | review (test-adequacy checks the tests) |
 | EP-15 | **Object-oriented by default.** State and the behaviour that keeps it valid live together in a class: a domain object guards its invariants in its constructor and methods, callers ask it to act instead of reading its fields and deciding for it (`board.place(cell)`, not `applyMove(board, cell)` next to a bare record). Services, repositories and adapters are classes that receive their dependencies in the constructor (EP-6). Prefer immutable objects where the framework needs value semantics (a method returns a new instance), e.g. React state. Plain functions are right for stateless transformations, small helpers and framework idioms built on functions (React components and hooks, reducers that delegate to domain objects). A functional design elsewhere needs a reason in the handoff, e.g. the problem is a pipeline of transformations. The repository's established style wins over this default. | review |
+| EP-16 | **Atomic decisions.** Everything a write depends on (permission, plan, quota, balance, version) is read inside the same transaction or lock as the write, at one captured instant. A transaction API runs synchronous work only: its type rejects a callback that returns a Promise, or it awaits the work before committing. | review (test-adequacy checks that a test fails without the transaction) |
+| EP-17 | **Fetched state has a lifecycle.** State read from a server or store has explicit states (loading, ready, failed with a retry) and named refresh events (a successful sync, a session change, focus or foreground, a known expiry). Fetching once on mount is a defect when the value can change while the screen stays mounted. | review |
+| EP-18 | **Fail closed on invalid data.** Config and stored values that grant access (limits, plans, expiry dates) are validated where they enter: at startup, and at the repository read. NaN, Infinity, negative or fractional limits and unparsable dates are rejected or mean "no access", never "unlimited" or "never expires". | review |
+| EP-19 | **Abstractions keep what the caller needs.** A function returns the whole value its callers decide on (the effective grant `{ plan, expiresAt }`, not only the plan id), so no caller reconstructs the rest by guessing. A compatibility projection is named for what it projects (`legacyPremiumMarker`), not for the concept it replaces. | review |
 
 ## Design patterns
 
@@ -63,8 +67,8 @@ from that slice is behaviour it will break.
 
 - Report a *review* rule only with the concrete location and the cost it causes ("TASK-05
   will have to edit both copies", "every new mode edits three switches").
-- Blocking: EP-1, EP-4 (same rule twice), EP-6 (hidden global state), EP-10 and EP-13 when
-  the diff introduces the problem on a path users or later tasks will hit. Other rules are
+- Blocking: EP-1, EP-4 (same rule twice), EP-6 (hidden global state), EP-10, EP-13, EP-16, EP-17
+  and EP-18 when the diff introduces the problem on a path users or later tasks will hit. Other rules are
   non-blocking (`medium` or `low`), and so is anything that existed before the diff.
 - Do not report what the gate enforces (complexity, sizes, copies, layer imports,
   deprecations, formatting); do not ask for patterns the code does not need.
