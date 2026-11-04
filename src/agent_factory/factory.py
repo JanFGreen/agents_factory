@@ -1481,7 +1481,11 @@ class Factory(ParallelLanes):
         bases = self._ctx(job_id).get("task_base", {})
         bases.pop(task_id, None)  # the retry starts from the head at that time
         self._drop_lane_rework(job_id, task_id)
-        notes = {**self._ctx(job_id).get("operator_notes", {}), task_id: reason}  # the builder reads why and how to retry
+        # The builder reads why and how to retry. Earlier notes stay: live finding (LearnEnglish F5c TASK-06), a dashboard
+        # retry with the default reason replaced a five-item operator note, and the attempt that merged did none of it.
+        earlier = self._ctx(job_id).get("operator_notes", {}).get(task_id)
+        note = reason if not earlier or reason in earlier else f"{reason}\n\nEarlier operator note for this task (still applies):\n{earlier}"
+        notes = {**self._ctx(job_id).get("operator_notes", {}), task_id: note[-12000:]}
         if bad := [f for f in allow_files or [] if f.startswith("/") or ".." in f.split("/")]:
             raise TransitionRefused(f"--allow-file takes repo-relative paths: {bad}")
         extensions = self._ctx(job_id).get("scope_extensions", {})

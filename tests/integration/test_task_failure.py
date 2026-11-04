@@ -217,3 +217,18 @@ def test_a_failed_tasks_patch_is_kept_in_a_form_git_apply_takes(make_env):
     worktree = env.store.job(job)["worktree"]
     check = subprocess.run(["git", "apply", "--check", "-"], cwd=worktree, input=patch, capture_output=True)
     assert check.returncode == 0, check.stderr
+
+
+def test_a_second_retry_keeps_the_earlier_operator_note(make_env):
+    """Live finding (LearnEnglish F5c TASK-06): a dashboard retry with the default reason replaced the operator's
+    five-item note, and the attempt that merged did none of it."""
+    env = make_env("standard", responders={"factory-plan": plan_reply(_tasks(False)), "factory-implement": Builder()},
+                   **{"execution.max_builders_per_job": 1})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "NEEDS_HUMAN"
+    env.factory.retry_task(job, "TASK-01", 1, "A. make the transaction synchronous")
+    with env.store.tx() as conn:  # the retry failed again
+        conn.execute("UPDATE tasks SET state = 'FAILED' WHERE job_id = ? AND task_id = 'TASK-01'", (job,))
+    env.factory.retry_task(job, "TASK-01", 1, "Fix the blocking review findings")
+    note = env.store.job_context(job)["operator_notes"]["TASK-01"]
+    assert note.startswith("Fix the blocking review findings") and "A. make the transaction synchronous" in note
