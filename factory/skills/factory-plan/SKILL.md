@@ -24,6 +24,8 @@ the micro-spec).
 - `decision.json` (selected option) and the current `spec-evaluation.json` PASS with matching `spec_digest`.
 - OpenSpec change: `proposal.md`, `specs/**/spec.md`, `intent-map.yaml`, `test-plan.md` if already present.
 - Repository map from `factory-repo-map` (modules, commands, trust boundaries).
+- `api_map` (when given): the exported signatures and type bodies of every non-test source file,
+  extracted by the controller. Plan against it; read a file only for a body or detail it does not show.
 - Decomposition policy: `max_depth` 3, `max_leaf_tasks_per_feature` 20, `target_task_minutes` 45.
 - `analysis_round_id` and, in rounds 2-3, the open findings of the previous decomposition review.
 
@@ -79,6 +81,17 @@ the micro-spec).
    `BLOCKED` with a staging proposal (epics) in findings; never drop requirements.
 12. Self-check before output: acyclic `depends_on`, every requirement covered, every
     referenced task ID exists (see `references/task-schema.md`).
+
+## Revision rounds
+
+With `inputs.revision` (`mode: "patch"`) the decomposition review rejected `previous_plan` for the
+same spec, and `previous_findings` says why. Fix those findings; do not rewrite the plan.
+Return only the tasks you change or add, each in full, in `tasks`; list the tasks you drop in
+`removed_task_ids`; set `revision_of` to `inputs.revision.plan_digest`. The controller merges
+the patch into the previous plan, and the merged plan is reviewed again. Change an unchanged
+task only when a fix needs it, e.g. a renamed contract or a new `depends_on`. Leave
+`future_needs` empty to keep the previous ones. When the findings cannot be fixed by a patch,
+return a full plan without `revision_of`.
 
 ## Output
 

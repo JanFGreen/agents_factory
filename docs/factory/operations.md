@@ -143,6 +143,23 @@ uv run factory resume <job-id>
 
 The new limit must be higher than the current one; a reason is required; event `analysis.limit_raised`.
 
+## Analysis cost guards (`workflow.analysis`, `workflow.decomposition`)
+
+Code defaults in `config.py`, not in `workflow.yaml` (the yaml is in the policy digest).
+
+- `decomposition.revise_by_patch` (on): a plan the decomposition review rejected, for the same spec,
+  is patched rather than rewritten. The planner gets `revision: {mode: patch, plan_digest}` and returns
+  only changed and new tasks (`revision_of`, `removed_task_ids`). The controller merges them into the
+  previous plan (event `plan.revised`). The next review gets `revision` (`changed`, `added`, `removed`,
+  `previous_findings`) and checks the previous findings and the touched tasks, not the whole plan.
+  A full plan without `revision_of` still replaces the old one. A `revision_of` that names another
+  plan stops the job (`NEEDS_INFO`).
+- `analysis.api_map` (on), `api_map_max_chars` (60000): the options draft, spec evaluation, planner
+  and decomposition review get `api_map`. It holds the exported signatures and type bodies of every
+  non-test source file (`repomap.py`: TS/JS `export …`, Python public `def`/`class`). Files past the
+  cap are listed in `omitted`. Without it the planner read whole files for their signatures, which
+  costs cache writes on Opus (LearnEnglish F5b: 18 files, about 128k tokens).
+
 ## Budget
 
 ```sh

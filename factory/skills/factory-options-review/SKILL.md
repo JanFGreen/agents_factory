@@ -22,6 +22,8 @@ computed via `factory-select-option`. Spec semantics are judged separately by
 - Original request, normalized feature, constraints and current spec draft (`proposal.md`, `specs/**`).
 - `openspec/changes/<change-id>/options.md` for this round.
 - Classification (path, risk, dimension evidence) and `factory-repo-map` facts.
+- `api_map` (when given): exported signatures and type bodies per source file, from the controller;
+  read a file only for a body or detail it does not show.
 - Selection policy (weights, tie-break, minimum options: 2 for standard/complex, 1 for trivial).
 - Previous options-review findings (rounds 2-3) and `analysis_round_id`.
 

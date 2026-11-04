@@ -41,7 +41,7 @@ from .evidence import EvidenceError, EvidenceStore, Producer
 from .features import NormalizedFeature, classify, load_feature, path_rank, record_classification, store_feature
 from .identities import InputIdentity, ResultKind, digest
 from .lanes import ParallelLanes
-from . import knowledge
+from . import knowledge, repomap
 from .policy import FILE_SCOPE_RULE, RISK_ORDER, SCOPE_SELF_CHECK, effect_sites, evaluate_diff, is_test_file, is_ui_path, max_risk, security_triggers
 from .preview import PreviewServer
 from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, TrustedRunner, load_checks
@@ -698,6 +698,13 @@ class Factory(ParallelLanes):
         files = git(wt, "ls-files").splitlines()
         return {"files": files[:400], "file_count": len(files)}
 
+    def _api_map(self, job_id: str) -> dict[str, Any] | None:
+        """Exported signatures per source file for the analysis agents that would read them one by one (repomap.py)."""
+        if not self.cfg.workflow.analysis.api_map:
+            return None
+        wt = self._worktree(job_id)
+        return repomap.api_map(wt, git(wt, "ls-files").splitlines(), self.cfg.workflow.analysis.api_map_max_chars)
+
     # ------------------------------------------------------------------ repository knowledge --
 
     def _knowledge(self, job_id: str) -> knowledge.Knowledge:
@@ -875,7 +882,7 @@ class Factory(ParallelLanes):
         ctx = self._ctx(job_id)
         res = self.call_agent(job_id, "factory-options-review", {
             "mode": "draft-and-critique", "feature": self._feature(job_id), "intake": ctx.get("intake"), "repo_map": self._repo_map(job_id),
-            "previous_findings": ctx.get("analysis_findings", []), "spike_question": ctx.get("spike_question"),
+            "api_map": self._api_map(job_id), "previous_findings": ctx.get("analysis_findings", []), "spike_question": ctx.get("spike_question"),
             "minimum_options": self._paths_cfg(job_id).minimum_options,
         })
         if res.payload is None:
@@ -989,7 +996,7 @@ class Factory(ParallelLanes):
         res = self.call_agent(job_id, "factory-spec-evaluate", {
             "feature": feature, "constraints": feature["constraints"], "spec": ctx["spec"], "decision": ctx.get("decision"),
             "mandatory_dimensions": self.cfg.workflow.spec_evaluation.mandatory_dimensions, "repo_map": self._repo_map(job_id),
-            "spec_digest": ctx.get("spec_digest"), "previous_round_findings": ctx.get("analysis_findings", []),
+            "api_map": self._api_map(job_id), "spec_digest": ctx.get("spec_digest"), "previous_round_findings": ctx.get("analysis_findings", []),
         })
         problems = self.spec_structure_problems(spec, feature)
         verdict = res.envelope.verdict
@@ -1094,8 +1101,35 @@ class Factory(ParallelLanes):
                 )
             self.store.event(conn, job_id, "plan.tasks_inserted", {"tasks": [t.task_id for t in tasks]})
 
+    def _plan_revision_due(self, ctx: dict) -> bool:
+        """A plan the decomposition review sent back, for the same spec: the planner patches it instead of rewriting it."""
+        return bool(self.cfg.workflow.decomposition.revise_by_patch and ctx.get("plan") and ctx.get("analysis_findings")
+                    and ctx.get("plan_spec_digest") == ctx.get("spec_digest"))
+
+    def _merge_plan_revision(self, job_id: str, previous: PlanPayload, patch: PlanPayload) -> tuple[PlanPayload, dict]:
+        """Previous tasks with the patch's tasks replacing theirs by id, new ones appended, removed ones dropped.
+
+        Live finding (LearnEnglish F5b): the review rejected one task's merge contract; the planner wrote all nine tasks
+        again (32k output tokens on Opus, $1.09) and the reviewer re-read the whole plan ($0.70).
+        """
+        tasks = {t.task_id: t for t in previous.tasks}
+        unknown = [t for t in patch.removed_task_ids if t not in tasks]
+        if unknown:
+            raise StageBlocked(S.NEEDS_HUMAN, f"plan revision removes unknown tasks {unknown}")
+        for task_id in patch.removed_task_ids:
+            tasks.pop(task_id)
+        changed = [t.task_id for t in patch.tasks if t.task_id in tasks]
+        added = [t.task_id for t in patch.tasks if t.task_id not in tasks]
+        tasks.update({t.task_id: t for t in patch.tasks})
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "plan.revised", {"changed": changed, "added": added, "removed": list(patch.removed_task_ids)})
+        return PlanPayload(tasks=list(tasks.values()), future_needs=patch.future_needs or previous.future_needs), {
+            "changed": changed, "added": added, "removed": list(patch.removed_task_ids),
+            "previous_findings": self._ctx(job_id).get("analysis_findings", [])}
+
     def _step_decompose(self, job_id: str) -> None:
         ctx = self._ctx(job_id)
+        revise = self._plan_revision_due(ctx)
         res = self.call_agent(job_id, "factory-plan", {
             "feature": self._feature(job_id), "spec": ctx["spec"], "decision": ctx.get("decision"),
             # the guard into DECOMPOSE already required a current spec PASS; state it so the planner need not guess
@@ -1105,12 +1139,19 @@ class Factory(ParallelLanes):
             "knowledge": self._knowledge_context(job_id),
             # who uses each file, so a task that changes a signature or type lists its callers (LearnEnglish F4, F5)
             "dependency_map": knowledge.dependency_map(graph) if (graph := self._code_graph(job_id)) else None,
-            "repo_map": self._repo_map(job_id), "design": self._design_context(job_id, with_text=True),
+            "repo_map": self._repo_map(job_id), "api_map": self._api_map(job_id), "design": self._design_context(job_id, with_text=True),
+            **({"revision": {"mode": "patch", "plan_digest": ctx.get("plan_digest")}} if revise else {}),
         })
         if res.payload is None:
             raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
-        plan = res.payload.model_dump()
-        self._set_ctx(job_id, plan=plan, plan_digest=digest(plan))
+        payload, revision = res.payload, None
+        if revise and payload.revision_of and payload.revision_of == ctx.get("plan_digest"):
+            payload, revision = self._merge_plan_revision(job_id, PlanPayload.model_validate(ctx["plan"]), payload)
+        elif payload.revision_of or payload.removed_task_ids:
+            raise StageBlocked(S.NEEDS_INFO, f"plan revision of {payload.revision_of!r} does not match the current plan")
+        plan = payload.model_dump(exclude={"revision_of", "removed_task_ids"})
+        self._set_ctx(job_id, plan=plan, plan_digest=digest(plan), plan_spec_digest=ctx.get("spec_digest"),
+                      plan_revision=revision and {**revision, "plan_digest": digest(plan)})
         self.controller.transition(job_id, S.AI_DECOMPOSITION_REVIEW)
 
     def _step_ai_decomposition_review(self, job_id: str) -> None:
@@ -1121,7 +1162,9 @@ class Factory(ParallelLanes):
         res = self.call_agent(job_id, "factory-decomposition-review", {
             "feature": self._feature(job_id), "spec": ctx["spec"], "plan": ctx["plan"], "controller_dag_problems": dag.problems,
             "controller_difficulty": self._task_difficulty(job_id, plan.tasks), "file_scope_rule": FILE_SCOPE_RULE,
-            "knowledge": self._knowledge_context(job_id),
+            "knowledge": self._knowledge_context(job_id), "api_map": self._api_map(job_id),
+            # a patched plan: check the previous findings and the changed tasks against the rest, not the whole plan again
+            **({"revision": revision} if (revision := ctx.get("plan_revision")) and revision.get("plan_digest") == ctx.get("plan_digest") else {}),
             # files that import, call or reference each scoped file: a non-test one a task's change breaks belongs in a scope
             "dependents": {t.task_id: self._dependents(job_id, t.file_scope) for t in plan.tasks},
         })

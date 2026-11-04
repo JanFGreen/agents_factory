@@ -27,6 +27,9 @@ features this review is not run; the controller records
 - Limits: `decomposition.max_depth` (3), `max_leaf_tasks_per_feature` (20),
   `target_task_minutes` (45), per-task attempt limit, remaining feature budget.
 - `plan_digest`, `spec_digest`, `analysis_round_id`, previous findings.
+- `api_map` (when given): exported signatures and type bodies per source file, from the controller.
+  Check contracts and callers against it; read a file only for what it does not show.
+- `revision` (when given): the plan is a patch of a plan you rejected (see "Revision rounds").
 - `file_scope_rule`: the scope rule the controller enforces on every build diff. Judge
   `file_scope` by it, not by a stricter rule of your own.
 
@@ -62,6 +65,16 @@ features this review is not run; the controller records
    feature being built is a blocking finding.
 9. Over depth 3 or 20 leaves: CHANGES with a staging/epic proposal finding; never
    recommend dropping requirements.
+
+## Revision rounds
+
+With `inputs.revision` the planner patched the plan you rejected: `changed`, `added` and
+`removed` name the tasks it touched, and `previous_findings` lists what you asked for. Check
+that each previous finding is fixed, then check the touched tasks in full and their contracts
+with the tasks that depend on them or that they depend on, plus the requirement coverage and DAG
+of the merged plan. Do not re-review the untouched tasks: give each of them `PASS` in `per_task`
+with the note `unchanged`. A new blocking problem in an untouched task counts only when the
+patch caused it.
 
 ## Output
 

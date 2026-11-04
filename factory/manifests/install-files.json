@@ -214,6 +214,7 @@
   "src/agent_factory/preview.py",
   "src/agent_factory/py.typed",
   "src/agent_factory/recovery.py",
+  "src/agent_factory/repomap.py",
   "src/agent_factory/runner.py",
   "src/agent_factory/sandbox.py",
   "src/agent_factory/scheduler.py",

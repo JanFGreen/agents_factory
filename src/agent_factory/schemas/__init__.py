@@ -190,6 +190,9 @@ class TaskSpec(Model):
 class PlanPayload(Model):
     tasks: list[TaskSpec]
     future_needs: list[FutureNeed] = []
+    # A revision (inputs.revision): the plan_digest it patches; `tasks` then holds only changed and new tasks.
+    revision_of: str | None = None
+    removed_task_ids: list[str] = []
 
 
 class TaskReview(Model):

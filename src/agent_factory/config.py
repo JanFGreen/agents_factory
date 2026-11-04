@@ -113,6 +113,9 @@ class Analysis(Strict):
     max_feasibility_spikes_per_feature: int
     on_limit: Literal["ANALYSIS_LIMIT_REACHED"]
     allow_scope_reduction_to_pass: bool
+    # Code defaults, not in workflow.yaml (policy digest): exported signatures per source file for the analysis agents.
+    api_map: bool = True
+    api_map_max_chars: int = Field(default=60000, ge=1000)
 
     @model_validator(mode="after")
     def _no_resets(self) -> "Analysis":
@@ -151,6 +154,7 @@ class Decomposition(Strict):
     require_acyclic_dependencies: bool
     require_parent_end_to_end_acceptance: bool
     future_scope_policy: Literal["record_constraints_do_not_build_speculative_features"]
+    revise_by_patch: bool = True  # a rejected plan for the same spec is patched (changed tasks only), not rewritten
 
 
 class Implementation(Strict):

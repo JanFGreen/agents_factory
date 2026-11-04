@@ -25,6 +25,8 @@ current acceptance criteria. If it reveals a material gap, the verdict is CHANGE
   `acceptance-map.yaml`, `future-needs.md`; plus `decision.json` (standard/complex).
 - Accepted baseline specs under `openspec/specs/` touched by the change.
 - `factory-repo-map` facts (modules, boundaries, commands), policy minimums, budget.
+- `api_map` (when given): exported signatures and type bodies per source file, from the controller;
+  read a file only for a body or detail it does not show.
 - `spec_digest`, intent digest, `analysis_round_id`, previous findings (rounds 2-3).
 
 ## Procedure
