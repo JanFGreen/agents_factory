@@ -406,10 +406,18 @@ class Factory(ParallelLanes):
             except BaseException:
                 budgets.release(self.store, reservation)
                 raise
+            cost, model, tokens_in, tokens_out = (snapshot.usage.cost_usd, snapshot.model_id or binding.model,
+                                                  snapshot.usage.input_tokens, snapshot.usage.output_tokens)
+            # A run the controller stopped (stall, timeout) never reports its cost; its log does. Live finding (LearnEnglish
+            # F5c): three stalled walkthroughs were booked at $0.00, the first after 16 minutes of work (~$0.33).
+            estimate = (estimate_from_log(handle.log_path) if snapshot.state != "succeeded" and not cost and handle.log_path
+                        and binding.runtime == "claude" else None)
+            if estimate:
+                cost, model, tokens_in, tokens_out = (estimate["cost_usd"], estimate["model"] or model, estimate["input_tokens"],
+                                                      estimate["output_tokens"])
             budgets.settle(
-                self.store, job_id, reservation, cost_usd=snapshot.usage.cost_usd, model_id=snapshot.model_id or binding.model,
-                input_tokens=snapshot.usage.input_tokens, output_tokens=snapshot.usage.output_tokens,
-                attempt_id=attempt_id, source=f"runtime:{binding.runtime}",
+                self.store, job_id, reservation, cost_usd=cost, model_id=model, input_tokens=tokens_in, output_tokens=tokens_out,
+                attempt_id=attempt_id, source=f"runtime:{binding.runtime}", estimated=bool(estimate and estimate["estimated"]),
             )
             if snapshot.state != "succeeded":
                 if transient_left > 0 and snapshot.state in ("failed", "unknown") and snapshot.retryable:

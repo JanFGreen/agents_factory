@@ -208,6 +208,20 @@ def test_recovery_charges_a_killed_run_from_its_log(make_env, tmp_path, released
     assert env.store.one("SELECT COUNT(*) AS n FROM usage WHERE attempt_id = 'att-dead'")["n"] == 1
 
 
+def test_a_run_the_controller_stopped_is_charged_from_its_log(make_env, tmp_path):
+    """Live finding (LearnEnglish F5c): three stalled walkthroughs were booked at $0.00, one after 16 minutes of work."""
+    log = _log(tmp_path / "stalled.jsonl").read_text()
+    stalled = FakeReply(state="failed", cost_usd=None, log=log)
+    env = make_env("standard", responders={"factory-plan": stalled})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "BLOCKED_ENV"
+    rows = env.store.all("SELECT u.cost_usd, u.cost_known FROM usage u JOIN attempts a ON a.attempt_id = u.attempt_id"
+                         " WHERE a.job_id = ? AND a.role = 'planner'", (job,))
+    expected = estimate_from_log(_log(tmp_path / "again.jsonl"))["cost_usd"]
+    stopped = [r for r in rows if not r["cost_known"]]  # the options stage shares the planner role and reported its cost
+    assert stopped and all(r["cost_usd"] == pytest.approx(expected) for r in stopped)
+
+
 def test_a_dead_controllers_lease_and_slot_are_freed(make_env):
     """Live finding (LearnEnglish F5a): after a hard stop the next run halted on 'another worker holds lease'."""
     env = make_env("standard", responders={"factory-plan": plan_reply(TASKS)})

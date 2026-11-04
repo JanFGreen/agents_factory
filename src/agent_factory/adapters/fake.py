@@ -22,6 +22,7 @@ class FakeReply:
     state: str = "succeeded"
     cost_usd: float | None = 0.01
     hang: bool = False
+    log: str | None = None  # the run's event log (JSON lines), written next to the worktree and named in the handle
 
 
 Responder = Callable[[AgentRequest], FakeReply]
@@ -83,7 +84,11 @@ class FakeRuntime:
             self._results[run_id] = RunSnapshot(
                 reply.state, output_text=text, usage=Usage(100, 50, reply.cost_usd), model_id=request.model, events_seen=1
             )
-        return RunHandle(run_id, request.job_id, request.attempt_id, request.session_id, None, None, time.time())
+        log_path = None
+        if reply.log is not None:
+            log_path = request.cwd.parent / f"{run_id}.jsonl"
+            log_path.write_text(reply.log)
+        return RunHandle(run_id, request.job_id, request.attempt_id, request.session_id, None, log_path, time.time())
 
     async def poll(self, handle: RunHandle) -> RunSnapshot:
         return self._results.get(handle.run_id, RunSnapshot("unknown"))
