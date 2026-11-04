@@ -682,7 +682,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_plan)
     s = sub.add_parser("task")
     tsub = s.add_subparsers(dest="task_cmd", required=True)
-    t = tsub.add_parser("retry", help="give a FAILED task more attempts while the job is halted")
+    t = tsub.add_parser("retry", help="give a FAILED task more attempts, or reopen an ACCEPTED one, while the job is halted")
     t.add_argument("job_id")
     t.add_argument("task_id")
     t.add_argument("--attempts", type=int, default=1, choices=range(1, 4))

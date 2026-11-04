@@ -497,6 +497,11 @@ uv run factory task retry <id> TASK-04 --attempts 1 --reason "..."  # more attem
 uv run factory resume <id>
 ```
 
+`--allow-file PATH` lets the task change a file outside its `file_scope`. `task retry` also reopens an
+ACCEPTED task while the job is halted in the build or at feature acceptance (`factory pause --after` stops before
+acceptance). Use it for one fix that spans tasks: feature acceptance would route its defects to one owner task per
+round. The reopened task builds and is reviewed again, then the job goes back to feature acceptance.
+
 ## Rebuild and review-loop guards (`workflow.implementation`)
 
 Measured on LearnEnglish F4-F5a, where one task cost $30 in six review rounds. The defaults live in `config.py`,

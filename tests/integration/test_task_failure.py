@@ -75,7 +75,7 @@ def test_retry_needs_a_failed_task_and_a_halted_job(make_env):
     job = env.submit("Add exclamation greeting and farewell")
     env.factory.run(job)
     with pytest.raises(TransitionRefused):
-        env.factory.retry_task(job, "TASK-02", 1, "accepted tasks are not retried")
+        env.factory.retry_task(job, "TASK-09", 1, "no such task")
     env.factory.retry_task(job, "TASK-01", 2, "ok")
     with pytest.raises(TransitionRefused):
         env.factory.retry_task(job, "TASK-01", 1, "no longer FAILED")
@@ -158,6 +158,39 @@ def test_a_retry_can_allow_a_file_outside_the_task_scope(make_env, builders):
     assert seen and all("app/shared.py" in scope for scope in seen)
     retry = [json.loads(e["payload_json"]) for e in env.store.events_for(job) if e["kind"] == "task.retry"]
     assert retry[-1]["allow_files"] == ["app/shared.py"]
+
+
+def test_an_accepted_task_can_be_reopened_for_a_fix_across_tasks(make_env):
+    """Live finding (LearnEnglish F5a): feature acceptance found four defects in four tasks' files and routes them to one
+    owner per round; the operator reopens one accepted task with the files it needs and fixes them in one go."""
+    builder = Builder()
+    builder.fixed = True
+    env = make_env("standard", responders={"factory-plan": plan_reply(_tasks(False)), "factory-implement": builder},
+                   **{"execution.max_builders_per_job": 1})
+    job = env.submit("Add exclamation greeting and farewell")
+    while env.state(job) != "BUILD_TASK":  # the tasks exist from here
+        env.factory.step(job)
+    env.factory.request_pause(job, ["TASK-01", "TASK-02"], "before feature acceptance")
+    assert env.factory.run(job) == "PAUSED"
+    assert _states(env, job) == {"TASK-01": "ACCEPTED", "TASK-02": "ACCEPTED"}
+    assert env.store.job_context(job)["resume_state"] == "FEATURE_ACCEPTANCE"
+    seen = []
+
+    def implement(request):
+        reply = builder(request)
+        if "task=TASK-02" in request.prompt:
+            seen.append(request_inputs(request)["task"]["file_scope"])
+            reply = FakeReply(reply.envelope, edits={**reply.edits, "app/greet_shared.py": "Y = 2\n"})
+        return reply
+
+    env.runtime.responders["factory-implement"] = implement
+    env.factory.retry_task(job, "TASK-02", 1, "fix the shared defect", allow_files=["app/greet_shared.py"])
+    assert _states(env, job)["TASK-02"] == "REWORK"
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert seen and "app/greet_shared.py" in seen[-1]
+    retry = [json.loads(e["payload_json"]) for e in env.store.events_for(job) if e["kind"] == "task.retry"]
+    assert retry[-1]["reopened"] is True
 
 
 def test_allow_file_takes_repo_relative_paths(make_env):

@@ -1385,17 +1385,24 @@ class Factory(ParallelLanes):
         return [*spec, *(f for f in extra if f not in spec)]
 
     def retry_task(self, job_id: str, task_id: str, attempts: int, reason: str, allow_files: list[str] | None = None) -> None:
-        """Operator decision: give a FAILED task more attempts (the job must be halted).
+        """Operator decision: give a FAILED task more attempts, or reopen an ACCEPTED one (the job must be halted).
 
         ``allow_files`` extends the task's file_scope for its next attempts. Live finding (LearnEnglish F5a): the
         feature walkthrough found a focus-ring defect in a shared Button no task owned; the owner task could not
         touch it and failed its last attempt with no change.
+
+        Reopening an accepted task carries a fix that spans tasks (F5a: four feature-acceptance defects in four
+        tasks' files). Acceptance would route them to one owner per round; the reopened task builds them in one go
+        before the job returns to feature acceptance.
         """
         task = self._task(job_id, task_id)
-        if task is None or task["state"] != "FAILED":
-            raise TransitionRefused(f"{task_id} is not FAILED")
+        if task is None or task["state"] not in ("FAILED", "ACCEPTED"):
+            raise TransitionRefused(f"{task_id} is not FAILED or ACCEPTED")
         if S(self._job(job_id)["state"]) not in HALTED:
             raise TransitionRefused("retry a task only while the job is halted")
+        reopened = task["state"] == "ACCEPTED"
+        if reopened and S(self._ctx(job_id).get("resume_state") or S.INTAKE) not in (S.BUILD_TASK, S.FEATURE_ACCEPTANCE):
+            raise TransitionRefused("reopen an accepted task only while the job is building or at feature acceptance")
         max_attempts = self.cfg.workflow.implementation.max_attempts_per_leaf_task
         bases = self._ctx(job_id).get("task_base", {})
         bases.pop(task_id, None)  # the retry starts from the head at that time
@@ -1406,11 +1413,13 @@ class Factory(ParallelLanes):
         extensions = self._ctx(job_id).get("scope_extensions", {})
         if allow_files:
             extensions = {**extensions, task_id: sorted({*extensions.get(task_id, []), *allow_files})}
-        self._set_ctx(job_id, task_base=bases, operator_notes=notes, scope_extensions=extensions)
+        self._set_ctx(job_id, task_base=bases, operator_notes=notes, scope_extensions=extensions,
+                      **({"resume_state": str(S.BUILD_TASK), "current_task": task_id} if reopened else {}))
         with self.store.tx() as conn:
             conn.execute("UPDATE tasks SET state = 'REWORK', attempts = ? WHERE job_id = ? AND task_id = ?",
                          (max(0, max_attempts - attempts), job_id, task_id))
             self.store.event(conn, job_id, "task.retry", {"task_id": task_id, "attempts": attempts, "reason": reason,
+                                                          **({"reopened": True} if reopened else {}),
                                                           **({"allow_files": allow_files} if allow_files else {})})
 
     def _run_builder(self, job_id: str, task_id: str, task, ctx: dict, gate_fixup: dict | None = None) -> None:
