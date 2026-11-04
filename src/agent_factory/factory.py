@@ -783,6 +783,11 @@ class Factory(ParallelLanes):
         with self.store.tx() as conn:
             self.store.event(conn, job_id, "knowledge.refreshed", {"graph": found.graph, "vaults": list(found.vaults),
                                                                   "broken_links": broken[:20], "docs_partial": self.graphify.docs_partial})
+        # A broken link in the generated graph/ notes is the export's fault, never a builder's: no rework can fix it
+        # (LearnEnglish F6a: two rebuilds and two feature acceptances, ~$8, for notes builders may not edit).
+        generated = [b for b in broken if any(b.startswith(f"{vault}/graph/") for vault in found.vaults)]
+        if generated:
+            raise StageBlocked(S.BLOCKED_ENV, f"the exported graph notes have links that resolve to no note: {generated[:10]}")
         return f"Obsidian vault links that resolve to no note: {broken[:20]}" if broken else None
 
     def _step_intake(self, job_id: str) -> None:

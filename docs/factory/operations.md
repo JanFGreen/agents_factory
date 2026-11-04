@@ -479,10 +479,12 @@ A repository opts in by tracking `graphify-out/graph.json` (graphify) and/or a f
   docs (`.md/.mdx/.txt/.rst`, the exported spec included) the docs are re-extracted with the small model
   (haiku, graphify's own recommendation; the per-repo extraction cache in `<data_dir>/knowledge/cache/<repo>` keeps it to
   the changed files); communities are named again (haiku); the graph is exported into `<vault>/graph/` with
-  `GRAPH_REPORT.md`; the result is committed as `factory: refresh knowledge graph and Obsidian vault`
-  (event `knowledge.refreshed`);
-- **holds the vault to its links**: a `[[wikilink]]` in a vault note that names no file of the vault sends the job
-  back to rework with the list of broken links.
+  `GRAPH_REPORT.md`. The folder is emptied first: an export over the previous one left notes numbered by an older
+  graph, and their links broke (LearnEnglish F6a). The result is committed as `factory: refresh knowledge graph and
+  Obsidian vault` (event `knowledge.refreshed`);
+- **holds the vault to its links**: a `[[wikilink]]` in a hand-written vault note that names no file of the vault
+  sends the job back to rework with the list of broken links. A broken link in the generated `<vault>/graph/` notes
+  stops the job in `BLOCKED_ENV`: no builder may edit them, so a rework cannot fix it.
 
 Fail-closed: a repo with a graph or a vault and no pinned graphify, a graphify error, or a model call that graphify
 degraded to placeholders stops the job in `BLOCKED_ENV` instead of merging a stale graph. Model calls run with the

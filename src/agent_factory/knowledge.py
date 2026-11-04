@@ -168,7 +168,15 @@ class Graphify:
         return partial[-400:]
 
     def export_vault(self, worktree: Path, vault: str) -> None:
+        """Export the graph into the vault's generated ``graph/`` folder, from empty.
+
+        Live finding (LearnEnglish F6a): exporting over the previous export left notes numbered by an older graph
+        (``SignIn()_1.md`` next to names differing only in case, which a case-insensitive disk keeps apart by number);
+        24 links of the new notes pointed at files that were gone. The folder is the controller's own output.
+        """
         target = worktree / vault / "graph"
+        if target.is_dir() and not target.is_symlink():
+            shutil.rmtree(target)
         self._run([str(self.binary), "export", "obsidian", "--graph", GRAPH, "--dir", str(target)], worktree, writable=(worktree,))
         report = worktree / REPORT
         if report.is_file():  # the vault's notes link [[GRAPH_REPORT]]

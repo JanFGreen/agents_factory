@@ -41,6 +41,8 @@ if args[0] == "export":
     target.mkdir(parents=True, exist_ok=True)
     (target / "greet.md").write_text("[[notes]]\\n")
     (target / "notes.md").write_text("[[greet]]\\n")
+    if Path("docs/BREAK_EXPORT.md").exists():
+        (target / "broken.md").write_text("[[greet_9]]\\n")
 """
 
 
@@ -134,3 +136,31 @@ def test_a_partial_docs_pass_keeps_the_code_graph_current_and_is_reported(make_e
     calls = (Path(env.store.job(job)["worktree"]) / "graphify-out" / "calls.txt").read_text().split("\n")
     assert calls[:4] == ["update .", "extract .", "extract .", "label ."]  # retried once with smaller chunks
     assert "Refusing to overwrite" in json.loads(env.events(job, "knowledge.refreshed")[0]["payload_json"])["docs_partial"]
+
+
+def test_the_vault_export_starts_from_an_empty_graph_folder(make_env, repo, tmp_path):
+    """Live finding (LearnEnglish F6a): notes of an older export stayed next to the new ones and 24 links broke."""
+    env = make_env("trivial")
+    _with_knowledge(env, repo, tmp_path)
+    (repo / ".gitignore").write_text("")
+    (repo / "docs" / "graph").mkdir()
+    (repo / "docs" / "graph" / "SignIn()_1.md").write_text("[[gone_7]]\n")  # numbered by an older graph
+    git_commit_all(repo, "an older export")
+    sh(repo, "git", "push", "-q", "origin", "trunk")
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE", env.store.job(job)["blocked_reason"]
+    wt = Path(env.store.job(job)["worktree"])
+    assert not (wt / "docs" / "graph" / "SignIn()_1.md").exists() and (wt / "docs" / "graph" / "greet.md").is_file()
+
+
+def test_a_broken_link_in_the_exported_notes_stops_the_job_without_a_rebuild(make_env, repo, tmp_path):
+    """No builder may edit the generated notes, so their broken links are an environment problem, not a rework reason."""
+    env = make_env("trivial")
+    _with_knowledge(env, repo, tmp_path)
+    (repo / "docs" / "BREAK_EXPORT.md").write_text("marker\n")
+    git_commit_all(repo, "export marker")
+    sh(repo, "git", "push", "-q", "origin", "trunk")
+    job = env.submit()
+    assert env.factory.run(job) == "BLOCKED_ENV"
+    assert "exported graph notes" in env.store.job(job)["blocked_reason"] and "[[greet_9]]" in env.store.job(job)["blocked_reason"]
+    assert env.calls("factory-implement") == 1  # built once, never sent back for the generated notes
