@@ -231,7 +231,7 @@ def job(store: Store, job_id: str, *, next_step: str, criteria_digest: str | Non
         "budget": budget, "next_step": next_step, "criteria_digest": criteria_digest,
         "plan_estimate": {k: estimate.get(k) for k in ("tasks", "estimate_usd", "suggested_limit_usd", "basis")} if estimate else None,
         "plan_approved": bool(ctx.get("plan_approval")),
-        "decisions": [{k: d.get(k) for k in ("id", "question", "why", "options", "proposed", "answer", "source")}
+        "decisions": [{k: d.get(k) for k in ("id", "question", "why", "options", "proposed", "answer", "source", "critical")}
                       for d in ctx.get("decisions", [])],
         "tasks": tasks, "reviews": _reviews(store, job_id), "costs": costs,
         "findings": findings, "screenshots": _screenshots(store, job_id),

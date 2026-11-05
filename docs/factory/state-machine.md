@@ -74,7 +74,7 @@ from the current identity (`Controller.identity`). See `evidence-contract.md`.
 
 | Target state | Guard | Required evidence |
 |---|---|---|
-| `COMPLEXITY_ASSESSMENT` | `_g_decisions_answered` | no unanswered product decisions (`guided` mode) |
+| `COMPLEXITY_ASSESSMENT` | `_g_decisions_answered` | no unanswered product decisions |
 | `SINGLE_TASK_READY`, `DECOMPOSE` | `_g_spec_pass` | current `spec-evaluation` PASS |
 | `TASK_GRAPH_READY` | `_g_decomposition_pass` | current `decomposition-review` PASS + spec PASS |
 | `BUILD_TASK` | `_g_build_allowed` | spec PASS; for a path other than `trivial` also decomposition PASS; at least one row in `tasks` |
@@ -105,7 +105,7 @@ a transition past a guard.
 | Situation | Where | Goes to |
 |---|---|---|
 | Intake `BLOCKED` | `_step_intake` | `NEEDS_INFO` |
-| `guided` mode: unanswered product decisions | `_step_intake` | `NEEDS_INFO` (`factory decide` records the answers and resumes to `INTAKE` without re-running intake) |
+| Unanswered product decisions (`guided` mode, or `critical` in any mode) | `_step_intake` | `NEEDS_INFO` (`factory decide` records the answers and resumes to `INTAKE`; intake runs again only for an interview follow-up round) |
 | Missing classification / options / spec / plan payload | `_step_*` | `NEEDS_INFO` |
 | Missing option choice payload | `_step_ai_option_review` | `NEEDS_HUMAN` |
 | AI decision contradicts the deterministic choice | `_step_ai_option_review` | one repair in the same round; then the round ends with `CHANGES` → `ANALYSIS_ROUND` (or the limit) |

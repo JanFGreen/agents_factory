@@ -474,3 +474,76 @@ def test_the_walkthrough_gets_the_apps_backend_and_the_build_calls_it(make_env, 
     assert "A step the UI cannot perform" in feature["how"]  # operator actions and a moved clock: run the code
     with pytest.raises(OSError):  # stopped with the run
         urllib.request.urlopen(feature["api"] + "/anything", timeout=2)
+
+
+def test_verified_pre_existing_defects_are_follow_ups_not_rework(make_env, tmp_path, repo):
+    """Live finding (LearnEnglish F6b): defects of screens older than the feature used up a task's build attempts."""
+    old = walkthrough(contrast=1.6)
+    old["interaction_states"] = [{**s, "pre_existing_path": "app/notes.py"} for s in old["interaction_states"]]
+    ui = UiReviewer([(True, ui_payload())], [(True, old)])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert [v for v, _ in _feature_results(env, job)] == ["PASS"]
+    assert env.calls("factory-implement") == 1  # no rework for an untouched file
+    known = env.store.job_context(job)["pre_existing_defects"]
+    assert known and all(k["path"] == "app/notes.py" and k["problem"].startswith("[pre-existing] option") for k in known)
+    note = sh(repo, "git", "show", f"factory/{job}:docs/decisions/{env.store.job(job)['feature_id']}.md")
+    assert "## Known defects (older than this feature)" in note and "`app/notes.py`" in note
+
+
+def test_a_pre_existing_claim_on_a_file_the_job_changed_is_refused(make_env, tmp_path, repo):
+    claim = {**walkthrough(), "pre_existing": ["UX-1"]}
+    finding = {"id": "UX-1", "severity": "medium", "blocking": True, "location": {"path": "app/greet.py"},
+               "problem": "The greeting is cut off on a phone"}
+
+    class Claiming(UiReviewer):
+        def __call__(self, request):
+            reply = super().__call__(request)
+            if self.feature_inputs and json.loads(request.prompt.split("<inputs>\n", 1)[1].split("\n</inputs>", 1)[0]).get("mode") == "feature" \
+                    and len(self.feature_inputs) == 1:
+                return FakeReply(envelope("ui-review", verdict="CHANGES", payload=claim, findings=[finding]))
+            return reply
+
+    ui = Claiming([(True, ui_payload())], [(True, claim), (True, walkthrough())])
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert [v for v, _ in _feature_results(env, job)] == ["CHANGES", "PASS"]
+    assert env.calls("factory-implement") == 2
+    event = [json.loads(e["payload_json"]) for e in env.events(job, "ui_feature.pre_existing")][0]
+    assert event == {"set_aside": [], "refused": ["UX-1"]}
+
+
+def _seeded_env(make_env, tmp_path, repo, ui, code: str):
+    env, _ = _env(make_env, tmp_path, repo, {"factory-ui-review": ui})
+    manifest = yaml.safe_load((env.factory_dir / "checks" / "default.yaml").read_text())
+    manifest["preview"]["seed"] = {"argv": ["{python}", "-c", code, "{out}", "{origin}"], "shows": "a learner with 3 reviews due"}
+    (env.factory_dir / "checks" / "default.yaml").write_text(yaml.safe_dump(manifest))
+    env.reload()
+    return env
+
+
+def test_the_reviewer_gets_the_repositorys_sample_data(make_env, tmp_path, repo):
+    """Live finding (LearnEnglish F6b): a fresh profile has nothing due, so exercise screens never rendered in review."""
+    code = ("import json, sys; json.dump({'cookies': [], 'origins': [{'origin': sys.argv[2], 'localStorage': "
+            "[{'name': 'due', 'value': '3'}]}]}, open(sys.argv[1], 'w'))")
+    ui = UiReviewer([(True, ui_payload())])
+    env = _seeded_env(make_env, tmp_path, repo, ui, code)
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    for inputs in (ui.inputs[0], ui.feature_inputs[0]):
+        sample = inputs["environment"]["sample_data"]
+        assert "state-load" in sample and "a learner with 3 reviews due" in sample
+    seen = [i["environment"]["url"].rstrip("/") for i in ui.inputs]
+    assert seen  # the state names the preview's own origin
+    assert not env.events(job, "preview.seed_failed")
+
+
+def test_a_failing_seed_is_stated_and_the_review_goes_on(make_env, tmp_path, repo):
+    ui = UiReviewer([(True, ui_payload())])
+    env = _seeded_env(make_env, tmp_path, repo, ui, "import sys; print('no fixtures'); sys.exit(3)")
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert "could not be loaded" in ui.inputs[0]["environment"]["sample_data"]
+    assert "no fixtures" in json.loads(env.events(job, "preview.seed_failed")[0]["payload_json"])["error"]

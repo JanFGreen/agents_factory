@@ -23,7 +23,8 @@ context; nobody approves it manually.
 
 - Original request, normalized feature (`factory-intake`) and its revision, with
   `feature.decisions`: settled product decisions (`source`: `human` or `accepted` = the
-  operator's answer, `assumed` = the intake's default in auto mode).
+  operator's answer, `assumed` = the intake's default in auto mode, `delegated` = the intake's
+  default after the operator skipped the interview).
 - Classification facts (path computed by the controller, risk, dimension evidence).
 - `factory-repo-map` result and relevant baseline specs under `openspec/specs/`
   (`openspec list --specs`, `openspec show <spec> --type spec`).
@@ -31,6 +32,10 @@ context; nobody approves it manually.
 - Previous round artifacts and open findings from `factory-spec-evaluate` (rounds 2-3).
 - `analysis_round_id` and the change id (e.g. `add-operation-history`).
 - `design`: the design direction document (`text` when it exists) and reference images.
+- `project_notes` (when present): `named_docs`, the documents the request says apply (follow them), and
+  `decision_register`, the settled decisions, chosen approaches and "Not doing" lists of earlier features.
+  Do not reopen or contradict a settled decision, or build what a feature listed under Not doing, unless
+  this request asks for it; then name the conflict in a finding.
 
 ## Procedure
 
@@ -41,7 +46,7 @@ context; nobody approves it manually.
    or `decision:Q-n` for a requirement that implements an answered product decision.
    Every decision answered by the operator (`human`, `accepted`) is binding like the
    original request: it maps to a requirement or a constraint and is never contradicted.
-   An `assumed` decision is the default to follow unless the repository shows it is wrong
+   An `assumed` or `delegated` decision is the default to follow unless the repository shows it is wrong
    (then say so in a non-blocking finding).
 3. Map every intent to requirement IDs in `intent_map`. An intent without a
    requirement is a defect you must fix before returning.

@@ -28,7 +28,12 @@ explicitly (`BLOCKED`, controller state `NEEDS_INFO`).
 - Factory policy summary: allowed repositories, modes and operations (to detect
   requests outside the granted permission scope).
 - `spec_mode` (`guided | auto`) and `max_decisions`.
+- `interview` (follow-up rounds only): `round` and the `settled` decisions with their answers.
 - `design`: whether the repository has a design direction document (`doc`, `exists`) and reference images.
+- `project_notes` (when present): `named_docs`, the documents the request says apply (follow them), and
+  `decision_register`, the settled decisions, chosen approaches and "Not doing" lists of earlier features.
+  Do not reopen or contradict a settled decision, or build what a feature listed under Not doing, unless
+  this request asks for it; then name the conflict in a finding.
 
 ## Procedure
 
@@ -55,10 +60,17 @@ explicitly (`BLOCKED`, controller state `NEEDS_INFO`).
    in the language of the request, `why` (what is built differently), 2-4 `options` when
    the choice is discrete, and the `proposed` answer you would pick with the reason in it.
    Order by impact, at most `max_decisions`. Not decisions: anything the request already
-   settles, technical choices the analysis decides from the repository, and hypothetical
-   future work. In `guided` mode the operator answers them before analysis; in `auto`
-   mode the proposals are assumed, so propose the safest reasonable default. A decision
-   with a proposal never makes the verdict `BLOCKED`.
+   settles, facts you can find in the repository, its docs or vault (look before you ask),
+   technical choices the analysis decides from the repository, and hypothetical future work.
+   Mark `critical: true` only for security or permissions, data loss or migration, payments
+   or plans, privacy, irreversible changes and contradicting requirements. In `guided` mode
+   the operator answers them before analysis (an interview); in `auto` mode, or once the
+   operator skips the interview, the proposals are assumed, except critical ones, so propose
+   the best answer for the product, as you would build it yourself. A decision with a
+   proposal never makes the verdict `BLOCKED`.
+   In a follow-up round (`interview` in the inputs), state the settled answers in the goal,
+   criteria and constraints, and list only the decisions those answers opened; `[]` ends the
+   interview (`references/normalization.md`, "Interview follow-up rounds").
    When the request adds or changes user-visible screens, `design.exists` is false and the
    request does not already describe the look, one decision is the visual direction: 2-4
    `options`, each a concrete direction in one line (personality, palette, density, a named
@@ -67,8 +79,20 @@ explicitly (`BLOCKED`, controller state `NEEDS_INFO`).
    the design direction document (see `references/normalization.md`, "Decisions").
 8. Classify each future direction as `required_now`, `committed_next` or
    `hypothetical` (see `references/normalization.md`). Speculative wishes are
-   `hypothetical` and are not built.
-9. Check permission scope: a request to touch a repository, environment or
+   `hypothetical` and are not built. List in `not_doing` the scope boundaries the
+   request or the answers set ("no audio for Polish text", "no import from PDF in this
+   feature"): the controller keeps them in the decision register, so later features do not
+   build them by accident.
+9. Propose `scope_split` when the request bundles several features that are each
+   testable and useful on their own (separate screens or flows, separate data, a UX
+   overhaul next to new behaviour), so one spec and one plan would carry them all: a
+   `reason` and 2-5 `parts` in build order, each with a `title` and a complete `request`
+   (the part's intents, constraints and criteria from the original, nothing dropped and
+   nothing added; all parts together cover the whole request). Not for one feature with
+   several steps that only make sense together. The controller asks the operator before
+   any analysis; a split cancels this job and writes each part as a feature file.
+   Only in the first round (no `interview` in the inputs).
+10. Check permission scope: a request to touch a repository, environment or
    operation the policy does not grant is `BLOCKED`, not silently reduced.
 
 ## Output
@@ -82,8 +106,10 @@ Envelope per contract, `kind: "intake"`. Payload:
   "constraints": ["Use the existing login"],
   "open_questions": [],
   "decisions": [{"id": "Q-1", "question": "How many operations per page?", "why": "Sets the page size and the pagination controls",
-    "options": ["20", "50", "100"], "proposed": "20, the size of the existing lists"}],
-  "future_directions": [{"description": "History export", "status": "hypothetical"}]
+    "options": ["20", "50", "100"], "proposed": "20, the size of the existing lists", "critical": false}],
+  "future_directions": [{"description": "History export", "status": "hypothetical"}],
+  "not_doing": ["Operations of other users, also for admins"],
+  "scope_split": null
 }
 ```
 

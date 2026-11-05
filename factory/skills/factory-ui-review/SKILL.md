@@ -84,6 +84,10 @@ environment: judge the running app, not only the diff.
 
 Render-only checks are real here: they are `PASS` or `FAIL`, not `NOT_RUN`.
 
+With `environment.sample_data`, the repository provides a storage state with sample data: load it
+for every screen that needs data (a list, a session, due items) and review those screens too; use a
+fresh session for first-run flows.
+
 ## Feature walkthrough (`mode: feature`)
 
 At feature acceptance you review the whole served feature once, as its user meets it. A task
@@ -109,6 +113,15 @@ controller rejects a walkthrough that leaves one out and turns measurements over
    `checked+hover` and `checked+focus`. Report `text_contrast` from the computed text and
    background colors, and `indicator_contrast` for the focus ring or selection mark against
    the color next to it.
+
+Defects older than this feature: when a defect lives in a file the feature's `diff` does not
+touch (a screen or component that was already like this), still report it, with
+`location.path` set to that file, and list its finding id in `pre_existing`. For a measurement
+(`interaction_states`, `layout_shifts`) set `pre_existing_path` to that file instead. The
+controller checks the claim against the diff and the code graph; a verified one becomes a
+non-blocking follow-up recorded for the operator, so it does not send this feature's tasks
+back to rework. Never claim it for a file the diff changes or for a defect the feature's new
+screens show.
 
 Also check that the words name the people, not the mechanics. In a one-player mode the turn,
 the result and the score say "You" and "Computer" (with the mark in brackets), not only "X"

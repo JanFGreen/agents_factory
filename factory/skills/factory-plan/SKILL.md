@@ -28,6 +28,10 @@ the micro-spec).
   extracted by the controller. Plan against it; read a file only for a body or detail it does not show.
 - Decomposition policy: `max_depth` 3, `max_leaf_tasks_per_feature` 20, `target_task_minutes` 45.
 - `analysis_round_id` and, in rounds 2-3, the open findings of the previous decomposition review.
+- `project_notes` (when present): `named_docs`, the documents the request says apply (follow them), and
+  `decision_register`, the settled decisions, chosen approaches and "Not doing" lists of earlier features.
+  Do not reopen or contradict a settled decision, or build what a feature listed under Not doing, unless
+  this request asks for it; then name the conflict in a finding.
 
 ## Procedure
 

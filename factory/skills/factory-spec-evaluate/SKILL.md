@@ -35,7 +35,7 @@ current acceptance criteria. If it reveals a material gap, the verdict is CHANGE
 2. Re-derive intents from the original request yourself before reading the intent map;
    then compare. Do not trust the author's mapping. An operator's decision (`human`,
    `accepted`) counts as an explicit intent: missing or contradicted => blocking. An
-   `assumed` decision is a default; deviating from it is non-blocking.
+   `assumed` or `delegated` decision is a default; deviating from it is non-blocking.
 3. Score each dimension `PASS` or `CHANGES` using `references/rubric.md`:
    `intent_coverage`, `consistency`, `testability`, `feasibility`, `risk_controls`.
    Every `CHANGES` dimension has at least one finding with location and evidence.

@@ -32,6 +32,10 @@ features this review is not run; the controller records
 - `revision` (when given): the plan is a patch of a plan you rejected (see "Revision rounds").
 - `file_scope_rule`: the scope rule the controller enforces on every build diff. Judge
   `file_scope` by it, not by a stricter rule of your own.
+- `project_notes` (when present): `named_docs`, the documents the request says apply (follow them), and
+  `decision_register`, the settled decisions, chosen approaches and "Not doing" lists of earlier features.
+  Do not reopen or contradict a settled decision, or build what a feature listed under Not doing, unless
+  this request asks for it; then name the conflict in a finding.
 
 ## Procedure
 

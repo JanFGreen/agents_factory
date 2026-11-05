@@ -254,7 +254,7 @@ class Factory(ParallelLanes):
         job = self._job(job_id)
         feature = load_feature(self.store, job["feature_id"], job["scope_revision"])
         decided = [{k: d[k] for k in ("id", "question", "answer", "source")}
-                   for d in self._ctx(job_id).get("decisions", []) if d.get("answer") is not None]
+                   for d in self._ctx(job_id).get("decisions", []) if d.get("answer") is not None and not d.get("split")]
         if decided:
             feature["decisions"] = decided
         return feature
@@ -741,6 +741,76 @@ class Factory(ParallelLanes):
                 "rule": "The controller rebuilds graphify-out/ and the vault's graph/ notes at integration: never edit them. "
                         "Keep hand-written vault notes true to the behaviour they describe, and every [[wikilink]] resolving."}
 
+    _DOC_REF = re.compile(r"(?<![\w/.-])((?:[\w.-]+/)*[\w.-]+\.mdx?)\b")
+
+    def _project_notes(self, job_id: str) -> dict[str, Any] | None:
+        """The decision register of earlier features and the documents the request names, for intake and the analysis.
+
+        Live finding (LearnEnglish F6b): the request said "docs/PRODUCT.md, docs/ARCHITECTURE.md and docs/ENGINEERING.md
+        apply", yet the planner read only DESIGN.md; earlier features' settled decisions were gone with their jobs.
+        """
+        limit = self.cfg.factory.spec.notes_max_chars
+        wt = self._active_worktree(job_id)
+        tracked = git(wt, "ls-files").splitlines()
+        feature = load_feature(self.store, self._job(job_id)["feature_id"], self._job(job_id)["scope_revision"])
+        text = " ".join([feature["original_request"], feature["goal"], *feature["constraints"]])
+        named = [m for m in dict.fromkeys(self._DOC_REF.findall(text)) if m in tracked]
+        for vault in knowledge.detect(tracked).vaults:  # [[Note]] links of the request, resolved in the vaults
+            prefix = "" if vault == "." else vault.rstrip("/") + "/"
+            for link in dict.fromkeys(knowledge.wikilinks(text)):
+                named += [f for f in tracked if f.startswith(prefix) and Path(f).stem == Path(link).name and f.endswith(".md")
+                          and f not in named][:1]
+        register = sorted((f for f in tracked if f.startswith(self.cfg.factory.spec.decisions_dir.rstrip("/") + "/")
+                           and f.endswith(".md")), reverse=True)
+        notes: dict[str, dict[str, str]] = {"named_docs": {}, "decision_register": {}}
+        left = limit
+        for group, files in (("named_docs", named), ("decision_register", register)):
+            for f in files:
+                if left <= 0:
+                    break
+                body = (wt / f).read_text(errors="replace")
+                notes[group][f] = body[:left] + (f"\n[... truncated: read {f}]" if len(body) > left else "")
+                left -= len(body)
+        if not any(notes.values()):
+            return None
+        return {**notes, "rule": "named_docs: documents the request says apply; follow them. decision_register: settled "
+                "decisions of earlier features and what they chose not to do; do not reopen or contradict one, or build "
+                "something it lists under Not doing, unless this request asks for it (then name the conflict in a finding)."}
+
+    def _write_decision_note(self, job_id: str, wt: Path) -> None:
+        """Record this feature's settled decisions, chosen approach and scope boundaries in the decision register."""
+        ctx = self._ctx(job_id)
+        job = self._job(job_id)
+        feature = self._feature(job_id)
+        intake = ctx.get("intake") or {}
+        lines = [f"# Decisions: {job['feature_id']}", "", f"Goal: {intake.get('goal') or feature['goal']}", "",
+                 f"Factory job {job_id}, integrated {time.strftime('%Y-%m-%d')}.", ""]
+        decisions = [d for d in ctx.get("decisions", []) if d.get("answer") is not None and not d.get("split")]
+        if decisions:
+            lines += ["## Decisions", ""] + [
+                f"- **{d['id']}** {d['question']} → {d['answer']} ({d['source']}{', critical' if d.get('critical') else ''})"
+                for d in decisions] + [""]
+        decision = ctx.get("decision") or {}
+        chosen = next((o for o in (decision.get("options") or {}).get("options", [])
+                       if o.get("option_id") == decision.get("selected_option_id")), None)
+        if chosen:
+            lines += ["## Chosen approach", "", f"{chosen.get('title') or chosen['option_id']}: {chosen.get('description', '')}".strip(), ""]
+        later = [f"{n['description']} ({'next' if n['status'] == 'committed_next' else 'not planned'})"
+                 for n in intake.get("future_directions", []) if n.get("status") != "required_now"]
+        not_doing = list(intake.get("not_doing", [])) + later
+        if not_doing:
+            lines += ["## Not doing", ""] + [f"- {item}" for item in not_doing] + [""]
+        known = ctx.get("pre_existing_defects", [])
+        if known:
+            lines += ["## Known defects (older than this feature)", ""] + [f"- `{k['path']}`: {k['problem']}" for k in known] + [""]
+        if not decisions and not chosen and not not_doing and not known:
+            return
+        path = wt / self.cfg.factory.spec.decisions_dir / f"{re.sub(r'[^A-Za-z0-9_.-]', '-', job['feature_id'])}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # answers are free text: a "[[" in one must not become a vault link that resolves to no note
+        path.write_text("\n".join(lines).rstrip().replace("[[", "[ [") + "\n")
+        WorkspaceManager.commit_all(wt, "factory: record the feature's decisions")
+
     def _code_graph(self, job_id: str) -> Path | None:
         if not self._knowledge(job_id).graph:
             return None
@@ -791,42 +861,131 @@ class Factory(ParallelLanes):
         return f"Obsidian vault links that resolve to no note: {broken[:20]}" if broken else None
 
     def _step_intake(self, job_id: str) -> None:
+        """Intake, then the interview: the operator settles the product decisions before any analysis.
+
+        Guided mode asks up to ``max_decisions`` per round; answers that differ from the proposals start another round
+        in which intake asks only what those answers opened (``interview_rounds`` in all). Auto mode, and an interview
+        the operator skipped, assume the proposals, except critical decisions, which are always asked.
+        """
         self._ensure_worktree(job_id)
         if self._ctx(job_id).get("intake") is None:  # answering decisions resumes here without a second intake run
-            mode = self._ctx(job_id).get("spec_mode", "auto")
-            res = self.call_agent(job_id, "factory-intake", {
-                "feature": self._feature(job_id), "repo_map": self._repo_map(job_id),
-                "spec_mode": mode, "max_decisions": self.cfg.factory.spec.max_decisions,
-                "design": self._design_context(job_id),
-            })
-            if res.envelope.verdict == "BLOCKED":
-                raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
-            intake = res.payload.model_dump() if res.payload else {}
-            self._set_ctx(job_id, intake=intake, decisions=self._open_decisions(job_id, intake.pop("decisions", []), mode),
-                          environment_digest=digest({"python": sys.version, "sandbox": self.sandbox.name}))
-        pending = [d for d in self._ctx(job_id).get("decisions", []) if d["answer"] is None]
-        if pending:
-            raise StageBlocked(S.NEEDS_INFO, (
-                f"{len(pending)} product decision(s) to answer before analysis: "
-                + "; ".join(f"{d['id']}: {d['question']} (proposed: {d['proposed']})" for d in pending)
-                + f". Answer: `factory decide {job_id}`."))
+            self._interview_round(job_id, None)
+        while True:
+            pending = [d for d in self._ctx(job_id).get("decisions", []) if d["answer"] is None]
+            if pending:
+                raise StageBlocked(S.NEEDS_INFO, (
+                    f"{len(pending)} product decision(s) to answer before analysis: "
+                    + "; ".join(f"{d['id']}{' (critical)' if d.get('critical') else ''}: {d['question']} "
+                                f"(proposed: {d['proposed']})" for d in pending)
+                    + f". Answer: `factory decide {job_id}`" + (" (--skip: the agent settles the rest)" if any(
+                        not d.get("critical") for d in pending) else "") + "."))
+            split = next((d for d in self._ctx(job_id).get("decisions", []) if d.get("split")), None)
+            if split and split["answer"] == split["options"][0]:
+                return self._split_job(job_id)
+            if not self._interview_continues(job_id):
+                break
+            self._interview_round(job_id, self._ctx(job_id)["interview"]["round"] + 1)
         self.controller.transition(job_id, S.COMPLEXITY_ASSESSMENT)
 
+    def _interview_round(self, job_id: str, round_no: int | None) -> None:
+        """Run intake: the first round (``None``) or a follow-up given the decisions settled so far."""
+        ctx = self._ctx(job_id)
+        mode = ctx.get("spec_mode", "auto")
+        settled = ctx.get("decisions", [])
+        inputs = {"feature": self._feature(job_id), "repo_map": self._repo_map(job_id),
+                  "spec_mode": mode, "max_decisions": self.cfg.factory.spec.max_decisions,
+                  "design": self._design_context(job_id), "project_notes": self._project_notes(job_id)}
+        if round_no is not None:
+            inputs["interview"] = {"round": round_no, "settled": [
+                {k: d.get(k) for k in ("id", "question", "proposed", "answer", "source", "critical")} for d in settled]}
+        res = self.call_agent(job_id, "factory-intake", inputs)
+        if res.envelope.verdict == "BLOCKED":
+            raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
+        intake = res.payload.model_dump() if res.payload else {}
+        questions = intake.pop("decisions", [])
+        split = intake.pop("scope_split", None)
+        if round_no is not None:  # a follow-up asks only new questions, numbered after the settled ones
+            asked = {d["question"].strip().lower() for d in settled}
+            questions = [{**q, "id": f"Q-{len(settled) + i + 1}"} for i, q in
+                         enumerate(q for q in questions if q["question"].strip().lower() not in asked)]
+        elif split:
+            questions = [self._split_question(split, len(questions) + 1), *questions]
+            self._set_ctx(job_id, scope_split=split)
+        self._set_ctx(job_id, intake=intake, decisions=settled + self._open_decisions(job_id, questions, mode),
+                      interview={"round": round_no or 1, "closed": ctx.get("interview", {}).get("closed", False)},
+                      **({} if round_no else {"environment_digest": digest({"python": sys.version, "sandbox": self.sandbox.name})}))
+
+    @staticmethod
+    def _split_question(split: dict, number: int) -> dict:
+        """The split proposal as a decision asked in every mode: one large spec costs rounds a split avoids.
+
+        Live finding (LearnEnglish F6): one request with exercises, check mode and UX fixes failed three spec rounds
+        and was split by hand into F6a/F6b/F6c, which then went through.
+        """
+        titles = [p["title"] for p in split["parts"]]
+        return {"id": f"Q-{number}", "question": f"This request holds {len(titles)} separately testable features. "
+                f"Split it into separate features before analysis?", "why": split["reason"],
+                "options": [f"Split into {len(titles)}: " + "; ".join(titles), "Keep it as one feature"],
+                "proposed": f"Split into {len(titles)}: " + "; ".join(titles), "critical": True, "split": True}
+
+    def _split_job(self, job_id: str) -> None:
+        """Write the parts as feature files and cancel this job; the operator submits them in order."""
+        job = self._job(job_id)
+        feature = load_feature(self.store, job["feature_id"], job["scope_revision"])
+        parts = self._ctx(job_id)["scope_split"]["parts"]
+        out = self.data_dir / "splits" / job_id
+        out.mkdir(parents=True, exist_ok=True)
+        files = []
+        for i, part in enumerate(parts):
+            fid = f"{job['feature_id'][:60]}-{chr(ord('A') + i)}"
+            note = (f"\n\nPart {i + 1} of {len(parts)}, split from {job['feature_id']} before analysis ("
+                    + "; ".join(f"{chr(ord('A') + j)}: {p['title']}" for j, p in enumerate(parts))
+                    + ")." + (" It builds on the earlier parts." if i else ""))
+            path = out / f"{fid}.yaml"
+            path.write_text(yaml.safe_dump({"feature_id": fid, "repo_id": job["repo_id"], "goal": part["title"],
+                                            "original_request": part["request"] + note,
+                                            "constraints": feature["constraints"]}, allow_unicode=True, sort_keys=False))
+            files.append(str(path))
+        self._set_ctx(job_id, split_files=files)
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "scope.split", {"files": files, "next_step": [
+                f"factory submit --file {f} --repo-id {job['repo_id']}" for f in files]})
+        self.cancel(job_id)
+
+    def _interview_continues(self, job_id: str) -> bool:
+        """Another round only when the operator answered differently from a proposal in the last one."""
+        ctx = self._ctx(job_id)
+        interview = ctx.get("interview") or {}
+        if ctx.get("spec_mode") != "guided" or interview.get("closed") or not interview:
+            return False
+        if interview["round"] >= self.cfg.factory.spec.interview_rounds:
+            return False
+        last = [d for d in ctx.get("decisions", []) if d.get("round", 1) == interview["round"] and not d.get("split")]
+        return any(d["source"] == "human" and d["answer"].strip().lower() != d["proposed"].strip().lower() for d in last)
+
     def _open_decisions(self, job_id: str, questions: list[dict], mode: str) -> list[dict]:
-        """Guided: the first ``max_decisions`` wait for the operator. Auto, and any beyond the limit: proposals are assumed."""
+        """Guided: the first ``max_decisions`` wait for the operator. Auto, and any beyond the limit: proposals are
+        assumed, except critical decisions, which always wait."""
         limit = self.cfg.factory.spec.max_decisions
+        round_no = (self._ctx(job_id).get("interview") or {}).get("round", 0) + 1
         decisions = []
         for i, q in enumerate(questions):
-            asked = mode == "guided" and i < limit
-            decisions.append({**q, "answer": None if asked else q["proposed"], "source": None if asked else "assumed"})
+            asked = q.get("critical") or (mode == "guided" and i < limit)
+            decisions.append({**q, "round": round_no, "answer": None if asked else q["proposed"],
+                              "source": None if asked else "assumed"})
         with self.store.tx() as conn:
             self.store.event(conn, job_id, "decisions.opened", {
-                "mode": mode, "asked": [d["id"] for d in decisions if d["answer"] is None],
+                "mode": mode, "round": round_no, "asked": [d["id"] for d in decisions if d["answer"] is None],
+                "critical": [d["id"] for d in decisions if d.get("critical")],
                 "assumed": [d["id"] for d in decisions if d["source"] == "assumed"]})
         return decisions
 
-    def answer_decisions(self, job_id: str, answers: dict[str, str], accept_proposed: bool, actor: str) -> list[dict]:
-        """Record the operator's answers; ``accept_proposed`` settles the rest with the proposed answers."""
+    def answer_decisions(self, job_id: str, answers: dict[str, str], accept_proposed: bool, actor: str,
+                         skip: bool = False) -> list[dict]:
+        """Record the operator's answers; ``accept_proposed`` settles the rest with the proposed answers.
+
+        ``skip`` ends the interview: the agent settles the rest (``delegated``), critical decisions stay open.
+        """
         if S(self._job(job_id)["state"]) is not S.NEEDS_INFO:
             raise TransitionRefused("the job is not waiting for decisions")
         decisions = self._ctx(job_id).get("decisions", [])
@@ -843,10 +1002,14 @@ class Factory(ParallelLanes):
                 d.update(answer=answers[d["id"]].strip(), source="human", actor=actor, at=now())
             elif d["id"] in pending and accept_proposed:
                 d.update(answer=d["proposed"], source="accepted", actor=actor, at=now())
-        self._set_ctx(job_id, decisions=decisions)
+            elif d["id"] in pending and skip and not d.get("critical"):
+                d.update(answer=d["proposed"], source="delegated", actor=actor, at=now())
+        interview = self._ctx(job_id).get("interview") or {"round": 1}
+        self._set_ctx(job_id, decisions=decisions, **({"interview": {**interview, "closed": True}} if skip else {}))
         with self.store.tx() as conn:
             self.store.event(conn, job_id, "decisions.answered", {
-                "actor": actor, "answered": sorted(answers), "accepted": sorted(pending - set(answers)) if accept_proposed else []})
+                "actor": actor, "answered": sorted(answers), "skipped": skip,
+                "accepted": sorted(pending - set(answers)) if accept_proposed else []})
         return [d for d in decisions if d["answer"] is None]
 
     def _step_complexity_assessment(self, job_id: str) -> None:
@@ -922,7 +1085,7 @@ class Factory(ParallelLanes):
         res = self.call_agent(job_id, "factory-options-review", {
             "mode": "draft-and-critique", "feature": self._feature(job_id), "intake": ctx.get("intake"), "repo_map": self._repo_map(job_id),
             "api_map": self._api_map(job_id), "previous_findings": ctx.get("analysis_findings", []), "spike_question": ctx.get("spike_question"),
-            "minimum_options": self._paths_cfg(job_id).minimum_options,
+            "minimum_options": self._paths_cfg(job_id).minimum_options, "project_notes": self._project_notes(job_id),
         })
         if res.payload is None:
             raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
@@ -989,6 +1152,7 @@ class Factory(ParallelLanes):
             "mode": "micro" if micro else "openspec", "feature": self._feature(job_id), "intake": ctx.get("intake"),
             "decision": ctx.get("decision"), "previous_spec": ctx.get("spec"), "previous_findings": ctx.get("analysis_findings", []),
             "change_id": ctx["change_id"], "design": self._design_context(job_id, with_text=True),
+            "project_notes": self._project_notes(job_id),
         })
         if res.payload is None:
             raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
@@ -1179,7 +1343,7 @@ class Factory(ParallelLanes):
             "spec_evaluation": {"verdict": "PASS", "spec_digest": ctx.get("spec_digest"), "advisories": ctx.get("spec_advisories", [])},
             "previous_plan": ctx.get("plan"), "previous_findings": ctx.get("analysis_findings", []),
             "limits": self.cfg.workflow.decomposition.model_dump(), "file_scope_rule": FILE_SCOPE_RULE,
-            "knowledge": self._knowledge_context(job_id),
+            "knowledge": self._knowledge_context(job_id), "project_notes": self._project_notes(job_id),
             # who uses each file, so a task that changes a signature or type lists its callers (LearnEnglish F4, F5)
             "dependency_map": knowledge.dependency_map(graph) if (graph := self._code_graph(job_id)) else None,
             "repo_map": self._repo_map(job_id), "api_map": self._api_map(job_id), "design": self._design_context(job_id, with_text=True),
@@ -1208,6 +1372,7 @@ class Factory(ParallelLanes):
             "feature": self._feature(job_id), "spec": ctx["spec"], "plan": ctx["plan"], "controller_dag_problems": dag.problems,
             "controller_difficulty": self._task_difficulty(job_id, plan.tasks), "file_scope_rule": FILE_SCOPE_RULE,
             "knowledge": self._knowledge_context(job_id), "api_map": self._api_map(job_id),
+            "project_notes": self._project_notes(job_id),
             # a patched plan: check the previous findings and the changed tasks against the rest, not the whole plan again
             **({"revision": revision} if (revision := ctx.get("plan_revision")) and revision.get("plan_digest") == ctx.get("plan_digest") else {}),
             # files that import, call or reference each scoped file: a non-test one a task's change breaks belongs in a scope
@@ -2154,6 +2319,7 @@ class Factory(ParallelLanes):
             findings += measured
             if measured:
                 verdict = "CHANGES"
+            findings = self._set_aside_pre_existing(job_id, wt, res.payload, findings)
         if problem is not None:
             verdict = "UNKNOWN"
         if verdict == "CHANGES" and not any(f["blocking"] and f.get("status", "open") == "open" for f in findings):
@@ -2181,6 +2347,39 @@ class Factory(ParallelLanes):
                                                                         "findings": findings}})
         self.controller.transition(job_id, S.BUILD_TASK, "feature walkthrough found UX defects")
         return False
+
+    def _set_aside_pre_existing(self, job_id: str, wt: Path, payload: Any, findings: list[dict]) -> list[dict]:
+        """Defects in code this feature did not touch become non-blocking follow-ups instead of rework.
+
+        Live finding (LearnEnglish F6b): the walkthrough reported the Check screen's option contrast and the settings
+        switch colours, both older than the feature; fixing them used up a task's attempts (TASK-15, three builds).
+        The reviewer's claim is checked here: the file must exist at the job base, be unchanged by the job and use no
+        file the job changed (one level, from the code graph when the repository keeps one). A refused claim stays.
+        """
+        claimed = set(payload.pre_existing) if isinstance(payload, UiReviewPayload) else set()
+        claimed |= {f["id"] for f in findings if f["id"].startswith("CTRL-") and f.get("location")}
+        if not claimed:
+            return findings
+        base = self._job(job_id)["base_sha"]
+        changed = set(git(wt, "diff", "--name-only", f"{base}..HEAD").splitlines())
+        at_base = set(git(wt, "ls-tree", "-r", "--name-only", base).splitlines())
+        users = {u for deps in self._dependents(job_id, sorted(changed)).values() for u in deps}
+        kept, aside, refused = [], [], []
+        for f in findings:
+            path = (f.get("location") or {}).get("path")
+            if f["id"] in claimed and path and path in at_base and path not in changed and path not in users:
+                f = {**f, "blocking": False, "problem": f"[pre-existing] {f['problem']}"}
+                aside.append(f)
+            elif f["id"] in claimed:
+                refused.append(f["id"])
+            kept.append(f)
+        known = self._ctx(job_id).get("pre_existing_defects", [])
+        known += [{"path": f["location"]["path"], "problem": f["problem"]} for f in aside
+                  if not any(k["problem"] == f["problem"] for k in known)]
+        self._set_ctx(job_id, pre_existing_defects=known)
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "ui_feature.pre_existing", {"set_aside": [f["id"] for f in aside], "refused": refused})
+        return kept
 
     def _walkthrough_checks(self, browser: dict) -> list[str]:
         """What _hold_ui_review and _hold_walkthrough will require, stated up front from the same rules, so the reviewer
@@ -2221,8 +2420,9 @@ class Factory(ParallelLanes):
         design = self.cfg.factory.design
         findings = []
 
-        def add(fid: str, problem: str, evidence: list[str]) -> None:
-            findings.append({"id": fid, "severity": "medium", "blocking": True, "requirement_ids": [], "location": None,
+        def add(fid: str, problem: str, evidence: list[str], path: str | None = None) -> None:
+            findings.append({"id": fid, "severity": "medium", "blocking": True, "requirement_ids": [],
+                             "location": {"path": path, "line": None} if path else None,
                              "problem": problem, "evidence_ids": evidence, "expected_fix": None, "status": "open"})
 
         fs = payload.first_screen
@@ -2232,14 +2432,15 @@ class Factory(ParallelLanes):
         for i, shift in enumerate(payload.layout_shifts):
             if shift.shift_px > design.max_layout_shift_px:
                 add(f"CTRL-shift-{i + 1}", f"{shift.element} moves {shift.shift_px:.0f}px when {shift.transition} "
-                                           f"(limit {design.max_layout_shift_px:.0f}px)", shift.evidence_ids)
+                                           f"(limit {design.max_layout_shift_px:.0f}px)", shift.evidence_ids, shift.pre_existing_path)
         for i, st in enumerate(payload.interaction_states):
             if st.text_contrast is not None and st.text_contrast < design.min_text_contrast:
                 add(f"CTRL-contrast-{i + 1}", f"{st.control} in state {st.state}: text contrast {st.text_contrast:.2f}:1 "
-                                              f"(minimum {design.min_text_contrast}:1)", st.evidence_ids)
+                                              f"(minimum {design.min_text_contrast}:1)", st.evidence_ids, st.pre_existing_path)
             if st.indicator_contrast is not None and st.indicator_contrast < design.min_indicator_contrast:
                 add(f"CTRL-indicator-{i + 1}", f"{st.control} in state {st.state}: indicator contrast "
-                                               f"{st.indicator_contrast:.2f}:1 (minimum {design.min_indicator_contrast}:1)", st.evidence_ids)
+                                               f"{st.indicator_contrast:.2f}:1 (minimum {design.min_indicator_contrast}:1)", st.evidence_ids,
+                    st.pre_existing_path)
         return None, findings
 
     def _owner_task(self, job_id: str, findings: list[dict], proposed: str | None, ui: bool = False) -> str:
@@ -2327,6 +2528,14 @@ class Factory(ParallelLanes):
             }
             if browser.get("backend_url"):
                 environment["backend_url"] = browser["backend_url"]
+            seed = browser.get("seed") or {}
+            if seed.get("state_file"):
+                environment["sample_data"] = (
+                    f"`{cli} state-load {seed['state_file']}` then `{cli} reload` shows the app with sample data: {seed['shows']}. "
+                    "Review screens that need data with it (they are part of the review, not out of reach); walk first-run "
+                    f"flows in a fresh session (`{cli} delete-data`).")
+            elif seed.get("error"):
+                environment["sample_data"] = f"the repository's sample data could not be loaded ({seed['error']}); review without it."
         return {
             "acceptance_criteria": (ctx.get("spec") or {}).get("acceptance_criteria", []),
             "required_checks": [c.name for c in self._checks(job_id).for_stage(stage) if c.required],
@@ -2365,8 +2574,23 @@ class Factory(ParallelLanes):
             "PLAYWRIGHT_MCP_ALLOWED_ORIGINS": ";".join([url.rstrip("/"), *([api] if api else [])]),
             "PLAYWRIGHT_MCP_IDLE_TIMEOUT": str(cfg.idle_timeout_ms),
         }
-        return {"url": url, "binary": str(binary), "evidence_dir": str(evidence), "viewports": cfg.viewports,
-                "env": env, "cwd": str(wt), "job_id": job_id, **({"backend_url": api} if api else {})}
+        session = {"url": url, "binary": str(binary), "evidence_dir": str(evidence), "viewports": cfg.viewports,
+                   "env": env, "cwd": str(wt), "job_id": job_id, **({"backend_url": api} if api else {})}
+        if preview.seed is not None:
+            session["seed"] = self._seed_preview(job_id, wt, preview.seed, url, api, evidence)
+        return session
+
+    def _seed_preview(self, job_id: str, wt: Path, seed, url: str, api: str | None, evidence: Path) -> dict:
+        """The repository's sample data as a storage state the reviewer loads; a failing seed is stated, not fatal."""
+        try:
+            state = self.runner.run_seed(seed, wt, job_id=job_id, origin=url.rstrip("/"), backend=api)
+        except ServiceError as exc:
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "preview.seed_failed", {"error": str(exc)[:1500]})
+            return {"error": str(exc)[:500]}
+        path = evidence / "seed-state.json"
+        path.write_text(json.dumps(state))
+        return {"state_file": str(path), "shows": seed.shows}
 
     def _preview_with_backend(self, job_id: str, wt: Path, root: Path, preview) -> tuple[str, str]:
         """(preview URL, backend URL) for this worktree, started once per run; a backend that fails stops the job.
@@ -2618,6 +2842,7 @@ class Factory(ParallelLanes):
             base_sha, candidate = WorkspaceManager.integrate(wt, repo, job["base_branch"])
         except GitError as exc:
             return self._integration_rebuild(job_id, f"merge conflict with the current base: {exc}")
+        self._write_decision_note(job_id, wt)
         if broken := self._refresh_knowledge(job_id, wt, job["base_sha"]):
             return self._integration_rebuild(job_id, broken)
         candidate = WorkspaceManager.head(wt)

@@ -34,6 +34,10 @@ When `<inputs>` has `mode: "draft-and-critique"` and no `options` field (control
 different, realistic implementation options from the request and the repository
 facts, then critique and rate each one exactly as below. When `spike_question` is
 set, answer it with the facts you can verify read-only and re-rate the options.
+- `project_notes` (when present): `named_docs`, the documents the request says apply (follow them), and
+  `decision_register`, the settled decisions, chosen approaches and "Not doing" lists of earlier features.
+  Do not reopen or contradict a settled decision, or build what a feature listed under Not doing, unless
+  this request asks for it; then name the conflict in a finding.
 
 ## Procedure
 

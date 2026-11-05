@@ -218,7 +218,7 @@ function decisionsForm(pending) {
     const options = [...new Set([d.proposed, ...(d.options || [])])];
     const custom = h("input", { type: "text", name: `${name}-custom`, "aria-label": `${d.id}: your own answer`, placeholder: "or your own answer" });
     return h("fieldset", { class: "q" },
-      h("legend", {}, `${d.id}. ${d.question}`),
+      h("legend", {}, `${d.id}. ${d.question}`, d.critical ? h("span", { class: "badge" }, "critical") : null),
       d.why ? h("p", { class: "small muted" }, d.why) : null,
       options.map((opt, i) => h("label", { class: "opt" },
         h("input", { type: "radio", name, value: opt, checked: i === 0 }),
@@ -228,7 +228,11 @@ function decisionsForm(pending) {
   const form = h("form", { "aria-label": "Product decisions" }, questions,
     h("div", { class: "actions" },
       h("button", { type: "submit", class: "primary" }, "Save answers"),
-      h("button", { type: "button", onclick: (e) => withBusy(e.target, () => act("decide", { accept_proposed: true })) }, "Accept all proposals")));
+      h("button", { type: "button", onclick: (e) => withBusy(e.target, () => act("decide", { accept_proposed: true })) }, "Accept all proposals"),
+      pending.some((d) => !d.critical)
+        ? h("button", { type: "button", title: "The agent settles the rest; critical decisions are still asked",
+            onclick: (e) => withBusy(e.target, () => act("decide", { skip: true })) }, "Skip the interview")
+        : null));
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const answers = {};

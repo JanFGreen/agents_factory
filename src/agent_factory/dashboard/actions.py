@@ -72,8 +72,10 @@ def build_argv(action: str, job_id: str, body: dict[str, Any]) -> tuple[list[str
             argv += ["--answer", f"{qid}={_text(text, qid)}"]
         if body.get("accept_proposed"):
             argv.append("--accept-proposed")
+        if body.get("skip"):
+            argv.append("--skip")
         if len(argv) == 2:
-            raise ActionError("answer at least one decision or accept the proposals")
+            raise ActionError("answer at least one decision, accept the proposals or skip the interview")
         return argv, False
     if action == "approve-plan":
         argv = ["plan", "approve", job_id]

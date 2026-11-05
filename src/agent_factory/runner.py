@@ -9,6 +9,7 @@ missing tool or a timeout can never produce PASS.
 from __future__ import annotations
 
 import os
+import json
 import re
 import secrets
 import shutil
@@ -79,6 +80,21 @@ class PreviewBackend(BaseModel):
     ready_timeout_seconds: int = Field(default=60, ge=1, le=600)
 
 
+class PreviewSeed(BaseModel):
+    """Sample data for UI review: a command that writes a Playwright storage state (localStorage, cookies).
+
+    Live finding (LearnEnglish F6b): a fresh preview profile has no words due, so the exercise screens never rendered
+    in task-level UI review and their defects first showed up in the feature walkthrough. The command runs in the
+    sandbox (writes only its scratch dir, localhost network, so it may also create data through the backend).
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    argv: list[str]  # may use {python}, {worktree}, {out} (the state file to write), {origin} (the preview), {backend}
+    shows: str = Field(min_length=1, max_length=300)  # what the seeded app shows, e.g. "a learner with 12 reviews due"
+    timeout_seconds: int = Field(default=120, ge=1, le=600)
+
+
 class PreviewSpec(BaseModel):
     """Where a gate-built static web candidate lives, for UI review in a browser."""
 
@@ -87,6 +103,7 @@ class PreviewSpec(BaseModel):
     static_dir: str  # relative to the worktree, written by a check of the same stage (e.g. web-build -> dist)
     spa_fallback: bool = True  # unknown paths serve index.html (client-side routing)
     backend: PreviewBackend | None = None  # started for the feature walkthrough and product-verify only
+    seed: PreviewSeed | None = None
 
     @field_validator("static_dir")
     @classmethod
@@ -381,6 +398,45 @@ class TrustedRunner:
             time.sleep(0.5)
         service.stop()
         raise ServiceError(f"backend did not answer {spec.ready_path} within {spec.ready_timeout_seconds}s: {service.log_tail()}")
+
+    def run_seed(self, spec: PreviewSeed, worktree: Path, *, job_id: str, origin: str, backend: str | None) -> dict:
+        """Run the seed command in the sandbox; returns the storage state it wrote, or raises ServiceError."""
+        scratch = self.work_root / job_id / f"seed-{time.time_ns()}"
+        home, tmpdir = scratch / "home", scratch / "tmp"
+        for path in (home, tmpdir):
+            path.mkdir(parents=True, exist_ok=True)
+        out = scratch / "state.json"
+        values = {"{python}": sys.executable, "{worktree}": str(worktree), "{out}": str(out), "{origin}": origin,
+                  "{backend}": backend or ""}
+        argv = []
+        for arg in spec.argv:
+            for key, value in values.items():
+                arg = arg.replace(key, value)
+            argv.append(arg)
+        policy = SandboxPolicy(writable=(scratch,), denied_read=tuple(self._denied(worktree)), network="localhost")
+        env = scrubbed_env(policy, home, tmpdir)
+        if shutil.which(argv[0], path=env.get("PATH")) is None:
+            raise ServiceError(f"required tool not found: {argv[0]}")
+        log = scratch / "seed.log"
+        with open(log, "wb") as fh:
+            proc = subprocess.Popen(self.sandbox.wrap(argv, policy), cwd=worktree, env=env, stdout=fh, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, start_new_session=True)
+            try:
+                proc.wait(timeout=spec.timeout_seconds)
+            except subprocess.TimeoutExpired:
+                _kill_group(proc)
+                raise ServiceError(f"seed timed out after {spec.timeout_seconds}s") from None
+        tail = log.read_bytes()[-1500:].decode("utf-8", "replace")
+        if proc.returncode != 0:
+            raise ServiceError(f"seed exited with {proc.returncode}: {tail}")
+        try:
+            state = json.loads(out.read_text())
+        except (OSError, ValueError) as exc:
+            raise ServiceError(f"seed wrote no storage state to {{out}}: {exc}") from exc
+        if not (isinstance(state, dict) and isinstance(state.get("cookies", []), list) and isinstance(state.get("origins", []), list)
+                and set(state) <= {"cookies", "origins"}):
+            raise ServiceError("seed state must be a Playwright storage state: {\"cookies\": [...], \"origins\": [...]}")
+        return state
 
     def _rerun_if_flaky(self, ev: CheckEvidence, check: CheckSpec, worktree: Path, changed: set[str], **kw) -> CheckEvidence:
         """A test check that failed only in test files the job did not change runs once more; a pass there is a flake.

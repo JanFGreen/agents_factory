@@ -71,21 +71,54 @@ At `submit` you choose who settles the product decisions the request leaves open
 behavior, who can do what, what happens on error, visual direction). Without `--mode` the CLI asks in
 the terminal; without a terminal it uses `spec.default_mode` (default `guided`).
 
-- `guided`: intake returns up to `spec.max_decisions` (7) decisions, each with options and a proposed
-  answer. The job stops in `NEEDS_INFO` before classification and analysis (cost: intake only).
-- `auto`: proposed answers are accepted as assumptions (`source: assumed`) and the job does not stop.
+- `guided` (an interview): intake returns up to `spec.max_decisions` (7) decisions, each with options
+  and a proposed answer. The job stops in `NEEDS_INFO` before classification and analysis (cost:
+  intake only). When an answer differs from its proposal, intake runs again with the settled answers
+  and asks only what they opened, up to `spec.interview_rounds` (3) rounds in all; accepted proposals
+  end the interview (the agent predicted the answers). `--skip` ends it at once: the agent settles
+  the rest (`source: delegated`).
+- `auto`: proposed answers are accepted as assumptions (`source: assumed`) and the job does not stop,
+  unless a decision is `critical`.
+
+A `critical` decision is asked in every mode, also after `--skip`: security or permissions, data loss
+or migration, payments or plans, privacy, irreversible changes, requirements that contradict each
+other. Intake looks up facts in the repository, its docs and vault itself and asks only what the
+operator alone knows.
 
 ```sh
 uv run factory status --job <id>                    # decisions: id, question, proposal, answer
 uv run factory decide <id>                          # in the terminal: question by question (Enter = proposal, number = option)
-uv run factory decide <id> --answer Q-1="text" --answer Q-3="..." [--accept-proposed]
+uv run factory decide <id> --answer Q-1="text" --answer Q-3="..." [--accept-proposed | --skip]
 ```
 
 After the last answer `decide` resumes the job (`factory run --job <id>`). The answers go into
 `feature.decisions` of all subsequent stages: a human answer (`human`, `accepted`) is binding like the
 request text — the spec maps it to a requirement (`source: decision:Q-n`), and the spec evaluator
-blocks when it is missing or contradicted. An assumption from `auto` mode is only a default.
+blocks when it is missing or contradicted. An assumption (`assumed`, `delegated`) is only a default.
 The `COMPLEXITY_ASSESSMENT` guard refuses the transition while any decision is awaiting an answer.
+
+### Split proposal
+
+When a request bundles several features that are each testable on their own, intake proposes
+`scope_split` (2-5 parts in build order). The controller asks it as a `critical` decision in every
+mode, before classification and analysis. Accepting the split cancels the job and writes each part
+as a feature file in `<data_dir>/splits/<job>/<feature-id>-A.yaml`, `-B.yaml`...; `factory status`
+lists the `factory submit` commands. "Keep it as one feature" goes on as before.
+
+### Decision register and documents the request names (`spec.decisions_dir`)
+
+At integration the controller writes `docs/decisions/<feature-id>.md` into the job branch: the
+settled decisions with their source, the chosen approach, and "Not doing" (intake's `not_doing` plus
+future directions that are not built now). Intake, options, spec author, planner and decomposition
+review get `project_notes`:
+
+- `named_docs`: tracked documents the request names by path (`docs/PRODUCT.md`) or as a vault
+  `[[wikilink]]`, which the request says apply;
+- `decision_register`: the notes of earlier features. A settled decision is not reopened, and
+  nothing listed under Not doing is built, unless the request asks for it; a conflict is a finding.
+
+Both together are capped at `spec.notes_max_chars` (40000); a truncated document tells the agent to
+read the file.
 
 `factory run` ends at a terminal state, a halted state, or at `READY_TO_MERGE` when
 `merge.enabled: false` (result accepted locally on the `factory/<job-id>` branch, without merge).
@@ -293,6 +326,15 @@ task is rebuilt. The guard into INTEGRATION requires a current PASS of the walkt
 tokens ("X", "O"). `DESIGN.md` gains a "First screen and stability" section, and the focus ring
 must reach 3:1 on the checked background too.
 
+### Defects older than the feature
+
+The walkthrough may mark a finding as pre-existing (`pre_existing` with the finding's
+`location.path`, or `pre_existing_path` on a measurement). The controller accepts the claim only
+when that file exists at the job base, the job did not change it, and (with a code graph) it uses
+no file the job changed. An accepted claim becomes a non-blocking `[pre-existing]` follow-up: no
+task goes back to rework, and the defect is listed under "Known defects" in the feature's decision
+note. A refused claim stays blocking (`ui_feature.pre_existing` event: `set_aside`, `refused`).
+
 ## Failure modes, probes and the second look at findings
 
 Live finding (tic-tac-toe): an external review found four defects the factory reviewers passed.
@@ -377,7 +419,7 @@ fixed argv list, no shell), so the controller's guards work unchanged:
 
 | Button | Command | Mode |
 |---|---|---|
-| Save answers / Accept all proposals | `factory decide <id> --answer Q-n=… / --accept-proposed` | immediate |
+| Save answers / Accept all proposals / Skip the interview | `factory decide <id> --answer Q-n=… / --accept-proposed / --skip` | immediate |
 | Approve plan and build | `factory plan approve <id> --budget X`, then `resume` | immediate + background |
 | Raise budget and resume | `factory budget raise <id> --to X --reason …`, then `resume` | immediate + background |
 | Run / Resume | `factory run --job <id>` / `factory resume <id>` | background (`caffeinate -i` on macOS) |
@@ -688,6 +730,27 @@ walkthrough and product-verify also get the app's own server, so screens behind 
 - A server that exits or does not answer stops the job in `BLOCKED_ENV` with its log tail. Linux
   (bwrap): the fresh network namespace hides the server from the browser, so the factory refuses with
   `BLOCKED_ENV` rather than give it open network (fail-closed).
+
+### Sample data for UI review (`preview.seed`)
+
+A fresh preview has no user data, so screens that need it (due reviews, history, a full list) do not
+render. The checks manifest can name a command that writes a Playwright storage state:
+
+```yaml
+preview:
+  static_dir: dist
+  seed:
+    argv: ["node", "--import", "tsx", "scripts/preview-seed.ts", "{out}", "{origin}"]
+    shows: "a learner with 12 reviews due and 40 known words"
+```
+
+Placeholders: `{python}`, `{worktree}`, `{out}` (the JSON file to write: `{"cookies": [], "origins":
+[{"origin": "<{origin}>", "localStorage": [...]}]}`), `{origin}` (the preview), `{backend}` (the app
+server at feature acceptance, else empty). It runs in the sandbox (scratch dir writable, localhost
+network) before each browser review. Reviewers get `environment.sample_data`: `state-load` the
+file and reload for screens with data, `delete-data` for first-run flows. A failing seed is
+recorded (`preview.seed_failed`) and the review goes on without it. The script belongs to the
+target repository (an app change), not to the factory.
 
 ## UX assessment from screenshots and visual direction (`design`)
 

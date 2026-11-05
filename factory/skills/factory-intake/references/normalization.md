@@ -22,7 +22,18 @@ normalized record, not to what the user had to type.
 ## Decisions
 
 A decision is a product choice the request leaves open whose answer changes the build.
-The operator answers them in `guided` mode; in `auto` mode the `proposed` answer is assumed.
+The operator answers them in `guided` mode (an interview); in `auto` mode, or after the operator
+skips the interview, the `proposed` answer is assumed, except for `critical` decisions, which are
+always asked.
+
+Facts are not decisions. Find them yourself in the repository, its documentation and the vault
+before asking: what the app already does, which data exists, which words the product uses.
+Ask only what the operator alone knows.
+
+`critical: true` only when a wrong guess is expensive or harmful: security and permissions, data
+loss or a migration of existing data, payments and plans, privacy and personal data, an
+irreversible change, or requirements that contradict each other. Everything else is `false`,
+including important but cheaply changeable choices (wording, limits with a setting, layout).
 
 | Good decision | Not a decision |
 |---|---|
@@ -38,6 +49,20 @@ The operator answers them in `guided` mode; in `auto` mode the `proposed` answer
 - `proposed` is a full answer, not "it depends"; prefer the existing product's behaviour,
   then the safest and simplest choice.
 - Fewer is better: 0 decisions is correct for a fully specified request.
+- Phrase the question so that "yes" accepts the proposal; the operator answers a whole round
+  at once ("1 yes, 2 the second option").
+
+## Interview follow-up rounds
+
+With `interview` in the inputs, the operator has answered earlier rounds (`interview.settled`,
+each with `answer` and `source`: `human` typed or picked, `accepted`/`delegated`/`assumed` took
+the proposal). Then:
+
+- Rewrite `goal`, `acceptance_criteria` and `constraints` so they state the settled answers.
+- `decisions` lists only questions the answers opened (a human answer that differs from the
+  proposal often does: a new limit needs a default, a new role needs its rights). Never repeat
+  or reopen a settled question. Return `[]` when you can predict the remaining answers: the
+  interview ends there.
 
 ## Future direction statuses
 

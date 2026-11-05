@@ -409,6 +409,13 @@ class SpecPolicy(Strict):
     # guided: the job stops after intake until the operator answers them; auto: the proposed answers are assumed.
     default_mode: Literal["guided", "auto"] = "guided"
     max_decisions: int = Field(default=7, ge=1, le=15)
+    # Guided mode is an interview: answers that differ from the proposals let intake ask what they opened, up to this
+    # many rounds in all. Accepted proposals end it (the agent predicted the operator), and so does skipping it.
+    interview_rounds: int = Field(default=3, ge=1, le=5)
+    # Decision register in the target repository: each integrated feature leaves a note with its settled decisions, the
+    # chosen approach and what it does not do; intake and the analysis read the notes, with the docs a request names.
+    decisions_dir: str = "docs/decisions"
+    notes_max_chars: int = Field(default=40000, ge=0, le=200000)
 
 
 class DesignPolicy(Strict):

@@ -94,6 +94,21 @@ class DecisionQuestion(Model):
     why: str = Field(min_length=1, max_length=500)  # what is built differently depending on the answer
     options: list[str] = Field(default=[], max_length=5)
     proposed: str = Field(min_length=1, max_length=500)  # the default when the operator accepts or in auto mode
+    # Security or permissions, data loss or migration, payments or plans, privacy, something irreversible, or
+    # requirements that contradict each other: asked even in auto mode or after the operator skips the interview.
+    critical: bool = False
+
+
+class SplitPart(Model):
+    title: str = Field(min_length=1, max_length=200)
+    request: str = Field(min_length=1, max_length=8000)  # the part's own feature request, complete on its own
+
+
+class ScopeSplit(Model):
+    """Several separately testable features in one request: proposed before the expensive analysis starts."""
+
+    reason: str = Field(min_length=1, max_length=1000)
+    parts: list[SplitPart] = Field(min_length=2, max_length=5)  # in build order: a later part may build on earlier ones
 
 
 class IntakePayload(Model):
@@ -103,6 +118,8 @@ class IntakePayload(Model):
     open_questions: list[str] = []
     decisions: list[DecisionQuestion] = []
     future_directions: list[FutureNeed] = []
+    not_doing: list[str] = []  # scope boundaries the request or the answers set; kept in the decision register
+    scope_split: ScopeSplit | None = None
 
     @model_validator(mode="after")
     def _unique_decisions(self) -> "IntakePayload":
@@ -271,6 +288,7 @@ class LayoutShift(Model):
     element: str = Field(min_length=1, max_length=200)  # e.g. "the board"
     shift_px: float = Field(ge=0)
     evidence_ids: list[str] = []
+    pre_existing_path: str | None = Field(default=None, max_length=500)  # the unchanged file at fault, when not this feature
 
 
 class FirstScreen(Model):
@@ -291,6 +309,7 @@ class InteractionState(Model):
     text_contrast: float | None = Field(default=None, ge=1, le=21)
     indicator_contrast: float | None = Field(default=None, ge=1, le=21)  # focus ring or selection mark vs. its surroundings
     evidence_ids: list[str] = []
+    pre_existing_path: str | None = Field(default=None, max_length=500)  # the unchanged file at fault, when not this feature
 
 
 class UiReviewPayload(Model):
@@ -310,6 +329,8 @@ class UiReviewPayload(Model):
     first_screen: FirstScreen | None = None
     layout_shifts: list[LayoutShift] = []
     interaction_states: list[InteractionState] = []
+    # Ids of findings about code this feature did not touch (each with location.path); the controller verifies it.
+    pre_existing: list[str] = []
 
     @model_validator(mode="after")
     def _unique(self) -> "UiReviewPayload":

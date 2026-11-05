@@ -95,6 +95,11 @@ def dependency_map(graph_path: Path, max_chars: int = 40000) -> dict[str, list[s
     return dict(sorted(result.items()))
 
 
+def wikilinks(text: str) -> list[str]:
+    """The targets of the [[wikilinks]] in a text, outside code fences."""
+    return [t.strip() for t in _WIKILINK.findall(_FENCE.sub("", text))]
+
+
 def broken_wikilinks(root: Path, vault: str) -> list[str]:
     """Wikilinks in the vault's notes that name no file of the vault (Obsidian resolves by name or path)."""
     base = root / vault

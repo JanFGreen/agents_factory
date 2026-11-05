@@ -244,8 +244,9 @@ def _spec_mode(args, cfg) -> str:
     default = cfg.factory.spec.default_mode
     if args.mode or args.json or not sys.stdin.isatty():
         return args.mode or default
-    print("Specification mode:\n  guided - you answer a few product questions after intake, then it runs on its own\n"
-          "  auto   - the factory assumes the proposed answers and does not stop")
+    print("Specification mode:\n  guided - an interview: you answer product questions (in rounds while your answers open new\n"
+          "           ones; `skip` hands the rest to the agent), then it runs on its own\n"
+          "  auto   - the agent settles the decisions itself and asks only critical ones (security, data, payments)")
     while True:
         answer = input(f"Mode [guided/auto] ({default}): ").strip().lower() or default
         if answer in ("guided", "auto", "g", "a"):
@@ -274,7 +275,10 @@ def _status_row(store: Store, job_id: str) -> dict:
         "plan_approved": bool(ctx.get("plan_approval")),
         "spec_mode": ctx.get("spec_mode"),
         "decisions": [{k: d.get(k) for k in ("id", "question", "proposed", "answer", "source")} for d in ctx.get("decisions", [])],
-        "next_step": f"answer the product decisions: `factory decide {job_id}`" if _pending_decisions(ctx) else _next_step(job["state"]),
+        "next_step": f"answer the product decisions: `factory decide {job_id}`" if _pending_decisions(ctx)
+        else "split into separate features: submit them in order: " + "; ".join(
+            f"`factory submit --file {f} --repo-id {job['repo_id']}`" for f in ctx["split_files"]) if ctx.get("split_files")
+        else _next_step(job["state"]),
         "criteria_digest": _criteria(store, job_id) if job["state"] == "AWAITING_HUMAN_MERGE" else None,
     }
 
@@ -528,23 +532,33 @@ def cmd_plan(args) -> int:
     return EXIT_OK
 
 
-def _ask_decisions(pending: list[dict]) -> dict[str, str]:
-    """One question at a time; Enter accepts the proposal, a number picks an option, anything else is the answer."""
-    answers = {}
+def _ask_decisions(pending: list[dict]) -> tuple[dict[str, str], bool]:
+    """(answers, skip). One question at a time; Enter accepts the proposal, a number picks an option, `skip` lets the
+    agent settle the rest (critical decisions are still asked), anything else is the answer."""
+    answers: dict[str, str] = {}
+    skip = False
     for d in pending:
-        print(f"\n{d['id']}: {d['question']}\n  why it matters: {d['why']}")
+        if skip and not d.get("critical"):
+            continue
+        print(f"\n{d['id']}{' [critical]' if d.get('critical') else ''}: {d['question']}\n  why it matters: {d['why']}")
         for i, option in enumerate(d.get("options") or [], 1):
             print(f"  {i}. {option}")
         print(f"  proposed: {d['proposed']}")
-        raw = input("Answer (Enter = proposed, number = option): ").strip()
+        hint = "" if skip else ", skip = the agent decides the rest"
+        raw = input(f"Answer (Enter = proposed, number = option{hint}): ").strip()
         options = d.get("options") or []
+        if raw.lower() == "skip" and not skip:
+            skip = True
+            if not d.get("critical"):
+                continue
+            raw = input("A critical decision is still yours. Answer (Enter = proposed, number = option): ").strip()
         if not raw:
             answers[d["id"]] = d["proposed"]
         elif raw.isdigit() and 1 <= int(raw) <= len(options):
             answers[d["id"]] = options[int(raw) - 1]
         else:
             answers[d["id"]] = raw
-    return answers
+    return answers, skip
 
 
 def cmd_decide(args) -> int:
@@ -558,14 +572,16 @@ def cmd_decide(args) -> int:
             return EXIT_USAGE
         answers[qid.strip()] = text
     pending = _pending_decisions(store.job_context(args.id))
-    if not answers and not args.accept_proposed:
+    skip = args.skip
+    if not answers and not args.accept_proposed and not skip:
         if args.json or not sys.stdin.isatty():
             _out(args, {"job_id": args.id, "open_decisions": pending,
-                        "next_step": f"factory decide {args.id} --answer Q-1=... [--accept-proposed]"})
+                        "next_step": f"factory decide {args.id} --answer Q-1=... [--accept-proposed | --skip]"})
             return EXIT_BLOCKED if pending else EXIT_OK
-        answers = _ask_decisions(pending)
+        answers, skip = _ask_decisions(pending)
     try:
-        still_open = factory.answer_decisions(args.id, answers, args.accept_proposed, os.environ.get("USER", "operator"))
+        still_open = factory.answer_decisions(args.id, answers, args.accept_proposed, os.environ.get("USER", "operator"),
+                                              skip=skip)
     except TransitionRefused as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_REFUSED
@@ -655,13 +671,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--issue", type=int)
     s.add_argument("--repo-id")
     s.add_argument("--mode", choices=["guided", "auto"],
-                   help="guided: answer the product decisions after intake; auto: assume the proposals (default: config spec.default_mode)")
+                   help="guided: an interview on the product decisions after intake; auto: the agent settles them, asking only "
+                        "critical ones (default: config spec.default_mode)")
     s.set_defaults(fn=cmd_submit)
 
-    s = sub.add_parser("decide", help="answer the product decisions of a guided job (then it resumes)")
+    s = sub.add_parser("decide", help="answer the product decisions of a job (then it resumes)")
     s.add_argument("id")
     s.add_argument("--answer", action="append", default=[], metavar="Q-N=TEXT")
     s.add_argument("--accept-proposed", action="store_true", help="accept the proposed answer for every decision not answered")
+    s.add_argument("--skip", action="store_true",
+                   help="end the interview: the agent settles every unanswered decision except the critical ones")
     s.set_defaults(fn=cmd_decide)
     s = sub.add_parser("feature")
     fsub = s.add_subparsers(dest="feature_cmd", required=True)
