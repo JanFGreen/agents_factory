@@ -885,19 +885,36 @@ class Factory(ParallelLanes):
             return
         rs = analysis.round_state(self.store, job_id)
         no_progress = analysis.consecutive_rounds_without_progress(self.store, job_id)
-        if rs.remaining <= 0:
-            raise analysis.AnalysisLimitReached(f"{rs.used}/{rs.limit} rounds used; open findings: {findings}")
-        if not progress and no_progress >= self.cfg.workflow.analysis.max_consecutive_rounds_without_progress:
-            raise analysis.AnalysisLimitReached(f"{no_progress} consecutive rounds without progress; open findings: {findings}")
         path = self._job(job_id)["path"]
-        if retry_from is not None and path != "trivial" and self._ctx(job_id).get("decision_digest"):
+        resumable = retry_from is not None and path != "trivial" and self._ctx(job_id).get("decision_digest")
+        limit = None
+        if rs.remaining <= 0:
+            limit = f"{rs.used}/{rs.limit} rounds used; open findings: {findings}"
+        elif not progress and no_progress >= self.cfg.workflow.analysis.max_consecutive_rounds_without_progress:
+            limit = f"{no_progress} consecutive rounds without progress; open findings: {findings}"
+        if limit:
+            # the round after a raised limit retries the rejected stage, not options (_step_analysis_round)
+            self._set_ctx(job_id, analysis_retry_from=str(retry_from) if resumable else None)
+            raise analysis.AnalysisLimitReached(limit)
+        if resumable:
             self._open_round(job_id)
             self.controller.transition(job_id, retry_from, f"round {outcome} (retry from {retry_from}): {findings[:3]}")
             return
         self.controller.transition(job_id, S.MICRO_SPEC if path == "trivial" else S.ANALYSIS_ROUND, f"round {outcome}: {findings[:3]}")
 
     def _step_analysis_round(self, job_id: str) -> None:
+        """Open a round from options, or, after a raised limit, at the stage the stopped round would have retried.
+
+        Live finding (LearnEnglish F6b): the round after a raised limit redrafted options and spec ($2.50) to fix
+        three plan findings, and the redrafted spec stopped the plan patch.
+        """
         self._open_round(job_id)
+        retry_from = self._ctx(job_id).get("analysis_retry_from")
+        self._set_ctx(job_id, analysis_retry_from=None)
+        guard = retry_from and self.controller.guards.get(S(retry_from))
+        if retry_from and (guard is None or guard(job_id).ok):
+            self.controller.transition(job_id, S(retry_from), "round after a raised limit: retry the rejected stage")
+            return
         self.controller.transition(job_id, S.OPTIONS_DRAFT)
 
     def _step_options_draft(self, job_id: str) -> None:
@@ -1124,9 +1141,13 @@ class Factory(ParallelLanes):
             self.store.event(conn, job_id, "plan.tasks_inserted", {"tasks": [t.task_id for t in tasks]})
 
     def _plan_revision_due(self, ctx: dict) -> bool:
-        """A plan the decomposition review sent back, for the same spec: the planner patches it instead of rewriting it."""
-        return bool(self.cfg.workflow.decomposition.revise_by_patch and ctx.get("plan") and ctx.get("analysis_findings")
-                    and ctx.get("plan_spec_digest") == ctx.get("spec_digest"))
+        """A plan the decomposition review sent back: the planner patches it instead of rewriting it.
+
+        Live finding (LearnEnglish F6b): every analysis round redrafts the spec, so its digest changed and a patch the
+        planner still made against the current plan stopped the job. The spec may change; the review checks the whole
+        merged plan against the current spec, and `spec_changed` tells the planner to recheck the tasks against it.
+        """
+        return bool(self.cfg.workflow.decomposition.revise_by_patch and ctx.get("plan") and ctx.get("analysis_findings"))
 
     def _merge_plan_revision(self, job_id: str, previous: PlanPayload, patch: PlanPayload) -> tuple[PlanPayload, dict]:
         """Previous tasks with the patch's tasks replacing theirs by id, new ones appended, removed ones dropped.
@@ -1162,13 +1183,15 @@ class Factory(ParallelLanes):
             # who uses each file, so a task that changes a signature or type lists its callers (LearnEnglish F4, F5)
             "dependency_map": knowledge.dependency_map(graph) if (graph := self._code_graph(job_id)) else None,
             "repo_map": self._repo_map(job_id), "api_map": self._api_map(job_id), "design": self._design_context(job_id, with_text=True),
-            **({"revision": {"mode": "patch", "plan_digest": ctx.get("plan_digest")}} if revise else {}),
+            **({"revision": {"mode": "patch", "plan_digest": ctx.get("plan_digest"),
+                             "spec_changed": ctx.get("plan_spec_digest") != ctx.get("spec_digest")}} if revise else {}),
         })
         if res.payload is None:
             raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
         payload, revision = res.payload, None
         if revise and payload.revision_of and payload.revision_of == ctx.get("plan_digest"):
             payload, revision = self._merge_plan_revision(job_id, PlanPayload.model_validate(ctx["plan"]), payload)
+            revision["spec_changed"] = ctx.get("plan_spec_digest") != ctx.get("spec_digest")
         elif payload.revision_of or payload.removed_task_ids:
             raise StageBlocked(S.NEEDS_INFO, f"plan revision of {payload.revision_of!r} does not match the current plan")
         plan = payload.model_dump(exclude={"revision_of", "removed_task_ids"})

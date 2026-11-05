@@ -11,7 +11,7 @@ import json
 
 from agent_factory.adapters.fake import FakeReply, envelope
 
-from ..conftest import decomposition_reply, plan_reply, request_inputs
+from ..conftest import decomposition_reply, plan_reply, request_inputs, spec_reply
 
 TASKS = [
     {"task_id": "TASK-01", "requirement_ids": ["REQ-1"], "depends_on": [], "file_scope": ["app/greet.py", "tests"],
@@ -42,7 +42,7 @@ def test_a_rejected_plan_is_patched_and_the_review_checks_the_patch(make_env):
     env = make_env("standard", responders={"factory-plan": _patching_planner(seen), "factory-decomposition-review": review})
     job = env.submit("Add exclamation greeting and farewell")
     assert env.factory.run(job) == "READY_TO_MERGE"
-    assert "revision" not in seen[0] and seen[1]["revision"]["mode"] == "patch"
+    assert "revision" not in seen[0] and seen[1]["revision"]["mode"] == "patch" and seen[1]["revision"]["spec_changed"] is False
     assert seen[1]["previous_plan"]["tasks"][0]["task_id"] == "TASK-01"
     plan = env.store.job_context(job)["plan"]
     assert [t["task_id"] for t in plan["tasks"]] == ["TASK-01", "TASK-02"]  # the untouched task is kept, in its place
@@ -52,6 +52,31 @@ def test_a_rejected_plan_is_patched_and_the_review_checks_the_patch(make_env):
     assert reviews[1]["revision"]["changed"] == ["TASK-02"] and "cycle" in reviews[1]["revision"]["previous_findings"]
     revised = [json.loads(e["payload_json"]) for e in env.events(job, "plan.revised")]
     assert revised == [{"changed": ["TASK-02"], "added": [], "removed": []}]
+
+
+def test_a_plan_is_patched_after_the_spec_is_redrafted(make_env):
+    """Live finding (LearnEnglish F6b): a round from options redrafted the spec, and a patch of the current plan stopped the job."""
+    from agent_factory import analysis
+
+    seen, reviews = [], []
+    redrafted = spec_reply(2)
+    redrafted.envelope["payload"]["acceptance_criteria"][1]["observable"] = "farewell ends with a full stop"
+
+    def review(request) -> FakeReply:
+        reviews.append(request_inputs(request))
+        return decomposition_reply("PASS" if len(reviews) > 3 else "CHANGES")
+
+    env = make_env("standard", responders={"factory-plan": _patching_planner(seen), "factory-decomposition-review": review,
+                                           "factory-spec-author": [spec_reply(2), redrafted]})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "ANALYSIS_LIMIT_REACHED"
+    env.store.update_job_context(job, analysis_retry_from=None)  # a round that restarts from options, e.g. after rework
+    analysis.raise_limit(env.store, job, 4, "one more round")
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert env.calls("factory-spec-author") == 2
+    assert seen[-1]["revision"]["spec_changed"] is True
+    assert reviews[-1]["revision"]["spec_changed"] is True and reviews[-1]["revision"]["changed"] == ["TASK-02"]
 
 
 def test_a_patch_can_add_and_remove_tasks(make_env):
@@ -105,3 +130,24 @@ def test_analysis_agents_get_the_api_map(make_env):
         api = request_inputs(call)["api_map"]
         assert "def greet(" in api["files"]["app/greet.py"], skill
         assert not any(path.startswith("tests/") for path in api["files"]), skill
+
+
+def test_the_round_after_a_raised_limit_retries_the_plan_not_the_options(make_env):
+    """Live finding (LearnEnglish F6b): the round after a raised limit redrafted options and spec ($2.50) for three plan findings."""
+    from agent_factory import analysis
+
+    seen, reviews = [], []
+
+    def review(request) -> FakeReply:
+        reviews.append(request_inputs(request))
+        return decomposition_reply("PASS" if len(reviews) > 3 else "CHANGES")
+
+    env = make_env("standard", responders={"factory-plan": _patching_planner(seen), "factory-decomposition-review": review})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "ANALYSIS_LIMIT_REACHED"
+    options, specs = env.calls("factory-options-review"), env.calls("factory-spec-author")
+    analysis.raise_limit(env.store, job, 4, "one more plan round")
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert (env.calls("factory-options-review"), env.calls("factory-spec-author")) == (options, specs)
+    assert seen[-1]["revision"]["mode"] == "patch" and seen[-1]["revision"]["spec_changed"] is False

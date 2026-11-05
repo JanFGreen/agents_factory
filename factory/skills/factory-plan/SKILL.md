@@ -87,8 +87,10 @@ the micro-spec).
 
 ## Revision rounds
 
-With `inputs.revision` (`mode: "patch"`) the decomposition review rejected `previous_plan` for the
-same spec, and `previous_findings` says why. Fix those findings; do not rewrite the plan.
+With `inputs.revision` (`mode: "patch"`) the decomposition review rejected `previous_plan`, and
+`previous_findings` says why. Fix those findings; do not rewrite the plan. With
+`inputs.revision.spec_changed` the spec was redrafted since that plan: also patch every task whose
+requirement IDs, acceptance or contracts no longer match the current spec.
 Return only the tasks you change or add, each in full, in `tasks`; list the tasks you drop in
 `removed_task_ids`; set `revision_of` to `inputs.revision.plan_digest`. The controller merges
 the patch into the previous plan, and the merged plan is reviewed again. Change an unchanged

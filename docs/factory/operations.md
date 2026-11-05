@@ -142,6 +142,10 @@ uv run factory resume <job-id>
 ```
 
 The new limit must be higher than the current one; a reason is required; event `analysis.limit_raised`.
+`raise-limit` does not start the job; `resume` does. The next round starts at the stage the stopped
+round would have retried (a rejected plan is patched at `DECOMPOSE`, a rejected spec is redrafted at
+`OPTION_SELECTED`), not from options. A plan is patched even when the spec was redrafted since; the
+planner and the decomposition review then get `revision.spec_changed` and recheck every task.
 
 ## Analysis cost guards (`workflow.analysis`, `workflow.decomposition`)
 

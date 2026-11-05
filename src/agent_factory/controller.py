@@ -76,6 +76,8 @@ _MAIN: set[tuple[S, S]] = {
     (S.AI_SPEC_EVALUATION, S.SINGLE_TASK_READY),
     (S.AI_SPEC_EVALUATION, S.MICRO_SPEC),  # next round, trivial
     (S.ANALYSIS_ROUND, S.OPTIONS_DRAFT),
+    (S.ANALYSIS_ROUND, S.OPTION_SELECTED),  # after a raised limit: retry the stage the stopped round rejected
+    (S.ANALYSIS_ROUND, S.DECOMPOSE),
     (S.OPTIONS_DRAFT, S.AI_OPTION_REVIEW),
     (S.AI_OPTION_REVIEW, S.OPTIONS_DRAFT),  # bounded spike inside the same round
     (S.AI_OPTION_REVIEW, S.OPTION_SELECTED),

@@ -76,7 +76,8 @@ that each previous finding is fixed, then check the touched tasks in full and th
 with the tasks that depend on them or that they depend on, plus the requirement coverage and DAG
 of the merged plan. Do not re-review the untouched tasks: give each of them `PASS` in `per_task`
 with the note `unchanged`. A new blocking problem in an untouched task counts only when the
-patch caused it.
+patch caused it. With `inputs.revision.spec_changed` the spec was redrafted since the plan you
+rejected: review every task in full against the current spec, not only the touched ones.
 
 ## Output
 
