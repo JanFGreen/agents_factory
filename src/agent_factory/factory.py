@@ -871,6 +871,9 @@ class Factory(ParallelLanes):
         if self._ctx(job_id).get("intake") is None:  # answering decisions resumes here without a second intake run
             self._interview_round(job_id, None)
         while True:
+            split = next((d for d in self._ctx(job_id).get("decisions", []) if d.get("split")), None)
+            if split and split["answer"] == split["options"][0]:  # the other questions belong to the parts now
+                return self._split_job(job_id)
             pending = [d for d in self._ctx(job_id).get("decisions", []) if d["answer"] is None]
             if pending:
                 raise StageBlocked(S.NEEDS_INFO, (
@@ -879,9 +882,6 @@ class Factory(ParallelLanes):
                                 f"(proposed: {d['proposed']})" for d in pending)
                     + f". Answer: `factory decide {job_id}`" + (" (--skip: the agent settles the rest)" if any(
                         not d.get("critical") for d in pending) else "") + "."))
-            split = next((d for d in self._ctx(job_id).get("decisions", []) if d.get("split")), None)
-            if split and split["answer"] == split["options"][0]:
-                return self._split_job(job_id)
             if not self._interview_continues(job_id):
                 break
             self._interview_round(job_id, self._ctx(job_id)["interview"]["round"] + 1)

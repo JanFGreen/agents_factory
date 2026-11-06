@@ -236,14 +236,14 @@ def _split_intake(decisions=DECISIONS):
     return FakeReply(envelope("intake", payload={"goal": "g", "decisions": decisions, "scope_split": SPLIT}))
 
 
-def test_a_split_proposal_is_asked_even_in_auto_mode_and_writes_the_parts(make_env):
+def test_an_accepted_split_writes_the_parts_without_the_other_answers(make_env):
     env = make_env("trivial", responders={"factory-intake": _split_intake()})
-    job = env.submit(mode="auto")
+    job = env.submit(mode="guided")
     assert env.factory.run(job) == "NEEDS_INFO"
     split = env.store.job_context(job)["decisions"][0]
     assert split["id"] == "Q-3" and split["critical"] and split["split"] and split["answer"] is None
     assert split["options"] == ["Split into 2: Exercises; Check mode", "Keep it as one feature"]
-    env.factory.answer_decisions(job, {}, True, "ada")  # accepting the proposal is the split
+    env.factory.answer_decisions(job, {"Q-3": split["proposed"]}, False, "ada")  # the split alone, Q-1/Q-2 left open
     env.factory.resume(job)
     assert env.factory.run(job) == "CANCELLED"
     assert env.calls("factory-classify-feature") == 0  # no analysis was spent on the bundle
@@ -267,3 +267,10 @@ def test_keeping_one_feature_goes_on_without_a_follow_up_round(make_env):
     assert env.calls("factory-intake") == 1  # a differing split answer opens no interview round
     specs = _spec_inputs(env)
     assert specs and all("Keep it as one feature" not in p for p in specs)  # not a product decision for the spec
+
+
+def test_a_split_proposal_is_asked_in_auto_mode(make_env):
+    env = make_env("trivial", responders={"factory-intake": _split_intake()})
+    job = env.submit(mode="auto")
+    assert env.factory.run(job) == "NEEDS_INFO"
+    assert [d["id"] for d in env.store.job_context(job)["decisions"] if d["answer"] is None] == ["Q-3"]
