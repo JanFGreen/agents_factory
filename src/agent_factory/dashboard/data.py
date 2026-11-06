@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from pathlib import Path
 from typing import Any
 
 from .. import budgets
@@ -88,6 +89,10 @@ def _tasks(store: Store, job_id: str, ctx: dict) -> list[dict[str, Any]]:
         out.append({
             "task_id": r["task_id"], "state": r["state"], "attempts": r["attempts"],
             "depends_on": spec.get("depends_on", []), "file_scope": spec.get("file_scope", []),
+            # plans name no task titles: the files a task changes say what it is about
+            "label": ", ".join(Path(f).stem for f in spec.get("file_scope", [])[:3])
+            + (f" +{len(spec['file_scope']) - 3}" if len(spec.get("file_scope", [])) > 3 else "")
+            or str(spec.get("acceptance", ""))[:60],
             "acceptance": spec.get("acceptance", ""), "requirement_ids": spec.get("requirement_ids", []),
             "difficulty": (difficulty.get(r["task_id"]) or {}).get("difficulty") or spec.get("difficulty"),
         })

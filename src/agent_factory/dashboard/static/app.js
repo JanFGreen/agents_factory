@@ -151,7 +151,8 @@ function renderJobView() {
   const job = state.job;
   if (!job) { main.replaceChildren(h("p", { class: "muted" }, "Select a job.")); return; }
   const keep = actionPanel(job);
-  main.replaceChildren(
+  // replaceChildren() turns null into a "null" text node: an absent banner or panel is filtered out first
+  main.replaceChildren(...[
     h("div", { class: "head" }, h("h1", {}, job.feature_id), badge(job.state),
       h("span", { class: "badge" }, `path ${job.path || "—"}`), h("span", { class: "badge" }, `risk ${job.risk || "—"}`),
       h("span", { class: "mono muted" }, job.job_id)),
@@ -162,7 +163,7 @@ function renderJobView() {
     h("div", { class: "grid" },
       h("section", { class: "card wide", "aria-labelledby": "g-title" }, h("h2", { id: "g-title" }, "Tasks"), taskGraph(job), taskDetail(job)),
       costsCard(job), runCard(job), shotsCard(job), findingsCard(job), eventsCard(job)),
-  );
+  ].filter(Boolean));
 }
 
 function kpis(job) {
@@ -423,7 +424,7 @@ function taskGraph(job) {
   const lv = levels(job.tasks);
   const columns = [];
   job.tasks.forEach((t) => { (columns[lv[t.task_id]] ||= []).push(t); });
-  const W = 170, H = 58, GX = 60, GY = 16;
+  const W = 200, H = 76, GX = 60, GY = 16;
   const pos = {};
   columns.forEach((col, x) => col.forEach((t, y) => { pos[t.task_id] = { x: 10 + x * (W + GX), y: 10 + y * (H + GY) }; }));
   const width = 20 + columns.length * (W + GX) - GX;
@@ -446,7 +447,8 @@ function taskGraph(job) {
                       onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); } } },
       svg("rect", { width: W, height: H }),
       svg("text", { x: 10, y: 20 }, `${t.task_id} · ${t.state}`),
-      svg("text", { x: 10, y: 38, class: "sub" }, `${t.difficulty || "?"} · attempts ${t.attempts} · ${usd(cost[t.task_id])}`),
+      svg("text", { x: 10, y: 40 }, short(t.label || "", 30)),
+      svg("text", { x: 10, y: 60, class: "sub" }, `${t.difficulty || "?"} · attempts ${t.attempts} · ${usd(cost[t.task_id])}`),
       svg("title", {}, short(t.acceptance, 300)));
   });
   const defs = svg("defs", {}, svg("marker", { id: "arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" },

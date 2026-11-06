@@ -82,6 +82,8 @@ def test_job_view_has_tasks_costs_reviews_and_events(make_env, dashboard):
     status, headers, body = d.get(f"/api/job/{job}")
     view = json.loads(body)
     assert status == 200 and "script-src 'self'" in headers["Content-Security-Policy"]
+    task = view["tasks"][0]  # what the task is about, from its files or else its acceptance (plans give no titles)
+    assert task["label"] and task["label"] in (", ".join(Path(f).stem for f in task["file_scope"]) or task["acceptance"])
     assert view["tasks"][0]["state"] == "ACCEPTED" and view["reviews"][view["tasks"][0]["task_id"]]["code-review"] == "PASS"
     assert {r["role"] for r in view["costs"]["by_role"]} >= {"builder", "code_reviewer"}
     assert view["events"] and view["next_step"] and view["run"] is None
