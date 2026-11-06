@@ -935,12 +935,16 @@ class Factory(ParallelLanes):
         parts = self._ctx(job_id)["scope_split"]["parts"]
         out = self.data_dir / "splits" / job_id
         out.mkdir(parents=True, exist_ok=True)
+        # the documents the whole request named apply to every part (LearnEnglish F6c: the parts dropped them)
+        named = list(dict.fromkeys(self._DOC_REF.findall(" ".join([feature["original_request"], feature["goal"]]))))
+        named += [f"[[{link}]]" for link in dict.fromkeys(knowledge.wikilinks(feature["original_request"]))]
         files = []
         for i, part in enumerate(parts):
             fid = f"{job['feature_id'][:60]}-{chr(ord('A') + i)}"
             note = (f"\n\nPart {i + 1} of {len(parts)}, split from {job['feature_id']} before analysis ("
                     + "; ".join(f"{chr(ord('A') + j)}: {p['title']}" for j, p in enumerate(parts))
-                    + ")." + (" It builds on the earlier parts." if i else ""))
+                    + ")." + (" It builds on the earlier parts." if i else "")
+                    + (f" {', '.join(named)} apply, as for the whole request." if named else ""))
             path = out / f"{fid}.yaml"
             path.write_text(yaml.safe_dump({"feature_id": fid, "repo_id": job["repo_id"], "goal": part["title"],
                                             "original_request": part["request"] + note,

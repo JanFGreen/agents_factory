@@ -238,7 +238,7 @@ def _split_intake(decisions=DECISIONS):
 
 def test_an_accepted_split_writes_the_parts_without_the_other_answers(make_env):
     env = make_env("trivial", responders={"factory-intake": _split_intake()})
-    job = env.submit(mode="guided")
+    job = env.submit("Add exercises and check mode. docs/PRODUCT.md and [[ENGINEERING]] apply.", mode="guided")
     assert env.factory.run(job) == "NEEDS_INFO"
     split = env.store.job_context(job)["decisions"][0]
     assert split["id"] == "Q-3" and split["critical"] and split["split"] and split["answer"] is None
@@ -254,6 +254,7 @@ def test_an_accepted_split_writes_the_parts_without_the_other_answers(make_env):
     assert [p["feature_id"] for p in parts] == [f"{feature_id}-A", f"{feature_id}-B"]
     assert parts[0]["original_request"].startswith("Add gap exercises.") and "Part 1 of 2" in parts[0]["original_request"]
     assert "builds on the earlier parts" in parts[1]["original_request"] and parts[1]["repo_id"] == "greeter"
+    assert all("docs/PRODUCT.md, [[ENGINEERING]] apply" in p["original_request"] for p in parts)
     assert env.events(job, "scope.split")
 
 
