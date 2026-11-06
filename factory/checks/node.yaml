@@ -11,6 +11,9 @@ preview:                                 # build of the web-build check, served 
     env: {HOST: "127.0.0.1", PORT: "{port}", JWT_SECRET: "{secret}", LEARNENGLISH_DB: "{scratch}/preview.db", CORS_ORIGIN: "{origin}"}
     build_url: "http://127.0.0.1:3000"   # expo.extra.apiBaseUrl in app.json; the preview serves the build with the real URL
     ready_path: /health
+  seed:                                  # sample data for browser reviews: a learner with reviews due (scripts/preview-seed.ts)
+    argv: ["node", "--import", "tsx", "scripts/preview-seed.ts", "{out}", "{origin}"]
+    shows: "an A1 learner with 3 reviews due now, 10 new words, 20 known words and 5 words to learn"
 checks:
   - name: unit
     argv: ["{worktree}/node_modules/.bin/vitest", "run", "--configLoader", "runner", "--reporter=default", "--reporter=junit", "--outputFile.junit={report}"]
