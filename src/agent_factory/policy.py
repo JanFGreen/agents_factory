@@ -130,6 +130,11 @@ _JS_TEST = re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$")
 
 # What evaluate_diff enforces, told to the planner and the decomposition reviewer so they plan by
 # the real rule instead of guessing (a missing test file in a scope is not a defect).
+# What can ever prove an acceptance criterion: each trusted check runs once per gate.
+VERIFIABLE_RULE = ("Every acceptance criterion must be provable by one run of these checks (a test the gate runs) or by reading "
+                   "and running the candidate read-only once. Repeated runs, load, timing or 'N consecutive passes' are not: "
+                   "rewrite such a criterion into what a test can show in one run (e.g. the race made deterministic and a "
+                   "test that repeats the scenario in a loop), as a blocking testability finding.")
 FILE_SCOPE_RULE = (
     "file_scope must list every non-test file the task changes; a change to any other non-test file is refused. "
     "Test files are always in the builder's scope: a task may update any existing test file (for example tests "

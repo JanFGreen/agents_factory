@@ -6,7 +6,7 @@ Blueprint §7.5. All five dimensions are mandatory (`spec_evaluation.mandatory_d
 |---|---|---|
 | `intent_coverage` | every intent and material scenario of the original request maps to a requirement with an observable criterion; no hidden scope limit | an intent is missing; an intent is moved to future-needs; "filter" covered but "together with pagination" not |
 | `consistency` | requirements do not contradict each other, the constraints, or accepted baseline specs (unless an explicit MODIFIED delta) | REQ-3 uses page numbers while baseline mandates cursors; two criteria demand different sort orders |
-| `testability` | criteria describe observable results (API body, persisted rows, rendered state) for happy path, errors and key boundaries | "history page exists"; "filtering works"; no error or empty case; no way to observe the result |
+| `testability` | criteria describe observable results (API body, persisted rows, rendered state) for happy path, errors and key boundaries | "history page exists"; "filtering works"; no error or empty case; no way to observe the result; a criterion no single run of `inputs.verification.checks` can prove ("passes 20 consecutive runs", "under load", "stays fast") |
 | `feasibility` | approach fits the real repo, permissions, environment and budget; unknowns resolved or explicitly deferrable without changing the spec | needs a credential not in policy; depends on a module that does not exist; estimate exceeds budget |
 | `risk_controls` | data, auth, security, accessibility and performance criteria exist in proportion to the risk | per-user data without an isolation criterion; new endpoint without auth criterion; UI change without keyboard/a11y criterion |
 

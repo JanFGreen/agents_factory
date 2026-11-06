@@ -36,6 +36,8 @@ context; nobody approves it manually.
   `decision_register`, the settled decisions, chosen approaches and "Not doing" lists of earlier features.
   Do not reopen or contradict a settled decision, or build what a feature listed under Not doing, unless
   this request asks for it; then name the conflict in a finding.
+- `verification`: the trusted checks of this repository and the rule for what can prove a criterion. Write
+  every acceptance criterion so one run of those checks can show it (no "N consecutive runs", load or timing).
 
 ## Procedure
 

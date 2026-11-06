@@ -42,7 +42,7 @@ from .features import NormalizedFeature, classify, load_feature, path_rank, reco
 from .identities import InputIdentity, ResultKind, digest
 from .lanes import ParallelLanes
 from . import knowledge, repomap
-from .policy import FILE_SCOPE_RULE, RISK_ORDER, SCOPE_SELF_CHECK, effect_sites, evaluate_diff, is_test_file, is_ui_path, max_risk, security_triggers
+from .policy import FILE_SCOPE_RULE, RISK_ORDER, VERIFIABLE_RULE, SCOPE_SELF_CHECK, effect_sites, evaluate_diff, is_test_file, is_ui_path, max_risk, security_triggers
 from .preview import PreviewServer
 from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, RunningService, ServiceError, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
@@ -1150,13 +1150,18 @@ class Factory(ParallelLanes):
         self._record(job_id, ResultKind.OPTION_SELECTION, "PASS", decision, producer=self._agent_producer(res, "factory-select-option"))
         self.controller.transition(job_id, S.OPTION_SELECTED, f"selected {selection.selected_option_id}")
 
+    def _verification_rule(self, job_id: str) -> dict[str, Any]:
+        """The trusted checks and what can prove a criterion with them, for the spec's author and evaluator."""
+        return {"checks": [{"name": c.name, "stage": c.stage, "argv": c.argv} for c in self._checks(job_id).checks],
+                "rule": VERIFIABLE_RULE}
+
     def _author_spec(self, job_id: str, micro: bool) -> None:
         ctx = self._ctx(job_id)
         res = self.call_agent(job_id, "factory-spec-author", {
             "mode": "micro" if micro else "openspec", "feature": self._feature(job_id), "intake": ctx.get("intake"),
             "decision": ctx.get("decision"), "previous_spec": ctx.get("spec"), "previous_findings": ctx.get("analysis_findings", []),
             "change_id": ctx["change_id"], "design": self._design_context(job_id, with_text=True),
-            "project_notes": self._project_notes(job_id),
+            "project_notes": self._project_notes(job_id), "verification": self._verification_rule(job_id),
         })
         if res.payload is None:
             raise StageBlocked(S.NEEDS_INFO, res.envelope.summary)
@@ -1204,6 +1209,9 @@ class Factory(ParallelLanes):
             "feature": feature, "constraints": feature["constraints"], "spec": ctx["spec"], "decision": ctx.get("decision"),
             "mandatory_dimensions": self.cfg.workflow.spec_evaluation.mandatory_dimensions, "repo_map": self._repo_map(job_id),
             "api_map": self._api_map(job_id), "spec_digest": ctx.get("spec_digest"), "previous_round_findings": ctx.get("analysis_findings", []),
+            # what can ever prove a criterion: each check runs once per gate (LearnEnglish F6c-A: "passes 20 consecutive
+            # runs" got through the spec and blocked integration twice, as no trusted run could show it)
+            "verification": self._verification_rule(job_id),
         })
         problems = self.spec_structure_problems(spec, feature)
         verdict = res.envelope.verdict

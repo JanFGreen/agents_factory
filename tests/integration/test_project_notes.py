@@ -83,3 +83,21 @@ def test_integration_records_the_decisions_and_what_is_not_done(make_env, repo):
     assert "## Not doing\n\n- A farewell message\n- Localised greetings (next)" in note
     assert "factory: record the feature's decisions" in sh(repo, "git", "log", "--format=%s", f"factory/{job}")
     assert json.loads(env.store.job(job)["context_json"])["intake"]["not_doing"] == ["A farewell message"]
+
+
+def test_spec_author_and_evaluator_get_what_can_prove_a_criterion(make_env):
+    """Live finding (LearnEnglish F6c-A): "passes 20 consecutive runs" got through the spec; no trusted run could show it."""
+    seen: dict = {}
+    base = base_responders()
+
+    def keep(skill):
+        def respond(request):
+            seen[skill] = request_inputs(request)["verification"]
+            return base[skill]
+        return respond
+    env = make_env("trivial", responders={s: keep(s) for s in ("factory-spec-author", "factory-spec-evaluate")})
+    assert env.factory.run(env.submit(mode="auto")) == "READY_TO_MERGE"
+    for verification in seen.values():
+        assert [c["name"] for c in verification["checks"]] == ["unit"]
+        assert "consecutive" in verification["rule"] and "one run" in verification["rule"]
+    assert set(seen) == {"factory-spec-author", "factory-spec-evaluate"}
