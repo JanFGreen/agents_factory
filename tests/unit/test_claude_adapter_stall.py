@@ -64,3 +64,15 @@ def test_rate_limit_and_server_errors_stay_retryable(tmp_path):
     for text in ("API Error: 429 rate limited", "API Error: 529 overloaded", "API Error: 500 internal"):
         snap = asyncio.run(ClaudeRuntime("claude", None, tmp_path).poll(_log(tmp_path, [_synthetic(text)])))  # type: ignore[arg-type]
         assert snap.state == "failed" and snap.retryable
+
+
+def test_rejected_login_on_the_result_event_names_the_reason(tmp_path):
+    """Live finding: a revoked OAuth token ended as 'failed: success', hiding the 401 behind the subtype."""
+    revoked = {"type": "result", "subtype": "success", "is_error": True, "api_error_status": 401, "total_cost_usd": 0,
+               "result": "Failed to authenticate: OAuth token revoked. Please log in again or contact your administrator."}
+    snap = asyncio.run(ClaudeRuntime("claude", None, tmp_path).poll(_log(tmp_path, [revoked])))  # type: ignore[arg-type]
+    assert snap.state == "failed" and not snap.retryable
+    assert "401" in (snap.error or "") and "OAuth token revoked" in (snap.error or "")
+    other = {**revoked, "api_error_status": None, "result": "Prompt is too long"}
+    snap = asyncio.run(ClaudeRuntime("claude", None, tmp_path).poll(_log(tmp_path, [other])))  # type: ignore[arg-type]
+    assert snap.state == "failed" and snap.error == "Prompt is too long"

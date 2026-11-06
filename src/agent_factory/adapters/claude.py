@@ -136,6 +136,14 @@ class ClaudeRuntime(CliRuntime):
         if structured is not None and not isinstance(structured, dict):
             structured = None
         is_error = bool(result.get("is_error")) or result.get("subtype") not in (None, "success")
+        status = result.get("api_error_status")
+        if is_error and str(status) in _FATAL_STATUSES:
+            # Newer CLIs report the rejected request (e.g. a revoked login) on the result event.
+            return RunSnapshot("failed", usage=snap_usage, model_id=model_id, events_seen=len(events),
+                               error=f"API rejected the request: {status} {text[:500]}", retryable=False)
+        error = result.get("subtype")
+        if error in (None, "success"):
+            error = text[:500] or "error result without a message"
         return RunSnapshot(
             "failed" if is_error else "succeeded",
             output_text=text if structured is None else f"```json\n{json.dumps(structured)}\n```",
@@ -143,10 +151,11 @@ class ClaudeRuntime(CliRuntime):
             usage=snap_usage,
             model_id=model_id,
             events_seen=len(events),
-            error=result.get("subtype") if is_error else None,
+            error=error if is_error else None,
         )
 
 
+_FATAL_STATUSES = ("400", "401", "403", "404")
 _FATAL_API_ERROR = re.compile(r"^API Error: (400|401|403|404)\b")
 
 
