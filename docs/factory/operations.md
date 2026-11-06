@@ -396,6 +396,56 @@ reported the last one, but rated it `low`. Three controls address this class:
   why, consistency with the surrounding code, tests of behaviour, no unrelated changes. The
   handoff's `Self-review:` line says what the re-read changed, never a self-assessment.
 
+## Proof by a run (`review.proof_required`)
+
+Measured on LearnEnglish F1-F6c: none of the 89 blocking findings of code-review (29) and
+test-adequacy (60) came with a run, and each cost a task attempt. A `low` or `medium` finding of
+the reviews in `review.proof_required` (default: both) now blocks only when a run proves it:
+
+- **code-review.** Every review gets the probe workspace, not only reviews with effect sites. A
+  probe test named in `failure_modes[].probe` or `payload.probes` (`{finding_id, path}`) that fails
+  in the trusted runner proves its finding.
+- **test-adequacy.** A missed fault is proven by a mutation: the reviewer names `{finding_id, path,
+  find, replace}` in `payload.mutations` (`find` occurs once, never in a test file). The controller
+  applies each mutation to a fresh copy of the candidate (at most `review.max_mutations`, default
+  4) and runs the unit check. `SURVIVED` (the tests pass with the defect) proves the finding,
+  `KILLED` refutes it, a malformed one is `INVALID`. Event `review.mutations`, artifacts `mutation`.
+- **No proof needed:** `high` and `critical` findings, the controller's own (`CTRL-…`), findings on
+  a test file the task changed (a weakened test or a bad fixture is visible in the diff), and
+  findings feature acceptance escalated.
+- **Unproven** findings stay on record as open, non-blocking follow-ups with the prefix
+  `[unproven: no run showed it]` (event `findings.unproven`); feature acceptance can still escalate
+  one. A proven finding stays blocking in later rounds of the task until it is fixed (ctx
+  `proven_findings`).
+
+Set `review.proof_required: []` to go back to blocking on the reviewer's word.
+
+## Recurring defects (`factory lessons`)
+
+A defect class that reviews keep finding belongs in the trusted gate, where the builder sees it
+before any review. `agent_factory.lessons` groups the findings of a repository by class (matchers
+over the finding text: `contrast`, `target-size`, `layout-shift`, `focus-ring`, `first-screen`;
+more in `lessons.classes` as name -> regex). A class found in `lessons.min_jobs` jobs (default 3) is
+recurring.
+
+- `factory lessons --repo-id learnenglish` lists the classes. `--write` writes one feature request
+  per class to `data_dir/lessons/<repo>/<class>.yaml`, with past findings as examples. The request
+  asks for a check in the existing test command, preferring a design that makes the defect impossible
+  over a test, and a test over a written rule, proven on a fixture that reproduces a past finding.
+  Submitting it is the operator's decision.
+- **Rule table.** The checks manifest pairs each enforced class with its check:
+
+  ```yaml
+  lessons:
+    contrast: {check: unit, since: 2026-11-10, note: "src/theme/contrast.test.ts"}
+  ```
+
+  An enforced class is listed again only when a finding of the class turns up after `since`: the
+  check does not catch it. The table is not part of the manifest digest, so adding a row keeps
+  the results of running jobs current.
+- **Builder.** Until a class is enforced (and when it repeats after), `factory-implement` gets it as
+  `recurring_defects` with two examples and checks its change for it before the handoff.
+
 ## Dashboard
 
 ```sh

@@ -73,7 +73,7 @@ def test_a_rework_lane_builds_on_the_rejected_attempt_and_gets_a_fix_check(make_
     builder, seen = Builder(), []
     env = make_env("standard", responders={"factory-plan": plan_reply(TASKS), "factory-implement": builder,
                                           "factory-code-review": changes_once(seen)},
-                   **{"execution.max_builders_per_job": 2, "review.cheaper_models_for_risk": []})
+                   **{"execution.max_builders_per_job": 2, "review.cheaper_models_for_risk": [], "review.proof_required": []})
     job = env.submit("Add exclamation greeting and farewell")
     assert env.factory.run(job) == "READY_TO_MERGE"
     assert builder.found_earlier == [True]  # the rework lane had attempt 1's test file
@@ -91,7 +91,8 @@ def test_a_rework_lane_builds_on_the_rejected_attempt_and_gets_a_fix_check(make_
 def test_one_failure_does_not_move_the_builder_up_a_level(make_env):
     seen: list = []
     env = make_env("standard", responders={"factory-plan": plan_reply(TASKS), "factory-implement": Builder(),
-                                          "factory-code-review": changes_once(seen)}, **{"execution.max_builders_per_job": 1})
+                                          "factory-code-review": changes_once(seen)},
+                   **{"execution.max_builders_per_job": 1, "review.proof_required": []})
     job = env.submit("Add exclamation greeting and farewell")
     assert env.factory.run(job) == "READY_TO_MERGE"
     routed = [json.loads(e["payload_json"]) for e in env.events(job, "task.routed")]

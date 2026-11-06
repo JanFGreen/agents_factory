@@ -63,6 +63,9 @@ complexity than the classification assumed.
    `probe_workspace.dir`, run it with `test_command`, and name it in `probe`. The controller
    re-runs the probe in the trusted runner; a probe that fails there makes the finding blocking.
    A probe must fail because of the defect (assert the correct behavior), not because of a typo.
+   Any other low or medium blocking finding needs a probe as well, named in `payload.probes` as
+   `{finding_id, path}` (contract: "Proof by a run"); a probe can test anything a run can show,
+   such as a required file that is still there or a behavior the requirement names.
 6. Production and legal (`references/production-and-legal.md`): check the diff against the
    production-readiness list and the legal-exposure table. A new dependency, asset, personal-data
    field or user-visible text always gets this check.

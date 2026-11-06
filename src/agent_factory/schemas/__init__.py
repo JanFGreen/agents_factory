@@ -368,6 +368,22 @@ class FailureModeCheck(Model):
         return self
 
 
+class ProbeClaim(Model):
+    """A probe test in the probe workspace that fails because of the defect a finding reports."""
+
+    finding_id: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,40}$")
+    path: str = Field(min_length=1, max_length=300)
+
+
+class Mutation(Model):
+    """test-adequacy: one source edit that the tests should catch; the controller applies it and runs the tests."""
+
+    finding_id: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,40}$")
+    path: str = Field(min_length=1, max_length=300)
+    find: str = Field(min_length=1, max_length=2000)  # occurs exactly once in the file
+    replace: str = Field(max_length=2000)
+
+
 class CodeReviewPayload(Model):
     reviewed_head_sha: str = ""
     diff_stats: dict[str, int] = {}
@@ -375,6 +391,7 @@ class CodeReviewPayload(Model):
     scope_creep: list[str] = []
     reclassification_signal: dict[str, Any] = {}
     failure_modes: list[FailureModeCheck] = []
+    probes: list[ProbeClaim] = []  # probes for findings outside failure_modes
 
 
 PAYLOADS: dict[str, type[Model]] = {

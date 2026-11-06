@@ -41,14 +41,14 @@ from .evidence import EvidenceError, EvidenceStore, Producer
 from .features import NormalizedFeature, classify, load_feature, path_rank, record_classification, store_feature
 from .identities import InputIdentity, ResultKind, digest
 from .lanes import ParallelLanes
-from . import knowledge, repomap
+from . import knowledge, lessons, repomap
 from .policy import FILE_SCOPE_RULE, RISK_ORDER, VERIFIABLE_RULE, SCOPE_SELF_CHECK, effect_sites, evaluate_diff, is_test_file, is_ui_path, max_risk, security_triggers
 from .preview import PreviewServer
 from .runner import CHECKS_NAME, ChecksManifest, GateVerdict, RunningService, ServiceError, TrustedRunner, load_checks
 from .sandbox import Sandbox, SandboxPolicy, default_denied_reads
 from .scheduler import (LeaseLost, NoSlot, acquire_lease, acquire_slot, check_fence, heartbeat, ready_tasks, release_allocation,
                         release_lease, validate_dag, wait_for_slot)
-from .schemas import (HEURISTICS, VISUAL_ASPECTS, CodeReviewPayload, ContractError, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, UiReviewPayload,
+from .schemas import (HEURISTICS, VISUAL_ASPECTS, CodeReviewPayload, ContractError, Mutation, OptionsPayload, PlanPayload, SpecPayload, TaskSpec, UiReviewPayload,
                       envelope_json_schema, parse_envelope)
 from .state import Store, new_id, now
 from .workspaces import (GENERATED_EXCLUDES, GitError, WorkspaceManager, allocate_port, default_branch, git, patch_since,
@@ -1736,10 +1736,22 @@ class Factory(ParallelLanes):
             "file_scope_rule": FILE_SCOPE_RULE + " " + SCOPE_SELF_CHECK,
             "knowledge": self._knowledge_context(job_id),
             "dependents": self._dependents(job_id, json.loads(task["spec_json"]).get("file_scope", [])),
+            **({"recurring_defects": recurring} if (recurring := self._recurring_defects(job_id)) else {}),
             **({"gate_fixup": gate_fixup} if gate_fixup else {}),
         }, task_id=task_id, writable=True, purpose="build",
             model=(self.cfg.workflow.implementation.gate_fixup_model if gate_fixup else None)
             or self._builder_model(job_id, task_id, self._task(job_id, task_id)["attempts"]))
+
+    def _recurring_defects(self, job_id: str) -> list[dict]:
+        """Defect classes reviews keep finding in this repository and no check enforces yet, for the builder to avoid."""
+        policy = self.cfg.factory.lessons
+        found = lessons.recurring(self.store, self._job(job_id)["repo_path"], classes={**lessons.CLASSES, **policy.classes},
+                                  enforced=self._checks(job_id).lessons, min_jobs=policy.min_jobs, examples=2)
+        return [{"class": c["class"], "jobs": c["jobs"], "findings": c["findings"],
+                 "examples": [e["problem"] for e in c["examples"]],
+                 "how": "Earlier reviews of this repository found this defect again and again. Before you hand off, check "
+                        "every element your change adds or alters for it.", **({"enforced_by": c["enforced_by"]} if c["enforced_by"] else {})}
+                for c in found]
 
     def _gate_fixup(self, job_id: str, task_id: str, verdict: str, reason: str, excerpt: dict, wt: Path) -> bool:
         """One narrow builder pass, inside the same attempt, that fixes only what the gate refused; False when none is left.
@@ -1974,7 +1986,8 @@ class Factory(ParallelLanes):
             fix = self._fix_check(job_id, task_id, review, wt, base, frozen_head)
             reviewed = [d for d in task_files if d.path in fix["delta_files"]] if fix else task_files
             sites = effect_sites(reviewed) if review == "code-review" else []
-            probe = self._probe_workspace(job_id, wt) if sites else None
+            proving = review in self.cfg.factory.review.proof_required and self._probe_check(job_id) is not None
+            probe = self._probe_workspace(job_id, wt) if sites or (proving and review in ("code-review", "test-adequacy")) else None
             diff_inputs = fix["inputs"] if fix else {"diff": diff_text[:60000]}
             try:
                 res = self.call_agent(job_id, skill, {
@@ -1984,7 +1997,8 @@ class Factory(ParallelLanes):
                     "spec_advisories": ctx.get("spec_advisories", []), **self._verification_context(job_id, "task", browser),
                     **({"design": self._design_context(job_id, with_text=True)} if review == "ui-review" else {}),
                     **(self._security_inputs(job_id, task_id, files) if review == "security-review" else {}),
-                    **({"effect_sites": sites, "probe_workspace": self._probe_inputs(job_id, probe)} if sites else {}),
+                    **({"effect_sites": sites} if sites else {}),
+                    **({"probe_workspace": self._probe_inputs(job_id, probe, review)} if probe else {}),
                     **({"controller_note": notes[review]} if notes.get(review) else {}),
                 }, task_id=task_id, purpose="review", browser=browser, scratch=probe,
                     model=self._review_model(job_id, task_id, review, security_depth, fix is not None))
@@ -2006,12 +2020,20 @@ class Factory(ParallelLanes):
                 self._set_review_note(job_id, task_id, review, problem)
                 if task_id and verdict == "PASS" and isinstance(res.payload, UiReviewPayload) and not res.payload.touched_screens_rendered:
                     self._set_ctx(job_id, ui_not_rendered={**ctx.get("ui_not_rendered", {}), task_id: self._job_ui_files(job_id)})
+            proven: set[str] = set()
+            if review == "test-adequacy" and probe is not None:
+                self._drop_probe(job_id, probe)  # the reviewer's trial copy; each mutation runs on a fresh one
+                mutations = self._run_mutations(job_id, task_id, res, wt) if proving else []
+                proven = {m["finding_id"] for m in mutations if m["verdict"] == "SURVIVED"}
+                if mutations:
+                    payload["mutations"] = mutations
             findings = self._keep_escalations(job_id, task_id, review, findings)
             if review == "security-review":
                 verdict, findings = self._triage_security(job_id, task_id, verdict, findings, {d.path for d in files})
             if review == "code-review":
                 probes = self._run_probes(job_id, task_id, res, probe) if probe else []
                 verdict, findings, problem = self._hold_code_review(job_id, res, sites, probes, findings)
+                proven = {p["finding_id"] for p in probes if p["verdict"] == str(GateVerdict.FAIL_CODE)}
                 if probes:
                     payload["probes"] = probes
                 if problem:
@@ -2019,6 +2041,9 @@ class Factory(ParallelLanes):
                 self._set_review_note(job_id, task_id, review, problem)
             if fix:
                 verdict, findings = self._hold_fix_check(job_id, task_id, review, fix, verdict, findings)
+            if proving:
+                verdict, findings = self._require_proof(job_id, task_id, review, verdict, findings, proven,
+                                                        {d.path for d in task_files if is_test_file(d.path)})
             if review in DEMOTABLE_REVIEWS:
                 verdict, findings = self._demote_after_rounds(job_id, task_id, review, verdict, findings)
             self._record(job_id, kind, verdict, payload, ident=ident,
@@ -2041,16 +2066,30 @@ class Factory(ParallelLanes):
     def _probe_check(self, job_id: str):
         return next((c for c in self._checks(job_id).checks if c.report == "junit"), None)
 
-    def _probe_inputs(self, job_id: str, probe: Path | None) -> dict[str, Any] | None:
+    def _probe_inputs(self, job_id: str, probe: Path | None, review: str = "code-review") -> dict[str, Any] | None:
         unit = self._probe_check(job_id)
         if probe is None or unit is None:
             return None
         command = [a.replace("{worktree}", str(probe)).replace("{python}", sys.executable) for a in unit.argv if "{report}" not in a]
-        return {"dir": str(probe), "test_command": command,
-                "how": "A writable copy of the candidate at head_sha (the review worktree stays read-only). To prove a "
-                       "suspected failure, add one test file here next to the code it probes (the repo's test naming), "
-                       "run it with test_command plus the file path, and name it in failure_modes[].probe. The controller "
-                       "re-runs every named probe in the trusted runner: a probe that fails there makes its finding blocking."}
+        proof = review in self.cfg.factory.review.proof_required
+        if review == "test-adequacy":
+            how = ("A writable copy of the candidate at head_sha (the review worktree stays read-only). To prove a missed "
+                   "fault, edit the source here the way the defect would (not a test file), run test_command and see the "
+                   "tests still pass, then undo the edit and name it in payload.mutations as {finding_id, path, find, "
+                   "replace}: `find` is text that occurs exactly once in the file at head_sha. The controller applies each "
+                   f"mutation to a fresh copy (at most {self.cfg.factory.review.max_mutations}) and runs the tests in the "
+                   "trusted runner: a mutation they let through proves the finding.")
+        else:
+            how = ("A writable copy of the candidate at head_sha (the review worktree stays read-only). To prove a "
+                   "suspected defect, add one test file here next to the code it probes (the repo's test naming) that "
+                   "asserts the correct behavior, run it with test_command plus the file path, and name it in "
+                   "failure_modes[].probe or payload.probes as {finding_id, path}. The controller re-runs every named probe "
+                   "in the trusted runner: a probe that fails there proves its finding.")
+        if proof:
+            how += (" A low or medium finding blocks only when a run proves it; an unproven one is recorded as an open "
+                    "follow-up. High and critical findings, and findings on a test file this task changed (a weakened "
+                    "test, a bad fixture: the diff shows it), block without a run.")
+        return {"dir": str(probe), "test_command": command, "how": how}
 
     def _run_probes(self, job_id: str, task_id: str | None, res: AgentResult, probe: Path) -> list[dict]:
         """Re-run the reviewer's probe tests in the trusted sandbox; a failing probe is evidence of a defect."""
@@ -2059,6 +2098,7 @@ class Factory(ParallelLanes):
             unit = self._probe_check(job_id)
             payload = res.payload if isinstance(res.payload, CodeReviewPayload) else None
             named = {m.probe: m.finding_id for m in (payload.failure_modes if payload else []) if m.probe}
+            named.update({p.path: p.finding_id for p in (payload.probes if payload else []) if p.path not in named})
             for rel, finding_id in list(named.items())[:5]:
                 target = (probe / rel).resolve()
                 if unit is None or not target.is_relative_to(probe.resolve()) or not target.is_file() or not is_test_file(rel):
@@ -2077,6 +2117,77 @@ class Factory(ParallelLanes):
         finally:
             self._drop_probe(job_id, probe)
         return results
+
+    def _run_mutations(self, job_id: str, task_id: str | None, res: AgentResult, wt: Path) -> list[dict]:
+        """Apply each mutation the test-adequacy reviewer names to a fresh copy and run the unit tests in the trusted
+        runner. SURVIVED (the tests pass with the defect in place) proves a missed fault; KILLED refutes the claim."""
+        unit = self._probe_check(job_id)
+        raw = res.envelope.payload.get("mutations") if isinstance(res.envelope.payload, dict) else None
+        results: list[dict] = []
+        for item in (raw if isinstance(raw, list) else [])[:self.cfg.factory.review.max_mutations]:
+            try:
+                m = Mutation.model_validate(item)
+            except ValueError:
+                results.append({"finding_id": str((item or {}).get("finding_id", "?"))[:40] if isinstance(item, dict) else "?",
+                                "verdict": "INVALID", "reason": "not a {finding_id, path, find, replace} object"})
+                continue
+            copy = self._probe_workspace(job_id, wt)
+            try:
+                target = (copy / m.path).resolve()
+                text = target.read_text() if target.is_relative_to(copy.resolve()) and target.is_file() else None
+                reason = ("not a source file of the candidate" if text is None or is_test_file(m.path)
+                          else None if text.count(m.find) == 1 else f"`find` occurs {text.count(m.find)} times, not once")
+                if unit is None or reason:
+                    results.append({"finding_id": m.finding_id, "path": m.path, "verdict": "INVALID", "reason": reason or "no unit check"})
+                    continue
+                target.write_text(text.replace(m.find, m.replace, 1))
+                ev = self.runner.run_check(unit.model_copy(update={"name": "mutation"}), copy, job_id=job_id,
+                                           head_sha=WorkspaceManager.head(copy), tree_sha=None, extra_env=self._toolchain_env(job_id),
+                                           base_sha=self._job(job_id)["base_sha"])
+                verdict = {str(GateVerdict.PASS): "SURVIVED", str(GateVerdict.FAIL_CODE): "KILLED"}.get(str(ev.verdict), "INVALID")
+                artifact = self.evidence.put(json.dumps({**m.model_dump(), "check_verdict": str(ev.verdict)}).encode(), "mutation",
+                                             self._agent_producer(res, "factory-test-adequacy"), job_id)
+                results.append({"finding_id": m.finding_id, "path": m.path, "verdict": verdict, "artifact_id": artifact,
+                                **({"reason": ev.excerpt[-600:]} if verdict == "INVALID" else {})})
+            finally:
+                self._drop_probe(job_id, copy)
+        if results:
+            with self.store.tx() as conn:
+                self.store.event(conn, job_id, "review.mutations", {"task_id": task_id, "mutations": [
+                    {k: r.get(k) for k in ("finding_id", "path", "verdict")} for r in results]})
+        return results
+
+    def _require_proof(self, job_id: str, task_id: str | None, review: str, verdict: str, findings: list[dict],
+                       proven: set[str], changed_tests: set[str]) -> tuple[str, list[dict]]:
+        """A low or medium finding blocks only once a run proved it (in this round or an earlier one of the task).
+
+        Measured (LearnEnglish F1-F6c): none of the 89 blocking findings of code-review and test-adequacy came with a
+        run, and each cost a task attempt. High and critical findings, the controller's own and findings on a test file
+        the task changed (weakening is visible in the diff) and findings feature acceptance escalated still block without one.
+        """
+        if verdict != "CHANGES":
+            return verdict, findings
+        key = f"{task_id}:{review}"
+        ctx_proven = self._ctx(job_id).get("proven_findings", {})
+        if proven - set(ctx_proven.get(key, [])):
+            self._set_ctx(job_id, proven_findings={**ctx_proven, key: sorted(proven | set(ctx_proven.get(key, [])))})
+        proven = proven | set(ctx_proven.get(key, []))
+        # feature acceptance escalated these after seeing them in the running app (_keep_escalations)
+        escalated = {f["finding_id"] for f in self._ctx(job_id).get("escalated_findings", [])
+                     if f["task_id"] == task_id and f["kind"] == review}
+
+        def exempt(f: dict) -> bool:
+            path = (f.get("location") or {}).get("path")
+            return (f["severity"] in ("high", "critical") or f["id"].startswith("CTRL-") or f["id"] in proven | escalated
+                    or (path is not None and path in changed_tests) or f.get("status") != "open")
+        unproven = [f["id"] for f in findings if f["blocking"] and not exempt(f)]
+        if not unproven:
+            return verdict, findings
+        out = [{**f, "blocking": False, "problem": f"[unproven: no run showed it] {f['problem']}"[:4000]}
+               if f["id"] in unproven else f for f in findings]
+        with self.store.tx() as conn:
+            self.store.event(conn, job_id, "findings.unproven", {"task_id": task_id, "review": review, "findings": unproven})
+        return ("CHANGES" if any(f["blocking"] for f in out) else "PASS"), out
 
     def _drop_probe(self, job_id: str, probe: Path) -> None:
         subprocess.run(["git", "worktree", "remove", "--force", str(probe)], cwd=self._job(job_id)["repo_path"], capture_output=True)

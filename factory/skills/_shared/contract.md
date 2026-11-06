@@ -113,6 +113,13 @@ Severity is the impact on a user or on the data, not how easy the fix is:
 A finding you describe as a real user-facing defect is never `low`. If you would write
 "the user loses", "is stuck", "is saved twice" or "cannot", it blocks.
 
+**Proof by a run (code-review, test-adequacy).** A `low` or `medium` blocking finding blocks only
+when a run proves it: a probe test that fails in the trusted runner (code-review) or a mutation the
+tests let through (test-adequacy), named in your payload (`probe_workspace.how`). Without one the
+controller records it as an open, non-blocking follow-up. `high` and `critical` findings, and findings
+on a test file the task changed (a weakened test or a bad fixture is visible in the diff), block
+without a run. Prove what you can; reading the code is how you find a defect, a run is how you show it.
+
 ### Past escapes
 
 `inputs.past_escapes` (when present) lists defects found after earlier features of this

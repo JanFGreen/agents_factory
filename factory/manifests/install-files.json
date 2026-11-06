@@ -209,6 +209,7 @@
   "src/agent_factory/identities.py",
   "src/agent_factory/knowledge.py",
   "src/agent_factory/lanes.py",
+  "src/agent_factory/lessons.py",
   "src/agent_factory/outbox.py",
   "src/agent_factory/policy.py",
   "src/agent_factory/preview.py",

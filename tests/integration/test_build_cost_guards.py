@@ -141,7 +141,8 @@ def test_medium_findings_become_follow_ups_after_the_round_limit(make_env):
     rounds: list = []
     env = make_env("standard", responders={"factory-plan": plan_reply(_tasks()), "factory-implement": Builder("none"),
                                           "factory-code-review": _code_review("medium", rounds)},
-                   **{"execution.max_builders_per_job": 1, "workflow.implementation.demote_medium_after_review_rounds": 2})
+                   **{"execution.max_builders_per_job": 1, "workflow.implementation.demote_medium_after_review_rounds": 2,
+                      "review.proof_required": []})
     job = env.submit("Add exclamation greeting and farewell")
     assert env.factory.run(job) == "READY_TO_MERGE"
     assert _tasks_state(env, job)["TASK-01"] == ("ACCEPTED", 3) and len(rounds) == 3
@@ -180,7 +181,7 @@ def test_ui_review_is_not_repeated_while_no_touched_screen_is_on_show(make_env):
 
     env = make_env("standard", responders={"factory-plan": plan_reply(_tasks(ui=True)), "factory-implement": Builder("none", ui=True),
                                           "factory-code-review": code_review, "factory-ui-review": ui_review},
-                   **{"execution.max_builders_per_job": 1})
+                   **{"execution.max_builders_per_job": 1, "review.proof_required": []})
     job = env.submit("Add exclamation greeting and farewell")
     assert env.factory.run(job) == "READY_TO_MERGE"
     assert _tasks_state(env, job)["TASK-01"] == ("ACCEPTED", 2)

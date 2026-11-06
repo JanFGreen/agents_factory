@@ -114,6 +114,21 @@ class PreviewSpec(BaseModel):
         return path
 
 
+class LessonRule(BaseModel):
+    """A recurring defect class (`agent_factory.lessons`) and the check of this manifest that enforces it."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    check: str
+    since: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")  # findings of the class after this day are repeats
+    note: str = ""
+
+    @field_validator("since", mode="before")
+    @classmethod
+    def _iso(cls, value: object) -> object:
+        return value.isoformat() if hasattr(value, "isoformat") else value  # YAML reads an unquoted day as a date
+
+
 class ChecksManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
@@ -123,6 +138,7 @@ class ChecksManifest(BaseModel):
     # linked read-only into each worktree because checks run without network.
     link_from_checkout: list[str] = []
     preview: PreviewSpec | None = None
+    lessons: dict[str, LessonRule] = {}
 
     @field_validator("link_from_checkout")
     @classmethod
@@ -134,7 +150,8 @@ class ChecksManifest(BaseModel):
         return paths
 
     def digest(self) -> str:
-        return digest(self.model_dump())
+        # the lessons table names checks and changes none of them; results of a job stay current when it grows
+        return digest(self.model_dump(exclude={"lessons"}))
 
     def for_stage(self, stage: str) -> list[CheckSpec]:
         order = {"task": ("task",), "acceptance": ("task", "acceptance"), "integration": ("task", "acceptance", "integration")}
@@ -143,6 +160,10 @@ class ChecksManifest(BaseModel):
 
 def load_checks(path: Path) -> ChecksManifest:
     manifest = ChecksManifest.model_validate(load_yaml(path))
+    names = {c.name for c in manifest.checks}
+    for lesson, rule in manifest.lessons.items():
+        if rule.check not in names:
+            raise ValueError(f"lessons.{lesson}: unknown check {rule.check!r}")
     for check in manifest.checks:
         for arg in check.argv:
             if "{" in arg and not any(p in arg for p in _PLACEHOLDERS):

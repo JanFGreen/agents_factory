@@ -643,6 +643,35 @@ def cmd_defect(args) -> int:
     return EXIT_OK
 
 
+def cmd_lessons(args) -> int:
+    from .lessons import CLASSES, proposal, recurring
+    from .runner import load_checks
+
+    cfg, store = _load(args)
+    repo = _repos(cfg).get(args.repo_id)
+    if repo is None:
+        print(f"refused: unknown repo id {args.repo_id!r} (see `factory init`)", file=sys.stderr)
+        return EXIT_REFUSED
+    manifest = load_checks(cfg.factory_dir / "checks" / f"{repo.get('checks') or 'default'}.yaml")
+    policy = cfg.factory.lessons
+    found = recurring(store, str(Path(repo["path"]).resolve()), classes={**CLASSES, **policy.classes},
+                      enforced=manifest.lessons, min_jobs=args.min_jobs or policy.min_jobs)
+    files = []
+    if args.write:
+        out = cfg.data_dir() / "lessons" / args.repo_id
+        out.mkdir(parents=True, exist_ok=True)
+        for lesson in found:
+            path = out / f"{lesson['class']}.yaml"
+            path.write_text(yaml.safe_dump(proposal(args.repo_id, lesson), allow_unicode=True, sort_keys=False))
+            files.append(str(path))
+    lines = [f"{c['class']}: {c['findings']} findings ({c['blocking']} blocking) in {c['jobs']} jobs"
+             + (f"; enforced by {c['enforced_by']} since {c['since']}, {c['found_after_enforcement']} found after"
+                if c["enforced_by"] else "; not enforced by any check") for c in found]
+    lines += [f"factory submit --file {f} --repo-id {args.repo_id}" for f in files]
+    _out(args, {"lessons": found, "files": files}, "\n".join(lines) or "no recurring defect classes")
+    return EXIT_OK
+
+
 def cmd_eval(args) -> int:
     from .evals import run_suite
 
@@ -787,6 +816,11 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--repo")
     d.add_argument("--limit", type=int, default=50)
     s.set_defaults(fn=cmd_defect)
+    s = sub.add_parser("lessons", help="defect classes reviews keep finding in a repo, and a request to move each into the checks")
+    s.add_argument("--repo-id", required=True)
+    s.add_argument("--min-jobs", type=int)
+    s.add_argument("--write", action="store_true", help="write a feature request per class to submit")
+    s.set_defaults(fn=cmd_lessons)
     s = sub.add_parser("eval")
     s.add_argument("--suite", required=True)
     s.add_argument("--profile", required=True, choices=["full", "single-agent"])

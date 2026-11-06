@@ -43,7 +43,11 @@ does not fix tests and does not trust the builder's description of them.
    (drop the owner filter, off-by-one on page boundary, ignore filter on page 2,
    swallow the error). Decide from the test code (or a mutation run if available)
    whether some test fails. Record `detected | missed | not_run`. A `missed` probe on
-   a requirement assertion is blocking.
+   a requirement assertion is blocking, and it needs proof (contract: "Proof by a run"): make
+   the edit in `probe_workspace.dir`, run `test_command`, see the tests still pass, undo it,
+   and name it in `mutations` as `{finding_id, path, find, replace}` (`find` occurs once in the
+   file at `head_sha`, never in a test file). The controller applies each mutation to a fresh copy
+   and runs the tests: `SURVIVED` proves the finding, `KILLED` refutes it.
 5. Weakening: inspect diffs of existing tests and configs for removed assertions,
    loosened comparisons, new `skip`/`xfail`, raised timeouts, deleted tests,
    narrowed fixtures, or excluded paths in test config. Each needs a justification
@@ -65,6 +69,8 @@ Envelope per contract, `kind: "test-adequacy"`. Payload:
   ],
   "weakened_tests": [{"path": "tests/history/test_api.py", "change": "assert len(items) == 10 -> assert items", "justified": false}],
   "fixture_sanity": [{"fixture": "user_a_25_operations", "issue": "none"}],
+  "mutations": [{"finding_id": "TA-1", "path": "src/history/repository.py",
+                 "find": ".filter(owner_id=user.id)", "replace": ""}],
   "tests_executed": 42
 }
 ```

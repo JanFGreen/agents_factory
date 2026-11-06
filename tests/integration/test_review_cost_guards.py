@@ -67,7 +67,8 @@ class CodeReview:
 def _env(make_env, review: CodeReview, tasks: list[dict] | None = None, **overrides):
     return make_env("standard", responders={"factory-plan": plan_reply(tasks or _tasks()), "factory-implement": builder,
                                             "factory-code-review": review},
-                    **{"execution.max_builders_per_job": 1, "review.cheaper_models_for_risk": [], **overrides})
+                    **{"execution.max_builders_per_job": 1, "review.cheaper_models_for_risk": [],
+                       "review.proof_required": [], **overrides})  # findings here drive rounds, not proof
 
 
 def _events(env, job, kind: str) -> list:

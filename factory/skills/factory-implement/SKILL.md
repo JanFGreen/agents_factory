@@ -31,6 +31,9 @@ controller decides. You never approve, merge or close findings.
   when it is cheap and inside `file_scope`; never widen scope or change requested behavior for them.
 - `design`: path of the design direction document (`doc`, `exists`) and reference images.
 - `file_scope_rule`: what the policy gate enforces on changed files, and the self-check to run before handing over.
+- `recurring_defects`: defect classes reviews of this repository found in several jobs (`class`, `jobs`,
+  `examples`, `enforced_by` when a check exists and still let it through). Before you hand off, check every
+  element your change adds or alters for each class; the reviews will look for them.
 - `gate_fixup` (only on a fix-up pass): the gate refused this attempt (`verdict`, `reason`, failing check `excerpt`).
   See "Gate fix-up" below.
 
@@ -54,7 +57,8 @@ controller decides. You never approve, merge or close findings.
    follows the required sections in its spec. Changing a token or the direction is stated
    in the handoff, never done silently.
 5. Address every open finding ID from earlier attempts; describe the fix per ID in
-   `handoff`. Do not mark findings fixed — an evaluator does.
+   `handoff`. Do not mark findings fixed — an evaluator does. A finding marked
+   `[unproven: no run showed it]` is a follow-up: fix it when it is cheap and inside `file_scope`.
 6. Run the quick local checks (tests, lint, types) you are allowed to run and list them
    in `claimed_checks` with their result. These are claims; the trusted gate reruns them.
 7. Hidden complexity: if the real change needs new interfaces, migration, extra modules,

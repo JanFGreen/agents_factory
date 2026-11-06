@@ -392,6 +392,11 @@ class ReviewPolicy(Strict):
     # Role -> model for task reviews of tasks at these difficulty levels and for every fix-check round, at any risk.
     lighter_models: dict[str, str] = {"code_reviewer": "claude-sonnet-5-5"}
     lighter_models_for_difficulty: list[Literal["easy", "medium", "hard"]] = ["easy", "medium"]
+    # A low or medium finding of these reviews blocks only when a run proves it: a probe test that fails in the trusted
+    # runner (code-review), a mutation the tests let through (test-adequacy). Unproven ones are open follow-ups.
+    # Measured on LearnEnglish F1-F6c: none of 89 blocking findings of the two reviews came with a run.
+    proof_required: list[_REVIEWS] = ["code-review", "test-adequacy"]
+    max_mutations: int = Field(default=4, ge=0, le=10)  # mutation runs per test-adequacy review (one test run each)
 
     @model_validator(mode="after")
     def _every_review_once(self) -> "ReviewPolicy":
@@ -483,6 +488,13 @@ class BrowserConfig(Strict):
         return sizes
 
 
+class LessonsPolicy(Strict):
+    """Recurring defect classes (`agent_factory.lessons`): when one goes to the builder and into a proposed check."""
+
+    min_jobs: int = Field(default=3, ge=2)  # a class found in this many jobs of a repo is recurring
+    classes: dict[str, str] = {}  # extra classes: name -> regex over finding text, added to the built-in ones
+
+
 class FactoryConfig(Strict):
     schema_version: Literal[1]
     data_dir: str
@@ -494,6 +506,7 @@ class FactoryConfig(Strict):
     runtime: Runtime
     review: ReviewPolicy = ReviewPolicy()
     spec: SpecPolicy = SpecPolicy()
+    lessons: LessonsPolicy = LessonsPolicy()
     browser: BrowserConfig | None = None
     design: DesignPolicy = DesignPolicy()
     routing: Routing = Routing()
