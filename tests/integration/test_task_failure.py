@@ -232,3 +232,19 @@ def test_a_second_retry_keeps_the_earlier_operator_note(make_env):
     env.factory.retry_task(job, "TASK-01", 1, "Fix the blocking review findings")
     note = env.store.job_context(job)["operator_notes"]["TASK-01"]
     assert note.startswith("Fix the blocking review findings") and "A. make the transaction synchronous" in note
+
+
+def test_an_accepted_task_can_be_reopened_from_a_blocked_integration(make_env):
+    """Live finding (LearnEnglish F6c-A): integration review was BLOCKED twice on a criterion no trusted check ran;
+    resuming only repeated that review, while the owner task could make the criterion executable."""
+    blocked = FakeReply(envelope("integration-review", verdict="BLOCKED", summary="no trusted run of AC-1"))
+    env = make_env("trivial", responders={"factory-integration-review": [blocked, blocked,
+                                                                         FakeReply(envelope("integration-review"))]})
+    job = env.submit()
+    assert env.factory.run(job) == "NEEDS_HUMAN"
+    assert env.store.job_context(job)["resume_state"] == "INTEGRATION"
+    env.factory.retry_task(job, "TASK-01", 1, "make AC-1 a test the gate runs")
+    assert _states(env, job)["TASK-01"] == "REWORK"
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert env.calls("factory-implement") == 2 and env.calls("factory-integration-review") == 3

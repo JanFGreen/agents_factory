@@ -1672,8 +1672,11 @@ class Factory(ParallelLanes):
         if S(self._job(job_id)["state"]) not in HALTED:
             raise TransitionRefused("retry a task only while the job is halted")
         reopened = task["state"] == "ACCEPTED"
-        if reopened and S(self._ctx(job_id).get("resume_state") or S.INTAKE) not in (S.BUILD_TASK, S.FEATURE_ACCEPTANCE):
-            raise TransitionRefused("reopen an accepted task only while the job is building or at feature acceptance")
+        # Integration too (LearnEnglish F6c-A: integration review BLOCKED twice on a criterion no trusted check ran; the
+        # owner task could make it executable, but the job could only be resumed into the same BLOCKED review).
+        if reopened and S(self._ctx(job_id).get("resume_state") or S.INTAKE) not in (
+                S.BUILD_TASK, S.FEATURE_ACCEPTANCE, S.INTEGRATION):
+            raise TransitionRefused("reopen an accepted task only while the job is building, at feature acceptance or at integration")
         max_attempts = self.cfg.workflow.implementation.max_attempts_per_leaf_task
         bases = self._ctx(job_id).get("task_base", {})
         bases.pop(task_id, None)  # the retry starts from the head at that time
