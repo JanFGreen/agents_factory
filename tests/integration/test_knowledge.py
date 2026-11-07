@@ -79,7 +79,8 @@ def test_broken_wikilinks_name_no_note_of_the_vault(tmp_path):
     (vault / "graph").mkdir(parents=True)
     (vault / "graph" / "GRAPH_REPORT.md").write_text("x")
     (vault / "PRODUCT.md").write_text("[[GRAPH_REPORT]] [[graph/GRAPH_REPORT|report]] [[PRODUCT#Modes]] ![[pic.png]]\n"
-                                      "```\n[[inside code]]\n```\n[[Missing note]]\n")
+                                      "```\n[[inside code]]\n```\n[[Missing note]]\n"
+                                      "A format example: `[[Words/<name>|<lemma>]]` and ``[[x]]``, not links.\n")
     assert knowledge.broken_wikilinks(tmp_path, "docs") == ["docs/PRODUCT.md: [[Missing note]]"]
 
 

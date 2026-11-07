@@ -35,6 +35,9 @@ DOC_SUFFIXES = (".md", ".mdx", ".txt", ".rst")
 DOCS_MODEL = "haiku"  # graphify: haiku is enough for naming communities and short doc extraction
 _WIKILINK = re.compile(r"(?<!!)\[\[([^\]|#^]+)(?:[#^][^\]|]*)?(?:\|[^\]]*)?\]\]")
 _FENCE = re.compile(r"```.*?```", re.DOTALL)
+# inline code: Obsidian shows `[[x]]` as text, not as a link (live finding, LearnEnglish F8: a format example in
+# docs/ARCHITECTURE.md failed integration as a broken link)
+_INLINE_CODE = re.compile(r"(`+)(?!`).+?(?<!`)\1")
 
 
 class KnowledgeError(RuntimeError):
@@ -95,9 +98,13 @@ def dependency_map(graph_path: Path, max_chars: int = 40000) -> dict[str, list[s
     return dict(sorted(result.items()))
 
 
+def _without_code(text: str) -> str:
+    return _INLINE_CODE.sub("", _FENCE.sub("", text))
+
+
 def wikilinks(text: str) -> list[str]:
-    """The targets of the [[wikilinks]] in a text, outside code fences."""
-    return [t.strip() for t in _WIKILINK.findall(_FENCE.sub("", text))]
+    """The targets of the [[wikilinks]] in a text, outside code fences and inline code."""
+    return [t.strip() for t in _WIKILINK.findall(_without_code(text))]
 
 
 def broken_wikilinks(root: Path, vault: str) -> list[str]:
@@ -110,7 +117,7 @@ def broken_wikilinks(root: Path, vault: str) -> list[str]:
     for note in notes:
         if note.suffix != ".md":
             continue
-        for target in _WIKILINK.findall(_FENCE.sub("", note.read_text(errors="replace"))):
+        for target in _WIKILINK.findall(_without_code(note.read_text(errors="replace"))):
             if target.strip().lower() not in names:
                 broken.append(f"{note.relative_to(root)}: [[{target.strip()}]]")
     return broken
