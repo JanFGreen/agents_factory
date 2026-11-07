@@ -2582,7 +2582,7 @@ class Factory(ParallelLanes):
             path = (finding.get("location") or {}).get("path")
             for t in tasks:
                 scope = json.loads(t["spec_json"]).get("file_scope") or []
-                if path and any(fnmatch.fnmatch(path, s) or path.startswith(s.rstrip("/") + "/") for s in scope):
+                if path and any(path == s or fnmatch.fnmatch(path, s) or path.startswith(s.rstrip("/") + "/") for s in scope):
                     return t["task_id"]
         ids = [t["task_id"] for t in tasks]
         return proposed if proposed in ids else ids[-1]

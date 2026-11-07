@@ -122,7 +122,10 @@ def max_risk(*levels: str) -> str:
 
 
 def _matches(path: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+    # "[" is literal: Expo Router names files "[id].tsx", and as a glob class "[id]" never matches that name
+    # (live finding, LearnEnglish F7 TASK-19: src/app/sources/[id].tsx was "outside" its own scope three times).
+    # Policy patterns use only * and ?.
+    return any(path == pattern or fnmatch.fnmatchcase(path, pattern.replace("[", "[[]")) for pattern in patterns)
 
 
 _JS_TEST = re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$")

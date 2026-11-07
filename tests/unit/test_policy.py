@@ -50,6 +50,14 @@ def test_file_scope_enforced(policy):
     assert evaluate_diff([FileDiff("app/greet.py", "M", "+x")], policy, task_file_scope=["app/greet.py"]).ok
 
 
+def test_a_scope_entry_with_brackets_matches_itself(policy):
+    """Expo Router dynamic routes: as a glob, "[id]" matches one character, never the literal file name."""
+    scope = ["src/app/sources/[id].tsx", "src/app/[...rest]/"]
+    assert evaluate_diff([FileDiff("src/app/sources/[id].tsx", "A", "+x")], policy, task_file_scope=scope).ok
+    assert evaluate_diff([FileDiff("src/app/[...rest]/index.tsx", "A", "+x")], policy, task_file_scope=scope).ok
+    assert not evaluate_diff([FileDiff("src/app/sources/i.tsx", "A", "+x")], policy, task_file_scope=scope).ok
+
+
 @pytest.mark.parametrize("path", ["src/ui/Card.test.tsx", "src/a.spec.ts", "src/b.test.mjs", "tests/helpers.ts", "app/test_x.py"])
 def test_js_and_python_test_files_are_always_in_scope(policy, path):
     assert evaluate_diff([FileDiff(path, "A", "+x")], policy, task_file_scope=["src/domain/"]).ok
