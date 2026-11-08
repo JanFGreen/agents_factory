@@ -48,7 +48,12 @@ controller decides. You never approve, merge or close findings.
    a task without tests proving its acceptance is rejected by test-adequacy review.
 4. GREEN: implement the minimum change within `file_scope`. Touching files outside it,
    lockfiles, public APIs or migrations not named in the task requires a finding,
-   not a silent edit. Follow the engineering principles: stay inside the size limits,
+   not a silent edit. Before writing new code, climb the EP-5 ladder (needed now? already in
+   the codebase? standard library or platform? installed dependency? one line?) and take the
+   first step that fully works; what the task did not need goes under `Skipped:` in the
+   handoff. A bug fix or a changed signature reaches every caller and fixes the shared code
+   (EP-20); a limit taken on purpose gets its `shortcut:` comment (EP-21). Never cut what the
+   principles list under "What lean never cuts". Follow the engineering principles: stay inside the size limits,
    reuse the existing unit instead of copying it (EP-4), add a variant by adding a unit
    (EP-10), keep state and its rules together in a class (EP-15), use the API of the
    installed version (EP-12). When a limit or the clone check fails, restructure; never silence it with a suppression comment.

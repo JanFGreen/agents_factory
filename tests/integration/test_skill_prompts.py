@@ -23,6 +23,10 @@ def test_principles_and_references_reach_the_agents_that_follow_them(make_env):
     assert "# Engineering principles" in env.factory._skill_text("factory-plan")
     for skill in ("factory-implement", "factory-code-review", "factory-plan"):  # the object-oriented default
         assert "EP-15" in env.factory._skill_text(skill)
+    for skill in ("factory-implement", "factory-code-review"):  # the smallest complete change and its lean pass
+        text = env.factory._skill_text(skill)
+        assert all(rule in text for rule in ("EP-20", "EP-21", "What lean never cuts", "shortcut:", "Skipped:"))
+    assert "climb the EP-5 ladder" in implement and "lean pass" in review
     intake = env.factory._skill_text("factory-intake")
     assert "# Engineering principles" not in intake and "# Reference: references/normalization.md" in intake
 

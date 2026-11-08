@@ -30,6 +30,9 @@ as that engineer reviewing a stranger's pull request, and fix what they would se
   no copy-pasted fixtures.
 - **A bigger diff than needed.** Every changed line serves the task. Unrelated
   reformatting, renames and "while I was here" changes go out.
+- **Code that need not exist.** An option, wrapper, conversion, helper or dependency the
+  task did not need; a new helper beside one the codebase already has; something the
+  standard library does (EP-5). Delete it, reuse the existing one, or name it under `Skipped:`.
 
 ## The test
 

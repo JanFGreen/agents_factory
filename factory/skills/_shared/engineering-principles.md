@@ -3,6 +3,8 @@
 Concrete rules behind KISS, DRY, SOLID and modularity, written so that each one can be
 checked. Every rule has an ID; findings cite it (`EP-4: ...`). The repository's own rules
 (`AGENTS.md`, `docs/ENGINEERING.md` or equivalent) are more specific and win on conflict.
+The EP-5 ladder, EP-20, EP-21 and the lean pass are adapted from ponytail
+(github.com/DietrichGebert/ponytail, MIT, Copyright (c) 2026 DietrichGebert).
 
 **Who checks what.** Rules marked *gate* are enforced by the trusted checks of the repo's
 stack profile (below). A failing gate already rejects the change, so a reviewer does not
@@ -19,7 +21,7 @@ restructure the code instead.
 | EP-2 | **One responsibility.** A module can be described in one sentence without "and". It exports only what its callers use. | review |
 | EP-3 | **Small units.** Per stack profile; default: cyclomatic complexity ≤ 10, nesting ≤ 3, ≤ 4 parameters (more: one options object), function ≤ 60 lines, file ≤ 300 lines. | gate |
 | EP-4 | **One home for each piece of knowledge.** No new copied block (≥ 50 tokens). A business rule, constant, schema or mapping lives in one place; two different implementations of the same rule are a defect even when the text differs. | gate (copies), review (same rule written twice) |
-| EP-5 | **Simplest thing that works (KISS, YAGNI).** No abstraction, option, flag or hook without two current uses or a `required_now` need. Prefer data to configuration. A class is not an abstraction in this sense: EP-15 decides between a class and functions. | review |
+| EP-5 | **Smallest complete change (KISS, YAGNI).** Before writing new code, take the first step that fully works: (1) is it needed now (acceptance or a `required_now` constraint)? Leave the rest out and name it under `Skipped:` in the handoff; (2) the codebase already has it (a helper, component, service, pattern): use it the way the surrounding code does; (3) the language's standard library or the platform has it; (4) an installed dependency has it (never add one for a few lines, EP-12); (5) one line a reader gets at a glance; (6) only then the minimum new code that works. No abstraction, option, flag, wrapper, type conversion or hook without two current uses or a `required_now` need; keep values in the form the platform already gives. Prefer data to configuration and deletion to addition. Lazy about the solution, never about the change: every caller, test and fixture the change breaks is part of it. A class is not an abstraction in this sense: EP-15 decides between a class and functions. | review |
 | EP-6 | **Explicit dependencies.** Time, randomness, I/O, environment and network come in as parameters or ports. No module-level mutable state, no stateful singletons. | review |
 | EP-7 | **Validate at the boundary.** External input (HTTP, files, storage, env, other services) is parsed once at the edge into typed values; inside, types are trusted. | review |
 | EP-8 | **Errors are values or specific types.** Expected failures are typed results or specific errors and are never swallowed; programmer errors fail fast. | review |
@@ -34,11 +36,21 @@ restructure the code instead.
 | EP-17 | **Fetched state has a lifecycle.** State read from a server or store has explicit states (loading, ready, failed with a retry) and named refresh events (a successful sync, a session change, focus or foreground, a known expiry). Fetching once on mount is a defect when the value can change while the screen stays mounted. | review |
 | EP-18 | **Fail closed on invalid data.** Config and stored values that grant access (limits, plans, expiry dates) are validated where they enter: at startup, and at the repository read. NaN, Infinity, negative or fractional limits and unparsable dates are rejected or mean "no access", never "unlimited" or "never expires". | review |
 | EP-19 | **Abstractions keep what the caller needs.** A function returns the whole value its callers decide on (the effective grant `{ plan, expiresAt }`, not only the plan id), so no caller reconstructs the rest by guessing. A compatibility projection is named for what it projects (`legacyPremiumMarker`), not for the concept it replaces. | review |
+| EP-20 | **Fix at the source.** Before changing a function's behaviour, signature or return value, find every caller (grep) and keep each one working. A bug in shared code is fixed once there, not patched in the one caller that showed it. Code that is moved or merged keeps its validation and error handling. | review |
+| EP-21 | **Named shortcuts.** A limit taken on purpose to keep the change small (a linear scan over a list capped at 50 items, an in-process cache while the app runs on one server, one retry) carries a comment at that line: `shortcut: <the limit>, <when to upgrade>`. It is a recorded decision, not a defect, until the expected load, input or a requirement crosses the limit. It never covers anything from "What lean never cuts". | review |
+
+**What lean never cuts** (EP-5 and EP-21 stop here): validation at a trust boundary (EP-7),
+error handling that prevents data loss (EP-8, EP-16), security, accessibility, fail-closed
+checks (EP-18), the tests the test plan names, and anything the task asks for. Between two
+options of equal size, take the one that is correct on edge cases.
 
 ## Design patterns
 
-Use a pattern when the code has the problem it solves, not to look designed. These suit
-code written and changed by agents because they keep every change local and explicit.
+Use a pattern when the code has the problem it solves now, in this change, not to look
+designed or for a variant that may come later (EP-5). These suit code written and changed by
+agents because they keep every change local and explicit. A port earns its place with a
+second implementation or with a test that would otherwise need the network, a real clock,
+randomness or a real store (EP-14); otherwise call the module directly.
 
 | Problem in the code | Pattern |
 |---|---|
@@ -56,7 +68,10 @@ code written and changed by agents because they keep every change local and expl
 **Over-engineering (EP-5 findings):** an interface or abstract class with one
 implementation and no test fake; a factory that builds one type; a plugin system with one
 plugin; inheritance deeper than one level; an event bus or observer where a direct call
-would do; generic "base" classes for code that is not yet repeated.
+would do; generic "base" classes for code that is not yet repeated; a wrapper that only
+renames or forwards; a conversion of a value the platform already gives in the needed form;
+a new helper next to an existing one that does the same; a dependency for what the standard
+library does; an option or setting nobody sets.
 
 **Avoid in agent-written code:** hidden control flow (global event buses, decorators or
 metaprogramming that change behaviour, monkey-patching); god objects; service locators;
@@ -67,6 +82,14 @@ from that slice is behaviour it will break.
 
 - Report a *review* rule only with the concrete location and the cost it causes ("TASK-05
   will have to edit both copies", "every new mode edits three switches").
+- Lean pass (EP-5): look for code that need not exist and name the smaller thing, in one of
+  these classes: *delete* (dead code, an unused export, option or parameter, a speculative
+  feature), *reuse* (the repo already has it: name the path), *stdlib* (the standard library
+  or platform does it, or a new dependency does a few lines' work), *yagni* (an abstraction
+  with one implementation, a setting nobody sets), *merge* (near-copies that must change
+  together). Each needs the location and what it costs; no case, no finding.
+- A `shortcut:` comment (EP-21) is a decision: report it only when the expected load, input
+  or a requirement already crosses the limit it names.
 - Blocking: EP-1, EP-4 (same rule twice), EP-6 (hidden global state), EP-10, EP-13, EP-16, EP-17
   and EP-18 when the diff introduces the problem on a path users or later tasks will hit. Other rules are
   non-blocking (`medium` or `low`), and so is anything that existed before the diff.

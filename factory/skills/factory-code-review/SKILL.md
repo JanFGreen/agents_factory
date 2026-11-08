@@ -51,6 +51,9 @@ complexity than the classification assumed.
    `problem` (for a principle: its ID and the cost it causes), and an `expected_fix`
    (direction, not a patch). Do not report what the trusted gate enforces (complexity,
    sizes, copied blocks, layer imports, deprecated APIs, formatting): it already passed.
+   Run the principles' lean pass on the diff (EP-5: delete, reuse, stdlib, yagni, merge) and
+   propose the smaller thing; a lean finding is `low` and non-blocking unless it is EP-4's same
+   rule written twice. Read the handoff's `Skipped:` line before reporting something as missing.
 5. Failure modes (every file in `effect_sites`, see `references/failure-modes.md`): for each
    effectful operation fill one `failure_modes` entry and answer all seven scenarios
    (`timeout`, `cancellation`, `retry_idempotent`, `lost_response`, `double_submit`,

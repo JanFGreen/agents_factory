@@ -704,7 +704,7 @@ Agent review:
 
 ## Engineering principles and quality checks (`_shared/engineering-principles.md`)
 
-Concrete rules instead of SOLID/DRY/KISS slogans: each has an ID (`EP-1`…`EP-19`) and is marked
+Concrete rules instead of SOLID/DRY/KISS slogans: each has an ID (`EP-1`…`EP-21`) and is marked
 as *gate* (checked by a tool) or *review* (judged by the code reviewer). The builder, code reviewer and
 planner have them in their prompt (`Follow ../_shared/engineering-principles.md` in `SKILL.md`). The controller
 appends to the prompt every `_shared` file the skill points to, plus the skill's own `references/*.md`:
@@ -735,6 +735,22 @@ the agent does not read `factory/`, so otherwise the checklists would not reach 
   - EP-19: functions return the whole value their callers decide on.
 
   The code review checklist and the security threat checklist ask about each of them.
+- **Smallest complete change (EP-5, EP-20, EP-21)**, adapted from ponytail (MIT). In the 1136 findings recorded
+  up to 2026-11-08 no reviewer cited EP-5, while dead code was left behind in two LearnEnglish tasks and
+  caught only as an unmet task output or a planned follow-up. Now:
+  - EP-5 is an ordered ladder the builder climbs before writing new code: needed now, already in the
+    codebase, standard library or platform, installed dependency, one line, only then new code. What the
+    task did not need goes on the handoff's `Skipped:` line;
+  - EP-20: a changed function's callers all keep working, a shared bug is fixed in the shared code, moved
+    code keeps its validation;
+  - EP-21: a limit taken on purpose carries `shortcut: <limit>, <when to upgrade>` and is a decision, not
+    a finding, until the expected load crosses it;
+  - "What lean never cuts": trust-boundary validation, data-loss error handling, security, accessibility,
+    fail-closed checks, the planned tests, anything the task asks for;
+  - patterns and ports only for a problem the change has now; a port needs a second implementation or a
+    test that would otherwise need real I/O, time or randomness;
+  - the code reviewer runs a lean pass (delete, reuse, stdlib, yagni, merge); its findings are `low`
+    and non-blocking, except EP-4's same rule written twice.
   Test-adequacy requires, for every claimed guarantee, a test that fails when the mechanism is removed.
   In JavaScript, `Promise.all` over synchronous handlers does not interleave them. A time-dependent UI test
   changes the value while the screen stays mounted.

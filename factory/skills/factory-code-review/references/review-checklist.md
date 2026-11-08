@@ -35,7 +35,11 @@ Source: blueprint §7.8, §10.1 (Code reviewer), §11.1, §11.4.
 - [ ] follows existing module patterns (repo-map); no parallel mechanism
 - [ ] EP-2 each touched module still has one responsibility; exports only what callers use
 - [ ] EP-4 no business rule, constant or schema now implemented twice (also when worded differently)
-- [ ] EP-5 no abstraction, option or hook without a current second use
+- [ ] EP-5 lean pass: nothing to delete, reuse (name the path), replace with the standard library, drop as
+      yagni or merge with a near-copy; `Skipped:` in the handoff names what was left out on purpose
+- [ ] EP-20 a changed function's callers all still work; a shared bug is fixed in the shared code; moved code
+      kept its validation and error handling
+- [ ] EP-21 a `shortcut:` limit is not already crossed by the expected load, input or a requirement
 - [ ] EP-6 no new hidden global/mutable state; time, random and I/O injected
 - [ ] EP-7/EP-8 input parsed at the boundary; errors typed, none swallowed
 - [ ] EP-10 a new variant did not require editing the same switch in several places
