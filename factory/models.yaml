@@ -4,20 +4,23 @@
 schema_version: 1
 
 # How the agent is run (a program with tools, not the bare API: roles read the repo and edit files).
-# Each one runs in the factory sandbox. pass_env: {variable in the agent: variable on the operator side} — only these
-# variables reach the agent (the agent can read them; for shared keys a proxy is better).
+# Each one runs in the factory sandbox. pass_env: {variable in the agent: variable on the operator side}: only these
+# variables reach the agent, and it can read them. proxy_keys: the agent gets a one-time token for the controller's
+# key proxy instead of the key (keyproxy.py); the proxy adds the key, enforces the call's budget, revokes it at the end.
 runtimes:
   claude:
     binary: claude
     min_cli_version: "2.1.280"          # older CLIs do not support 5.x models (the API rejects the request)
   codex:                                # OpenAI; login via `codex login` (ChatGPT) or an API key
     binary: tools/codex/node_modules/.bin/codex
-    pass_env: { OPENAI_API_KEY: OPENAI_API_KEY }
+    proxy_keys:
+      OPENAI_API_KEY: { source: OPENAI_API_KEY, upstream: "https://api.openai.com/v1", base_url_env: OPENAI_BASE_URL }
   opencode:                             # Gemini, OpenAI, Anthropic API and servers from `endpoints`
     binary: tools/opencode/node_modules/.bin/opencode
-    pass_env:
-      GOOGLE_GENERATIVE_AI_API_KEY: GEMINI_API_KEY
-      OPENAI_API_KEY: OPENAI_API_KEY
+    proxy_keys:
+      GOOGLE_GENERATIVE_AI_API_KEY: { source: GEMINI_API_KEY, upstream: "https://generativelanguage.googleapis.com/v1beta",
+                                      header: x-goog-api-key, provider: google }
+      OPENAI_API_KEY: { source: OPENAI_API_KEY, upstream: "https://api.openai.com/v1", provider: openai }
 
 # Model servers compatible with the OpenAI API (Ollama, LM Studio, llama.cpp, vLLM): on this machine or on
 # others (e.g. several Mac minis). A role with `endpoints` gets a free and reachable server from the pool; when none

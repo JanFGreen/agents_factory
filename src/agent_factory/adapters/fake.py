@@ -23,6 +23,7 @@ class FakeReply:
     cost_usd: float | None = 0.01
     hang: bool = False
     log: str | None = None  # the run's event log (JSON lines), written next to the worktree and named in the handle
+    plan_usage: dict | None = None  # subscription windows the run reports, as the Claude adapter parses them
 
 
 Responder = Callable[[AgentRequest], FakeReply]
@@ -82,7 +83,8 @@ class FakeRuntime:
                     target.write_text(content)
             text = reply.raw_text if reply.raw_text is not None else f"```json\n{json.dumps(reply.envelope)}\n```"
             self._results[run_id] = RunSnapshot(
-                reply.state, output_text=text, usage=Usage(100, 50, reply.cost_usd), model_id=request.model, events_seen=1
+                reply.state, output_text=text, usage=Usage(100, 50, reply.cost_usd), model_id=request.model, events_seen=1,
+                plan_usage=reply.plan_usage,
             )
         log_path = None
         if reply.log is not None:

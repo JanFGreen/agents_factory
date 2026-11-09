@@ -14,9 +14,13 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..sandbox import Sandbox, SandboxPolicy
 from .protocol import AgentRequest, CancelResult, RunHandle
+
+if TYPE_CHECKING:
+    from ..keyproxy import KeyProxy
 
 # Environment the agent process may see. Operator tokens (GH_TOKEN, cloud keys…) never pass,
 # except the variables a runtime's `pass_env` names explicitly (models.yaml).
@@ -28,13 +32,25 @@ class CliRuntime:
     # Home-relative paths the CLI writes (auth refresh, caches, session state); everything else stays read-only.
     home_writable: tuple[str, ...] = (".cache", "Library/Caches", ".local/state")
 
-    def __init__(self, binary: str, sandbox: Sandbox, log_dir: Path, pass_env: dict[str, str] | None = None):
+    prices: dict[str, dict[str, float]] = {}
+
+    def __init__(self, binary: str, sandbox: Sandbox, log_dir: Path, pass_env: dict[str, str] | None = None,
+                 proxy_keys: dict | None = None, key_proxy: "KeyProxy | None" = None):
         self.binary = binary
         self.sandbox = sandbox
         self.log_dir = log_dir
         self.pass_env = pass_env or {}  # target variable -> source variable in the controller environment
+        self.proxy_keys = proxy_keys or {}  # target variable -> ProxyKeyDef (route of the key proxy)
+        self.key_proxy = key_proxy
         log_dir.mkdir(parents=True, exist_ok=True)
         self._procs: dict[str, subprocess.Popen] = {}
+        self._grants: dict[str, list[str]] = {}  # attempt id -> proxy tokens of the call, until it is launched
+
+    def proxy_route(self, target: str) -> str:
+        return f"{self.name}-{target.lower()}"
+
+    def proxy_base_url(self, target: str) -> str | None:
+        return self.key_proxy.base_url(self.proxy_route(target)) if self.key_proxy and target in self.proxy_keys else None
 
     # --- launching -------------------------------------------------------------------
 
@@ -55,6 +71,15 @@ class CliRuntime:
         env["HOME"] = str(Path.home())
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env.update({target: os.environ[source] for target, source in self.pass_env.items() if source in os.environ})
+        for target, key in self.proxy_keys.items():  # a token valid for this call only, never the key itself
+            if self.key_proxy is None or not os.environ.get(key.source):
+                continue
+            token = self.key_proxy.grant(self.proxy_route(target), request.timeout_seconds + 300, request.max_budget_usd,
+                                         self.prices.get(request.model))
+            self._grants.setdefault(request.attempt_id, []).append(token)
+            env[target] = token
+            if key.base_url_env:
+                env[key.base_url_env] = self.key_proxy.base_url(self.proxy_route(target))
         if request.sandbox_policy is not None:
             env.update(request.sandbox_policy.env)  # e.g. PATH with the repo's pinned Node first
         return env
@@ -72,7 +97,8 @@ class CliRuntime:
         return RunHandle(
             run_id, request.job_id, request.attempt_id, request.session_id, proc.pid, log_path, time.time(),
             meta={"stderr": str(err_path), "deadline": time.time() + request.timeout_seconds, "model": request.model,
-                  "cwd": str(request.cwd), "tools": list(request.tools), "runtime": self.name, **(meta or {})},
+                  "cwd": str(request.cwd), "tools": list(request.tools), "runtime": self.name,
+                  "proxy_tokens": self._grants.pop(request.attempt_id, []), **(meta or {})},
         )
 
     # --- observing -------------------------------------------------------------------

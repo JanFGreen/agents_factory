@@ -65,6 +65,13 @@ Control: `sandbox.py`.
   home (Claude CLI auth is in the keychain/configuration). `GH_TOKEN`, `ANTHROPIC_API_KEY`, cloud keys
   are not passed.
 - `gh` runs only in the controller process (`GhCliTransport`), never in the sandbox.
+- Model API keys of other runtimes (codex, opencode) go through `proxy_keys` (`keyproxy.py`), not `pass_env`.
+  - The agent holds a one-time `kp-…` token for its own call. The controller's proxy on 127.0.0.1 swaps it for
+    the key. The key never enters the sandbox, the environment or a log.
+  - A leaked token works only through this machine's proxy, only until the call ends (revoked) or times out,
+    and only within the call's budget (HTTP 402) or 2000 requests.
+  - Residual risk: during its own call an agent can spend that budget on requests of its choice.
+  - `pass_env` with the same variable is a configuration error.
 
 ### 3. False PASS (agent claims tests passed / plants a report)
 

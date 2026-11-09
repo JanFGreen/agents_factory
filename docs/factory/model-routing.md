@@ -34,7 +34,16 @@ apply. Tools are not restricted by a list as in Claude: a read-only reviewer is
 enforced by the sandbox (worktree without write access).
 
 - **`pass_env`** (`runtimes.<name>`): `{variable in the agent: variable on the operator side}`. Only these variables
-  reach the agent; the agent can read them. For shared keys a proxy is better.
+  reach the agent, and the agent can read them, so no key goes here.
+- **`proxy_keys`** (`runtimes.<name>`): `{variable in the agent: {source, upstream, header, base_url_env, provider}}`.
+  The agent gets a one-time token (`kp-…`) in that variable. The proxy address goes to `base_url_env` (codex:
+  `OPENAI_BASE_URL`), or, for opencode, to `provider.<provider>.options.baseURL`. The key proxy (`keyproxy.py`, a
+  controller thread on 127.0.0.1) checks the token and puts the key from `source` into `header`, then forwards to
+  `upstream` and streams the answer back. It adds up the tokens the answers report. With a `prices` entry for the
+  model, it refuses further requests once the call's `max_cost_per_agent_call` is spent (HTTP 402). Without a price
+  the limit is 2000 requests. The token dies when the call ends (revoked at the final poll or the cancel) and
+  expires after the call's timeout plus 5 minutes. The key never enters the sandbox, an env var or a log.
+  Not yet checked live: that codex honours `OPENAI_BASE_URL` and opencode the provider `baseURL` (TODO).
 - **`endpoints`**: OpenAI API-compatible servers (Ollama, LM Studio, llama.cpp, vLLM), local or on the
   network (`base_url`, `models`, `max_concurrent`, optionally `key_env`). A role with
   `endpoints: [a, b]` (only `runtime: opencode`, `model` = a name from `models`) gets a randomly chosen

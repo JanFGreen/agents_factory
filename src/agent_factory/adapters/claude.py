@@ -84,7 +84,7 @@ class ClaudeRuntime(CliRuntime):
 
     async def start(self, request: AgentRequest) -> RunHandle:
         uuid.UUID(request.session_id)  # the CLI requires a valid UUID
-        return self._spawn(request, resume=False)
+        return self._spawn(request, resume=request.resume)
 
     async def resume(self, handle: RunHandle, request: ResumeRequest) -> RunHandle:
         snapshot = await self.poll(handle)
@@ -101,6 +101,11 @@ class ClaudeRuntime(CliRuntime):
         events = self._events(handle)
         if events is None:
             return RunSnapshot("unknown", error="no event log")
+        snapshot = await self._snapshot(handle, events)
+        snapshot.plan_usage = plan_usage(events)
+        return snapshot
+
+    async def _snapshot(self, handle: RunHandle, events: list[dict]) -> RunSnapshot:
         model_id = None
         for event in events:
             if event.get("type") == "system" and event.get("subtype") == "init":
@@ -153,6 +158,17 @@ class ClaudeRuntime(CliRuntime):
             events_seen=len(events),
             error=error if is_error else None,
         )
+
+
+def plan_usage(events: list[dict]) -> dict[str, dict[str, float]] | None:
+    """The subscription windows of the last `rate_limit_event` (utilization 0..1 and the reset time)."""
+    info = next((e.get("rate_limit_info") or {} for e in reversed(events) if e.get("type") == "rate_limit_event"), None)
+    if not info:
+        return None
+    windows = info.get("unifiedWindows") or {info.get("rateLimitType") or "plan": info}
+    out = {name: {"utilization": float(w["utilization"]), "resets_at": float(w.get("resetsAt") or 0)}
+           for name, w in windows.items() if isinstance(w, dict) and isinstance(w.get("utilization"), (int, float))}
+    return out or None
 
 
 _FATAL_STATUSES = ("400", "401", "403", "404")

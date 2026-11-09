@@ -99,11 +99,17 @@ def test_a_role_on_a_runtime_models_yaml_does_not_define_is_refused(tmp_path):
         load_config(d)
 
 
-def test_runtimes_pass_only_the_named_variables(tmp_path):
+def test_cloud_keys_go_through_the_proxy_never_into_the_agent(tmp_path):
     d = make_factory_dir(tmp_path)
     runtimes = load_config(d).factory.runtime.runtimes
     assert set(runtimes) == {"claude", "codex", "opencode"}
-    assert runtimes["opencode"].pass_env["GOOGLE_GENERATIVE_AI_API_KEY"] == "GEMINI_API_KEY"
+    assert runtimes["opencode"].proxy_keys["GOOGLE_GENERATIVE_AI_API_KEY"].source == "GEMINI_API_KEY"
+    assert not any(r.pass_env for r in runtimes.values())
+    models = yaml.safe_load((d / "models.yaml").read_text())
+    models["runtimes"]["codex"]["pass_env"] = {"OPENAI_API_KEY": "OPENAI_API_KEY"}
+    (d / "models.yaml").write_text(yaml.safe_dump(models))
+    with pytest.raises(ConfigError, match="either passed"):
+        load_config(d)
 
 
 def test_models_yaml_rejects_unknown_sections_and_needs_claude(tmp_path):

@@ -309,12 +309,25 @@ def security_triggers(files: list[FileDiff], policy: Policy) -> list[dict[str, s
     return [{"trigger": t, "path": p} for t, p in found]
 
 
+_MIGRATION = re.compile(r"(^|/)(migrations?|migrate)/|(^|/)[^/]*migration[^/]*\.\w+$|\.sql$", re.I)
+
+
+def merge_signals(files: list[FileDiff], policy: Policy) -> dict:
+    """What the merge policy weighs besides risk: the change's categories and its size (tests and docs not counted)."""
+    triggers = {t["trigger"] for t in security_triggers(files, policy)}
+    triggers |= {"migration"} if any(_MIGRATION.search(d.path) for d in files) else set()
+    lines = sum(1 for d in files if not (is_test_file(d.path) or _DOCS.search(d.path))
+                for line in d.patch.splitlines() if line[:1] in "+-" and line[:3] not in ("+++", "---"))
+    return {"triggers": sorted(triggers), "changed_lines": lines}
+
+
 class BrokerDenied(PermissionError):
     pass
 
 
 SIDE_EFFECTS = {
     "github.comment": ("external_messages", {"pr", "automerge", "release"}),
+    "github.mirror": ("external_messages", {"local", "pr", "automerge", "release"}),  # one-way status issue per job
     "github.create_pr": (None, {"pr", "automerge", "release"}),
     "github.merge": (None, {"automerge", "release"}),
     "local.merge": (None, {"local", "pr", "automerge", "release"}),

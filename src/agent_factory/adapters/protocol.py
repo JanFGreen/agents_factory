@@ -45,6 +45,7 @@ class AgentRequest:
     lease_epoch: int | None = None
     runtime: str = "claude"  # which agent program runs the role (models.yaml `roles.<role>.runtime`)
     runtime_options: dict[str, Any] = field(default_factory=dict)  # e.g. the endpoint chosen for a local model
+    resume: bool = False  # continue the interrupted session `session_id` (runtimes with supports_resume) with `prompt`
 
 
 @dataclass
@@ -77,6 +78,8 @@ class RunSnapshot:
     error: str | None = None
     # False when retrying the same call cannot help (e.g. the API rejected the request itself).
     retryable: bool = True
+    # Subscription windows the runtime reported last, e.g. {"five_hour": {"utilization": 0.55, "resets_at": 1794060600}}.
+    plan_usage: dict[str, dict[str, float]] | None = None
 
 
 @dataclass

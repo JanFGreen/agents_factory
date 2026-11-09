@@ -7,10 +7,11 @@ from .protocol import AgentRequest, AgentRuntime, CancelResult, ResumeRequest, R
 
 
 class RuntimeRouter:
-    def __init__(self, runtimes: dict[str, AgentRuntime]):
+    def __init__(self, runtimes: dict[str, AgentRuntime], key_proxy=None):
         if "claude" not in runtimes:
             raise ValueError("the claude runtime is required")
         self.runtimes = runtimes
+        self.key_proxy = key_proxy
 
     def _for(self, name: str) -> AgentRuntime:
         runtime = self.runtimes.get(name)
@@ -30,10 +31,16 @@ class RuntimeRouter:
         return handle
 
     async def poll(self, handle: RunHandle) -> RunSnapshot:
-        return await self._of(handle).poll(handle)
+        snapshot = await self._of(handle).poll(handle)
+        if self.key_proxy is not None and snapshot.state not in ("queued", "running", "waiting"):
+            self.key_proxy.revoke(handle.meta.get("proxy_tokens"))  # the call is over: so is its key
+        return snapshot
 
     async def cancel(self, handle: RunHandle) -> CancelResult:
-        return await self._of(handle).cancel(handle)
+        result = await self._of(handle).cancel(handle)
+        if self.key_proxy is not None:
+            self.key_proxy.revoke(handle.meta.get("proxy_tokens"))
+        return result
 
     async def resume(self, handle: RunHandle, request: ResumeRequest) -> RunHandle:
         return await self._of(handle).resume(handle, request)

@@ -20,6 +20,7 @@ from ..policy import authorize_side_effect
 from ..workspaces import GitError, WorkspaceManager, git
 
 MARKER = "<!-- agent-factory:idem={key} -->"
+MIRROR_LABEL = "agent-factory"  # the factory's own status issues (github.mirror), never read back as input
 
 
 class Transport(Protocol):
@@ -86,6 +87,14 @@ class GitHubAdapter:
                 return {"number": pr["number"], "url": pr.get("html_url"), "head_sha": pr["head"]["sha"]}
         return None
 
+    def _mirror_issue(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        status, resp = self.t.request("GET", f"{self.repo.base}/issues?state=all&labels={MIRROR_LABEL}&per_page=100")
+        if status != 200:
+            raise OperationTimeout(f"cannot list mirror issues: HTTP {status}")
+        marker = MARKER.format(key=payload["marker"])
+        return next(({"number": i["number"], "url": i.get("html_url"), "body": i.get("body") or ""}
+                     for i in resp or [] if marker in (i.get("body") or "")), None)
+
     def required_checks_state(self, sha: str) -> tuple[str, list[str]]:
         """'success' only if every check run is completed+successful; else 'pending'/'failure'."""
         status, body = self.t.request("GET", f"{self.repo.base}/commits/{sha}/check-runs")
@@ -119,6 +128,21 @@ class GitHubAdapter:
             if status in (200, 201):
                 return {"id": resp["id"]}
             raise OperationTimeout(f"comment: HTTP {status}")
+        if kind == "github.mirror":
+            # one issue per job: the marker names the job; the outbox key names this revision of the text
+            body = f"{payload['body']}\n\n{MARKER.format(key=payload['marker'])}"
+            found = self._mirror_issue(payload)
+            if found:
+                status, resp = self.t.request("PATCH", f"{self.repo.base}/issues/{found['number']}",
+                                              {"title": payload["title"], "body": body, "state": payload.get("state", "open")})
+            else:
+                status, resp = self.t.request("POST", f"{self.repo.base}/issues",
+                                              {"title": payload["title"], "body": body, "labels": [MIRROR_LABEL]})
+            if status in (200, 201):
+                return {"number": resp["number"], "url": resp.get("html_url")}
+            if status >= 500 or status == 429:
+                raise OperationTimeout(f"mirror: HTTP {status}")
+            raise OperationFailed(f"mirror: HTTP {status} {resp}")
         if kind == "github.merge":
             state, problems = self.required_checks_state(payload["sha"])
             if state != "success":
@@ -143,6 +167,9 @@ class GitHubAdapter:
             if status == 200 and resp.get("merged"):
                 return {"merged": True, "sha": resp.get("merge_commit_sha")}
             return None
+        if kind == "github.mirror":  # applied: the job's issue already shows this text
+            found = self._mirror_issue(payload)
+            return found if found and found.pop("body").startswith(payload["body"]) else None
         if kind == "github.comment":
             status, resp = self.t.request("GET", f"{self.repo.base}/issues/{int(payload['number'])}/comments")
             marker = MARKER.format(key=key)
@@ -180,6 +207,15 @@ class StubGitHub:
 
     def _handle(self, method: str, route: str, full: str, body: dict | None) -> tuple[int, Any]:
         parts = route.strip("/").split("/")
+        if parts == ["issues"] and method == "POST":
+            number = max([*self.issues, 0]) + 1
+            self.issues[number] = {"number": number, "html_url": f"https://github.test/issues/{number}", "state": "open", **body}
+            return 201, self.issues[number]
+        if parts == ["issues"] and method == "GET":
+            return 200, list(self.issues.values())
+        if parts[0] == "issues" and len(parts) == 2 and method == "PATCH":
+            self.issues[int(parts[1])].update(body)
+            return 200, self.issues[int(parts[1])]
         if method == "GET" and parts[0] == "issues" and len(parts) == 2:
             issue = self.issues.get(int(parts[1]))
             return (200, issue) if issue else (404, None)

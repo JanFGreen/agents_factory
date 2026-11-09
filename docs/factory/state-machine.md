@@ -87,7 +87,10 @@ from the current identity (`Controller.identity`). See `evidence-contract.md`.
 | `MERGED` | `_g_merge_confirmed` | `context.merge_result.merged == true` (from the outbox) |
 
 `human_required`: `before_merge` → always; `on_risk` → when `jobs.risk` (missing = `high`) is in
-`human_review_risk_levels`; `off` → never. `criteria_digest` = digest of `{head, base, spec, policy}`.
+`human_review_risk_levels`, when the feature diff has a kind of change in `human_review_triggers` (default `auth`,
+`secrets`, `dependency`, `migration`), or when it has more than `human_review_max_changed_lines` (default 1500, tests
+and docs not counted). The diff is measured in READY_TO_MERGE for the candidate head (`merge_signals`). An
+unmeasured or older head needs a human. Event `merge.human_required` names the reasons. `off` → never. `criteria_digest` = digest of `{head, base, spec, policy}`.
 
 Required reviews (`Factory._route_reviews`): always `code-review`, `security-review`,
 `product-verify`, `test-adequacy`; `ui-review` when the diff touches the `ui` surface. Security depth:

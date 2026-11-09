@@ -1,7 +1,7 @@
 import pytest
 
 from agent_factory.config import load_config
-from agent_factory.policy import BrokerDenied, FileDiff, authorize_side_effect, evaluate_diff
+from agent_factory.policy import BrokerDenied, FileDiff, authorize_side_effect, evaluate_diff, merge_signals
 
 from ..conftest import make_factory_dir
 
@@ -148,3 +148,10 @@ def test_targeted_suppressions_and_prose_are_allowed(policy, path, line):
 @pytest.mark.parametrize("path", [".jscpd.json", ".jscpd-baseline.json", ".dependency-cruiser.cjs", "ruff.toml"])
 def test_quality_check_configs_and_baselines_are_protected(policy, path):
     assert any("protected" in v for v in evaluate_diff([FileDiff(path, "M", "+x\n")], policy).violations)
+
+
+def test_merge_signals_name_the_kinds_of_change_and_count_code_lines(policy):
+    files = [FileDiff("package.json", "M", '+  "left-pad": "1.3.0"\n'), FileDiff("db/migrations/002_add.sql", "A", "+ALTER TABLE t ADD c;\n"),
+             FileDiff("src/a.ts", "M", "+a\n-b\n"), FileDiff("src/a.test.ts", "M", "+x\n"), FileDiff("README.md", "M", "+y\n")]
+    signals = merge_signals(files, policy)
+    assert {"dependency", "migration"} <= set(signals["triggers"]) and signals["changed_lines"] == 4

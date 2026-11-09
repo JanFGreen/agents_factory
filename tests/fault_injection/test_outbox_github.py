@@ -89,3 +89,25 @@ def test_issue_intake_takes_only_data_fields(gh):
                       "user": {"login": "x"}, "assignees": []}
     issue = adapter.issue(7)
     assert set(issue) == {"number", "title", "body", "labels"}
+
+
+def test_the_mirror_keeps_one_issue_per_job_and_reconciles_a_lost_response(tmp_path):
+    cfg = load_config(make_factory_dir(tmp_path, **{"policy.mode": "local", "policy.external_messages": True}))
+    stub = StubGitHub()
+    adapter = GitHubAdapter(stub, GitHubRepo("acme", "app"), cfg.factory.policy)
+    store = Store(tmp_path / "s.db")
+    first = {"marker": "mirror:job-1", "title": "[factory] F1", "body": "State: BUILD_TASK"}
+    stub.fail_after_apply.add("POST /issues")
+    op = enqueue(store, "github.mirror", first, "k1")
+    assert outbox.execute(store, op, adapter).state == "unknown"
+    assert outbox.execute(store, op, adapter).state == "confirmed" and len(stub.issues) == 1  # found, not posted twice
+    second = {**first, "body": "State: MERGED", "state": "closed"}
+    assert outbox.execute(store, enqueue(store, "github.mirror", second, "k2"), adapter).state == "confirmed"
+    (issue,) = stub.issues.values()
+    assert issue["body"].startswith("State: MERGED") and issue["state"] == "closed" and "mirror:job-1" in issue["body"]
+
+
+def test_the_mirror_needs_external_messages(gh):
+    store, stub, adapter = gh
+    op = enqueue(store, "github.mirror", {"marker": "mirror:job-1", "title": "t", "body": "b"}, "k")
+    assert outbox.execute(store, op, adapter).state == "failed" and not stub.issues

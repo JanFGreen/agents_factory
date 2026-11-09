@@ -221,6 +221,10 @@ uv run factory cancel <id>
 Active only with `merge.enabled: true` and `human_interaction` = `before_merge` or `on_risk`.
 `--revision` is the `criteria_digest` = digest of `{head, base, spec_digest, policy_digest}` of the current
 candidate. Get it from `uv run factory --json status --job <id>` (field `criteria_digest`).
+`on_risk` asks for a human on high risk, on a change of `auth`, `secrets`, `dependency` or `migration`, and on a
+diff above 1500 changed lines (`merge.human_review_triggers`, `merge.human_review_max_changed_lines`;
+see state-machine.md). `status` also carries `needs_you`, the dashboard's "Needs you" block: what is asked and
+what each offered action does.
 
 ```sh
 uv run factory approve <id> --revision <digest>
@@ -248,6 +252,68 @@ the sequential build skip every other ready task, and the job pauses once the li
 or failed, before feature acceptance. `resume` clears the pause (event `state.resumed` after
 `pause.requested`). In `run` and `resume`, the first Ctrl-C or SIGTERM is such a pause. A second one
 ends the job's agent runs at once (`os.killpg`). Then run `factory recover --all` before `resume`.
+
+**Subscription limit.** Every Claude run reports the fill of the plan's windows (`rate_limit_event`:
+5 hours, 7 days). The controller keeps the last report in `data_dir/plan-usage.json`, and once a window
+reaches `execution.plan_pause_at` (default 0.95; `null` turns it off) every job pauses the same way, with
+the window and its reset time as the reason, so no run stops half way at 100%. A `resume` before the reset
+pauses again at once; after it the job goes on.
+
+**Memory.** Before an agent starts, the controller reads free memory (macOS `kern.memorystatus_level` and the
+kernel's pressure level, Linux `MemAvailable`). Below `execution.min_free_memory_percent` (default 10; 0 turns it
+off) or at critical pressure the call waits (event `memory.waiting`). After `memory_wait_seconds` (default 600)
+the job stops in BLOCKED_ENV with the numbers. An agent killed at full swap costs more than the wait.
+
+**Interrupted runs go on.** When the same call (same prompt digest) ran before and ended without a result
+(stalled, killed, lost, rejected by the API), the next run continues it instead of starting over. On Claude
+it resumes the session (`--resume`, with the full sandbox policy of a new call). A second interruption, or
+another runtime or model, starts a fresh session. A builder is then told that the working directory still
+holds its edits. A run that had done nothing yet (no assistant event in its log) starts fresh. Event
+`agent.continued`.
+
+## Library docs for the builder (Context7, off by default)
+
+With `docs: {context7: true}` in config.yaml the controller reads which declared dependencies (package.json,
+pyproject.toml) the task's existing files import. For up to `docs.max_libraries` of them (default 3) it fetches
+docs from context7.com (`docs.max_tokens`, default 3000; optional `CONTEXT7_API_KEY`). The docs are cached per
+installed version in `data_dir/context7/` and go to the builder as `library_docs`, untrusted data next to
+`installed_version`. Only dependency names leave the machine, never code. Agents get no network for this: the
+controller fetches. A failing service is skipped, never blocking.
+
+## Production signals (`factory collect`)
+
+```sh
+SENTRY_AUTH_TOKEN=... uv run factory collect --repo-id <id> --sentry <org>/<project> [--since 2026-11-05T00:00:00Z]
+uv run factory collect --repo-id <id> --file errors.json [--since ...]   # an export from any tool
+```
+
+The controller reads the unresolved error groups (Sentry API, or a JSON list `{id, title, culprit, count, users,
+first_seen, last_seen, link}`). It scrubs personal data in code: e-mails, IPs, UUIDs, JWTs, `token=`/`password=`
+values, phone-like numbers. Each group is then sorted against the ledger of earlier runs
+(`data_dir/collect/<repo-id>/ledger.json`) and the release time `--since`:
+
+- `regressed`: quiet before, seen again after the release;
+- `new`;
+- `ongoing`: seen after the release;
+- `quiet`: not seen since the release, probably fixed.
+
+The report (`report-<time>.md`) lists them in that order. No agent reads raw telemetry and nothing starts a job: the
+operator turns what matters into `factory submit`. A source that cannot be read stops the command with exit 4
+("source unavailable"); it is never shown as an empty report.
+
+## GitHub status mirror (one way)
+
+```sh
+uv run factory mirror <id> --github owner/name
+```
+
+Creates or updates one issue per job (label `agent-factory`). The issue shows the state, the tasks with their
+attempts, the budget, the "Needs you" asks and the next step. No code, diff or findings go out. The text is
+written by the controller through the outbox (`github.mirror`, reconciled after a lost response). A terminal
+state closes the issue. The factory never reads the issue back: a comment there is not an approval and not
+input. It needs `policy.external_messages: true`; otherwise the command refuses (exit 3) and nothing is sent.
+It uses the operator's `gh` login in the controller process, never in the sandbox. Do not use it for a repo
+that must not have a GitHub copy (LearnEnglish).
 
 ## Recovery after a crash
 
@@ -656,6 +722,10 @@ characters of a 256k feature diff. The defaults live in `config.py`, as with the
 - `lighter_models` and `lighter_models_for_difficulty` (default `code_reviewer: claude-sonnet-5-5` for easy and medium
   tasks): these tasks and every fix-check round get the lighter model at any risk. A hard task's first round keeps the
   role binding. Event `review.routed`.
+- `repeat_round_models` (default Sonnet for `spec_evaluator`, `planner`, `decomposition_reviewer`): a round that redoes
+  a rejected one runs these roles on the lighter model. That means the spec evaluation of a redraft (there are
+  previous findings), the planner's patch of its plan and the review of that patch. The first round keeps the
+  role binding. Event `analysis.routed`.
 - Rework in a parallel lane builds on the rejected attempt. The lane starts at the attempt's head,
   rebased onto the current job head when other tasks landed meanwhile (event `lanes.rework_continued`).
   The job context's `review_head_alias` maps the reviewed head to the moved one, so the next code and
@@ -699,7 +769,8 @@ Agent review:
 - **triage in the controller**: a finding in a file outside the diff never blocks (prefix `[outside this
   diff]`), and a finding another task has already reported (same path, ≥60% of the same words, not
   `fixed`) is skipped. A CHANGES that had only such findings becomes PASS. Event:
-  `security.findings_triaged`;
+  `findings.triaged`. Code review gets the same triage against other tasks' code-review findings
+  (its `known_findings` input), with "outside the diff" meaning outside this task's changes;
 - `full_per_task_for_risk: [high]` restores a full review of every task for high risk.
 
 ## Engineering principles and quality checks (`_shared/engineering-principles.md`)

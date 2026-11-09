@@ -4,6 +4,7 @@
   not call the 5.5 models; the API rejected every request and the job lost 30 minutes).
 - A repo's Node version comes from its own ``.nvmrc`` (or ``engines.node``), resolved to an
   installed nvm toolchain, instead of the first ``node`` on the controller's PATH.
+- Free memory before a new agent starts (live finding, LearnEnglish F6c-D: builders were killed at full swap).
 """
 
 from __future__ import annotations
@@ -15,6 +16,20 @@ import subprocess
 from pathlib import Path
 
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def memory_state() -> dict | None:
+    """Free memory in percent and whether the kernel reports critical pressure; None when this OS does not say."""
+    try:
+        if os.uname().sysname == "Darwin":
+            out = subprocess.run(["sysctl", "-n", "kern.memorystatus_level", "kern.memorystatus_vm_pressure_level"],
+                                 capture_output=True, text=True, timeout=5, check=True).stdout.split()
+            return {"free_percent": int(out[0]), "critical": int(out[1]) >= 4}
+        info = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines() if ":" in line)
+        kb = lambda key: int(info[key].split()[0])  # noqa: E731
+        return {"free_percent": round(100 * kb("MemAvailable") / kb("MemTotal")), "critical": False}
+    except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError):
+        return None
 
 
 def parse_version(text: str) -> tuple[int, int, int] | None:

@@ -3,7 +3,9 @@ rejected attempt, model escalation only on a repeated failure, and the cost of a
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import time
 
 import pytest
 
@@ -148,6 +150,78 @@ def test_a_signal_pause_lets_the_running_agent_finish_and_starts_nothing_new(mak
     env.factory.stop_requested = None  # a new process
     env.factory.resume(job)
     assert env.factory.run(job) == "READY_TO_MERGE"
+
+
+def test_a_nearly_full_claude_plan_pauses_the_job_until_the_window_resets(make_env):
+    env = make_env("standard", responders={"factory-plan": plan_reply([{**TASKS[0]}, {**TASKS[1], "depends_on": ["TASK-01"]}])},
+                   **{"execution.max_builders_per_job": 1})
+    job = env.submit("Add exclamation greeting and farewell")
+    resets = time.time() + 3600
+
+    def implement(request):
+        reply = Builder()(request)
+        reply.plan_usage = {"five_hour": {"utilization": 0.96, "resets_at": resets}, "seven_day": {"utilization": 0.4, "resets_at": resets}}
+        return reply
+
+    env.runtime.responders["factory-implement"] = implement
+    assert env.factory.run(job) == "PAUSED"
+    assert env.calls("factory-implement") == 1 and _states(env, job)["TASK-02"] == "PENDING"
+    reason = env.store.job(job)["blocked_reason"]
+    assert "five_hour at 96%" in reason and "seven_day" not in reason
+    from agent_factory.cli import _status_row
+    row = _status_row(env.store, job)  # what `factory status` shows: the dashboard's "needs you" block, the next step
+    assert row["needs_you"]["asks"] and any(o.startswith("resume:") for o in row["needs_you"]["options"])
+    assert "factory resume" in row["next_step"]
+    env.factory.resume(job)
+    assert env.factory.run(job) == "PAUSED"  # still full: resuming does not start another agent
+    usage = env.factory.data_dir / "plan-usage.json"
+    usage.write_text(json.dumps({"windows": {"five_hour": {"utilization": 0.96, "resets_at": time.time() - 1}}}))
+    env.runtime.responders["factory-implement"] = Builder()
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+
+
+def test_no_agent_starts_while_memory_is_short_and_the_job_stops_visibly(make_env):
+    env = make_env("trivial", **{"execution.memory_wait_seconds": 0})
+    env.factory.memory_probe = lambda: {"free_percent": 4, "critical": False}
+    job = env.submit()
+    assert env.factory.run(job) == "BLOCKED_ENV"
+    assert not env.runtime.calls and "4% free" in env.store.job(job)["blocked_reason"]
+    assert env.events(job, "memory.waiting")
+    env.factory.memory_probe = lambda: {"free_percent": 40, "critical": False}
+    env.factory.resume(job)
+    assert env.factory.run(job) == "READY_TO_MERGE"
+
+
+def test_an_interrupted_builder_continues_its_session_instead_of_starting_over(make_env):
+    env = make_env("trivial")
+    runs = []
+
+    def implement(request):
+        runs.append(request)
+        if len(runs) == 1:
+            return FakeReply(state="failed")  # e.g. killed at full swap: no result event
+        return Builder()(dataclasses.replace(request, prompt=runs[0].prompt))  # the session holds the original inputs
+
+    env.runtime.responders["factory-implement"] = implement
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert runs[1].resume and runs[1].session_id == runs[0].session_id and "was interrupted" in runs[1].prompt
+    assert [json.loads(e["payload_json"])["mode"] for e in env.events(job, "agent.continued")] == ["session"]
+
+
+def test_a_second_interruption_starts_fresh_on_the_kept_worktree(make_env):
+    env = make_env("trivial")
+    runs = []
+
+    def implement(request):
+        runs.append(request)
+        return FakeReply(state="failed") if len(runs) < 3 else Builder()(request)
+
+    env.runtime.responders["factory-implement"] = implement
+    job = env.submit()
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    assert runs[1].resume and not runs[2].resume and "still holds its edits" in runs[2].prompt
 
 
 def test_pause_refuses_unknown_tasks(make_env):

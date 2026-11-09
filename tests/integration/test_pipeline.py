@@ -66,6 +66,8 @@ def test_af03_spec_eval_finds_missing_requirement_before_build(make_env):
     assert transitions.index("MICRO_SPEC", transitions.index("AI_SPEC_EVALUATION")) < transitions.index("BUILD_TASK")
     rounds = env.store.all("SELECT number, outcome FROM analysis_rounds WHERE job_id = ? ORDER BY number", (job,))
     assert [(r["number"], r["outcome"]) for r in rounds] == [(1, "CHANGES"), (2, "PASS")]
+    evaluations = [c.model for c in env.runtime.calls if c.skill == "factory-spec-evaluate"]  # the redraft's check is lighter
+    assert evaluations == [env.cfg.factory.runtime.roles["spec_evaluator"].model, env.cfg.factory.review.repeat_round_models["spec_evaluator"]]
     # final PM perspective compares the product with the original request
     acceptance = env.factory.evidence.latest(job, ResultKind.FEATURE_ACCEPTANCE)
     assert acceptance.verdict == "PASS"
@@ -496,6 +498,14 @@ def test_af44_on_risk_high_waits(make_env):
                    **{"merge.enabled": True, "merge.human_interaction": "on_risk"})
     job = env.submit("Add exclamation greeting and farewell")
     assert env.factory.run(job) == "AWAITING_HUMAN_MERGE"
+
+
+def test_on_risk_asks_a_human_for_a_large_diff(make_env):
+    env = make_env("trivial", **{"merge.enabled": True, "merge.human_interaction": "on_risk", "merge.human_review_max_changed_lines": 1})
+    job = env.submit()
+    assert env.factory.run(job) == "AWAITING_HUMAN_MERGE"
+    reasons = json.loads(env.events(job, "merge.human_required")[0]["payload_json"])["reasons"]
+    assert any("changed lines (> 1)" in r for r in reasons)
 
 
 def test_af45_restart_while_waiting_never_implies_approval(make_env, tmp_path):

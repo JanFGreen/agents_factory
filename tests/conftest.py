@@ -249,6 +249,7 @@ class Env:
             self.runtime = FakeRuntime(responders)
         self.factory = Factory(self.cfg, self.store, self.runtime, get_sandbox(),
                                merge_handler=LocalMergeHandler(self.cfg.factory.policy), poll_interval=0.01)
+        self.factory.memory_probe = lambda: None  # this machine's memory is not the test's input
 
     def submit(self, text: str = "Make the greeting end with an exclamation mark.", mode: str | None = None) -> str:
         feature = normalize({"original_request": text, "acceptance_criteria": []}, source_kind="cli", repo_id="greeter")

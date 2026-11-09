@@ -19,7 +19,7 @@ def with_fetcher(request) -> FakeReply:
 
 
 def triaged(env, job) -> list[dict]:
-    return [json.loads(e["payload_json"]) for e in env.events(job, "security.findings_triaged")]
+    return [p for p in (json.loads(e["payload_json"]) for e in env.events(job, "findings.triaged")) if p["review"] == "security-review"]
 
 
 def security_calls(env, feature: bool) -> list:
@@ -135,3 +135,23 @@ def test_a_secret_in_the_change_fails_the_gate_without_echoing_it(make_env):
     first = env.factory.evidence.read_json(gates[0]["payload_artifact_id"])
     assert gates[0]["verdict"] == "FAIL_POLICY" and "possible secret (AWS access key) added in app/config.py:1" in first["violations"][0]
     assert AWS not in json.dumps(first) and gates[-1]["verdict"] == "PASS"
+
+
+def test_code_review_does_not_repeat_another_tasks_finding_or_block_outside_its_diff(make_env):
+    problem = "Greeting renders the raw name without a length limit"
+
+    def review(request):
+        if "task=TASK-02" in request.prompt:
+            assert [k["id"] for k in inputs(request)["known_findings"]] == ["CR-1"]
+            return FakeReply(envelope("code-review", "CHANGES", payload={}, findings=[
+                finding("CR-9", "app/greet.py", problem), finding("CR-10", "app/legacy.py", "legacy module has no docstring")]))
+        return FakeReply(envelope("code-review", payload={}, findings=[finding("CR-1", "app/greet.py", problem, blocking=False)]))
+
+    env = make_env("standard", responders={"factory-code-review": review}, **{"execution.max_builders_per_job": 1})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    rows = {r["finding_id"]: r["blocking"] for r in env.store.all(
+        "SELECT finding_id, blocking FROM findings WHERE job_id = ? AND kind = 'code-review'", (job,))}
+    assert "CR-9" not in rows and rows["CR-10"] == 0
+    events = [json.loads(e["payload_json"]) for e in env.events(job, "findings.triaged")]
+    assert any(e["review"] == "code-review" and e["duplicates"] == ["CR-9"] and e["outside_diff"] == ["CR-10"] for e in events)

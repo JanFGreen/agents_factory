@@ -29,6 +29,7 @@ from .controller import HALTED, TERMINAL, TransitionRefused
 from .environment import cli_too_old, node_bin_dir
 from .escapes import AREAS, MISSED_BY
 from .features import normalize
+from .keyproxy import KeyProxy, Route
 from .sandbox import SandboxUnavailable, get_sandbox
 from .state import Store
 
@@ -73,13 +74,16 @@ def _make_runtime(cfg, sandbox):
     logs = cfg.data_dir() / "agent-logs"
     rt = cfg.factory.runtime
     runtimes = {"claude": ClaudeRuntime(rt.claude_binary, sandbox, logs)}
+    routes = {f"{name}-{target.lower()}": Route(key.upstream, key.source, key.header)
+              for name, rdef in rt.runtimes.items() for target, key in rdef.proxy_keys.items()}
+    proxy = KeyProxy(routes) if routes else None
     for name, rdef in rt.runtimes.items():
         if name == "codex":
             runtimes[name] = CodexRuntime(_binary(cfg, rdef.binary), sandbox, logs, rdef.pass_env,
-                                          {model: price.model_dump() for model, price in rt.prices.items()})
+                                          {model: price.model_dump() for model, price in rt.prices.items()}, rdef.proxy_keys, proxy)
         elif name == "opencode":
-            runtimes[name] = OpencodeRuntime(_binary(cfg, rdef.binary), sandbox, logs, rdef.pass_env)
-    return RuntimeRouter(runtimes)
+            runtimes[name] = OpencodeRuntime(_binary(cfg, rdef.binary), sandbox, logs, rdef.pass_env, rdef.proxy_keys, proxy)
+    return RuntimeRouter(runtimes, proxy)
 
 
 def _make_factory(cfg, store):
@@ -158,6 +162,7 @@ def cmd_doctor(args) -> int:
         report["runtimes"][name] = {
             "implemented": name in IMPLEMENTED_RUNTIMES, "binary": binary, "installed": installed,
             "env": {target: ("set" if os.environ.get(source) else f"{source} not set") for target, source in rdef.pass_env.items()},
+            "proxied": {target: ("set" if os.environ.get(key.source) else f"{key.source} not set") for target, key in rdef.proxy_keys.items()},
             "roles": roles_by_runtime.get(name, []),
         }
         if roles_by_runtime.get(name) and not installed:
@@ -280,7 +285,20 @@ def _status_row(store: Store, job_id: str) -> dict:
             f"`factory submit --file {f} --repo-id {job['repo_id']}`" for f in ctx["split_files"]) if ctx.get("split_files")
         else _next_step(job["state"]),
         "criteria_digest": _criteria(store, job_id) if job["state"] == "AWAITING_HUMAN_MERGE" else None,
+        "needs_you": _needs_you(store, job_id),
     }
+
+
+def _needs_you(store: Store, job_id: str) -> dict | None:
+    """The dashboard's "needs you" block for the terminal: what is asked and what each offered action does."""
+    from .dashboard import data
+
+    view = data.job(store, job_id, next_step="", criteria_digest=None)
+    asked = view and view["human"]
+    if not asked:
+        return None
+    return {"kind": asked["kind"], "asks": asked["asks"],
+            "options": [f"{p['action']}: {p['label']}" + (f" ({p['detail']})" if p.get("detail") else "") for p in asked["proposals"]]}
 
 
 def _criteria(store: Store, job_id: str) -> str | None:
@@ -298,6 +316,7 @@ def _next_step(state: str) -> str:
         "BLOCKED_ENV": "fix the environment named in blocked_reason, then `factory resume`",
         "NEEDS_INFO": "provide the missing information as a new feature revision",
         "NEEDS_HUMAN": "read blocked_reason; `factory resume` or `factory cancel`",
+        "PAUSED": "`factory resume <id>` when you want it to go on (a Claude plan pause: after the window resets)",
         "AWAITING_HUMAN_MERGE": "`factory approve|reject|rework <id> --revision <criteria digest>`",
         "READY_TO_MERGE": "locally accepted; merge is disabled (merge.enabled=false)",
     }.get(state, "`factory run --job <id>`")
@@ -309,6 +328,70 @@ def cmd_status(args) -> int:
         _out(args, _status_row(store, args.job))
     else:
         _out(args, [_status_row(store, r["job_id"]) for r in store.all("SELECT job_id FROM jobs ORDER BY created_at")])
+    return EXIT_OK
+
+
+def mirror_text(row: dict) -> tuple[str, str]:
+    """Title and body of a job's one-way GitHub status issue: state, tasks, budget, what it needs. No code, no findings."""
+    lines = [f"**State:** `{row['state']}`  ·  path {row['path']}  ·  risk {row['risk']}",
+             f"**Budget:** ${row['budget']['spent']:.2f} of ${row['budget']['limit']:.2f}  ·  analysis rounds {row['analysis_rounds']}",
+             "", "| Task | State | Attempts |", "|---|---|---|"]
+    lines += [f"| {t['task_id']} | {t['state']} | {t['attempts']} |" for t in row["tasks"]]
+    if row.get("needs_you"):
+        lines += ["", "### 🙋 Needs you", *[f"- {a}" for a in row["needs_you"]["asks"]]]
+    lines += ["", f"**Next step:** {row['next_step']}", "",
+              "_Mirror of the factory's state, written by the controller. Changes here are not read back._"]
+    return f"[factory] {row['feature_id']} ({row['job_id']}): {row['state']}", "\n".join(lines)
+
+
+def cmd_mirror(args) -> int:
+    """Create or update the job's status issue on GitHub (one way: the factory never reads it back)."""
+    from . import outbox
+    from .adapters.github import GhCliTransport, GitHubAdapter, GitHubRepo
+    from .identities import digest
+    from .policy import BrokerDenied, authorize_side_effect
+
+    cfg, store = _load(args)
+    owner, _, name = args.github.partition("/")
+    if not owner or not name:
+        raise SystemExit("--github takes owner/name")
+    try:
+        authorize_side_effect(cfg.factory.policy, "github.mirror")
+    except BrokerDenied as exc:
+        _out(args, {"mirrored": False, "reason": str(exc)})
+        return EXIT_REFUSED
+    row = _status_row(store, args.id)
+    title, body = mirror_text(row)
+    payload = {"marker": f"mirror:{args.id}", "title": title, "body": body,
+               "state": "closed" if row["state"] in {str(s) for s in TERMINAL} else "open"}
+    key = outbox.idempotency_key(store.job(args.id)["repo_id"], args.id, digest(payload), "github.mirror")
+    with store.tx() as conn:
+        op_id = outbox.enqueue(store, conn, args.id, "github.mirror", payload, key)
+    result = outbox.execute(store, op_id, GitHubAdapter(GhCliTransport(), GitHubRepo(owner, name), cfg.factory.policy))
+    _out(args, {"mirrored": result.state == "confirmed", "state": result.state, "result": result.result, "error": result.error})
+    return EXIT_OK if result.state == "confirmed" else EXIT_REFUSED
+
+
+def cmd_collect(args) -> int:
+    """Production error groups of one repo, scrubbed and sorted against earlier runs (collect.py). Starts no job."""
+    from . import collect
+
+    cfg, _ = _load(args)
+    try:
+        if args.sentry:
+            org, _, project = args.sentry.partition("/")
+            token = os.environ.get("SENTRY_AUTH_TOKEN")
+            if not token or not project:
+                _out(args, {"collected": False, "reason": "needs --sentry org/project and SENTRY_AUTH_TOKEN"})
+                return EXIT_USAGE
+            source, signals = f"sentry {org}/{project}", collect.from_sentry(org, project, token, host=args.sentry_host)
+        else:
+            source, signals = f"file {args.file}", collect.from_file(Path(args.file))
+    except collect.SourceUnavailable as exc:
+        _out(args, {"collected": False, "reason": f"source unavailable (not the same as no errors): {exc}"})
+        return EXIT_BLOCKED
+    summary = collect.run(source, signals, args.since, cfg.data_dir() / "collect" / args.repo_id)
+    _out(args, {"collected": True, **{k: summary[k] for k in ("source", "report", "counts")}})
     return EXIT_OK
 
 
@@ -753,6 +836,18 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("status")
     s.add_argument("--job")
     s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("collect", help="production error groups of a repo (Sentry or a JSON export), scrubbed; starts no job")
+    s.add_argument("--repo-id", required=True)
+    group = s.add_mutually_exclusive_group(required=True)
+    group.add_argument("--sentry", metavar="ORG/PROJECT", help="reads SENTRY_AUTH_TOKEN")
+    group.add_argument("--file", help="JSON list exported from any tool")
+    s.add_argument("--sentry-host", default="https://sentry.io")
+    s.add_argument("--since", help="release time (ISO 8601): groups not seen since then count as quiet")
+    s.set_defaults(fn=cmd_collect)
+    s = sub.add_parser("mirror", help="create or update the job's status issue on GitHub (one way; needs policy.external_messages)")
+    s.add_argument("id")
+    s.add_argument("--github", required=True, metavar="OWNER/NAME")
+    s.set_defaults(fn=cmd_mirror)
     for name, fn in (("inspect", cmd_inspect), ("resume", cmd_resume), ("cancel", cmd_cancel), ("verify", cmd_verify)):
         s = sub.add_parser(name)
         s.add_argument("id")

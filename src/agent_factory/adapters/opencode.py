@@ -27,8 +27,9 @@ class OpencodeRuntime(CliRuntime):
     name = "opencode"
     home_writable = ("Library/Caches", ".local/state")
 
-    def __init__(self, binary: str, sandbox: Sandbox, log_dir: Path, pass_env: dict[str, str] | None = None):
-        super().__init__(binary, sandbox, log_dir, pass_env)
+    def __init__(self, binary: str, sandbox: Sandbox, log_dir: Path, pass_env: dict[str, str] | None = None,
+                 proxy_keys: dict | None = None, key_proxy=None):
+        super().__init__(binary, sandbox, log_dir, pass_env, proxy_keys, key_proxy)
         self.cache_dir = log_dir / "opencode-cache"  # provider packages, shared by calls
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -50,9 +51,13 @@ class OpencodeRuntime(CliRuntime):
             "autoupdate": False,
             "share": "disabled",
         }
+        providers = {key.provider: {"options": {"baseURL": url}} for target, key in self.proxy_keys.items()
+                     if key.provider and (url := self.proxy_base_url(target))}  # cloud providers through the key proxy
+        if providers:
+            config["provider"] = providers
         endpoint = request.runtime_options.get("endpoint")
         if endpoint:
-            config["provider"] = {endpoint["name"]: {
+            config["provider"] = {**providers, endpoint["name"]: {
                 "npm": "@ai-sdk/openai-compatible", "name": endpoint["name"],
                 "options": {"baseURL": endpoint["base_url"], **({"apiKey": "{env:FACTORY_ENDPOINT_KEY}"} if endpoint.get("key_env") else {})},
                 "models": {request.model: {"name": request.model}},

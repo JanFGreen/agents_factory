@@ -346,13 +346,26 @@ class Controller:
         return GuardResult(ok, why)
 
     def human_required(self, job_id: str) -> bool:
+        return bool(self.human_reasons(job_id))
+
+    def human_reasons(self, job_id: str) -> list[str]:
+        """Why this candidate needs a human approval before merge (empty: it does not)."""
         merge = self.cfg.factory.merge
-        risk = self.store.job(job_id)["risk"] or "high"
+        job = self.store.job(job_id)
+        risk = job["risk"] or "high"
         if merge.human_interaction == "before_merge":
-            return True
-        if merge.human_interaction == "on_risk":
-            return risk in merge.human_review_risk_levels
-        return False
+            return ["merge.human_interaction is before_merge"]
+        if merge.human_interaction != "on_risk":
+            return []
+        reasons = [f"risk {risk}"] if risk in merge.human_review_risk_levels else []
+        signals = self.store.job_context(job_id).get("merge_signals")
+        if not signals or signals.get("head") != self.identity(job_id).head_sha:
+            return [*reasons, "the candidate's change was not measured"]  # fail closed
+        if kinds := [t for t in signals["triggers"] if t in merge.human_review_triggers]:
+            reasons.append(f"changes {', '.join(kinds)}")
+        if merge.human_review_max_changed_lines and signals["changed_lines"] > merge.human_review_max_changed_lines:
+            reasons.append(f"{signals['changed_lines']} changed lines (> {merge.human_review_max_changed_lines})")
+        return reasons
 
     def valid_approval(self, job_id: str) -> bool:
         row = self.store.one(

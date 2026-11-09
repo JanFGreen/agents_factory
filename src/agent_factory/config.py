@@ -241,6 +241,13 @@ class Execution(Strict):
     # Read-only claude calls write a 5-minute prompt cache (1.25x input price instead of 2x for 1 hour); builders keep
     # 1 hour, a long test run between two of their turns would expire the short one. Code default, as above.
     short_cache_for_read_only: bool = True
+    # Pause every job before its next agent once a Claude subscription window (5 hours, 7 days) is this full, so a
+    # run never dies half way at 100%. None turns it off. Code default, as above.
+    plan_pause_at: float | None = Field(default=0.95, gt=0, le=1)
+    # A new agent waits while free memory is below this percent or the kernel reports critical pressure, then the job
+    # stops in BLOCKED_ENV after `memory_wait_seconds`. 0 turns it off. Code defaults, as above.
+    min_free_memory_percent: int = Field(default=10, ge=0, le=90)
+    memory_wait_seconds: int = Field(default=600, ge=0)
 
     @model_validator(mode="after")
     def _lanes_fit_agent_slots(self) -> "Execution":
@@ -283,6 +290,10 @@ class Merge(Strict):
     enabled: bool
     human_interaction: Literal["off", "before_merge", "on_risk"]
     human_review_risk_levels: list[Literal["low", "medium", "high"]]
+    # `on_risk` also asks a human for these kinds of change (security trigger names and `migration`) and for a feature
+    # diff above this many changed lines, tests and docs not counted. Code defaults (config.yaml is in the policy digest).
+    human_review_triggers: list[str] = ["auth", "secrets", "dependency", "migration"]
+    human_review_max_changed_lines: int | None = Field(default=1500, ge=1)
     approval_timeout_action: Literal["wait", "cancel"]
     require_current_head: Literal[True]
     require_required_checks: Literal[True]
@@ -293,14 +304,32 @@ AgentRuntimeName = Literal["claude", "codex", "opencode"]
 IMPLEMENTED_RUNTIMES = {"claude", "codex", "opencode"}  # each has an adapter in adapters/
 
 
+class ProxyKeyDef(Strict):
+    """A key the agent never sees: it gets a one-time token for the controller's key proxy (keyproxy.py)."""
+
+    source: str  # variable with the real key in the controller environment
+    upstream: str = Field(pattern=r"^https://")  # API base the proxy forwards to, e.g. https://api.openai.com/v1
+    header: Literal["authorization", "x-api-key", "x-goog-api-key"] = "authorization"
+    base_url_env: str | None = None  # variable that points the agent program at the proxy (codex: OPENAI_BASE_URL)
+    provider: str | None = None  # opencode provider whose baseURL is the proxy (openai, google, anthropic)
+
+
 class AgentRuntimeDef(Strict):
     """How an agent program is launched (models.yaml `runtimes`)."""
 
     binary: str  # a command on PATH, or a path relative to the factory checkout (tools/...)
     min_cli_version: str | None = None
     # Variables the agent process receives, as {name inside the agent: name in the controller environment}.
-    # Only these pass; the agent can read them, so prefer a key-holding proxy for shared keys.
+    # Only these pass, and the agent can read them: keys belong in `proxy_keys`.
     pass_env: dict[str, str] = {}
+    # {name inside the agent: proxy route}: the agent gets a one-time token in that variable, never the key.
+    proxy_keys: dict[str, ProxyKeyDef] = {}
+
+    @model_validator(mode="after")
+    def _one_way_per_variable(self) -> "AgentRuntimeDef":
+        if both := sorted(set(self.pass_env) & set(self.proxy_keys)):
+            raise ValueError(f"{both}: a variable is either passed (pass_env) or proxied (proxy_keys), not both")
+        return self
 
 
 class EndpointDef(Strict):
@@ -392,6 +421,10 @@ class ReviewPolicy(Strict):
     # Role -> model for task reviews of tasks at these difficulty levels and for every fix-check round, at any risk.
     lighter_models: dict[str, str] = {"code_reviewer": "claude-sonnet-5-5"}
     lighter_models_for_difficulty: list[Literal["easy", "medium", "hard"]] = ["easy", "medium"]
+    # Role -> model for analysis calls that redo a rejected round: the evaluator checks a redrafted spec against the
+    # previous findings, the planner patches its plan, the reviewer checks the patch (LearnEnglish F5b: ~$2.5-4 a feature).
+    repeat_round_models: dict[str, str] = {"spec_evaluator": "claude-sonnet-5-5", "planner": "claude-sonnet-5-5",
+                                           "decomposition_reviewer": "claude-sonnet-5-5"}
     # A low or medium finding of these reviews blocks only when a run proves it: a probe test that fails in the trusted
     # runner (code-review), a mutation the tests let through (test-adequacy). Unproven ones are open follow-ups.
     # Measured on LearnEnglish F1-F6c: none of 89 blocking findings of the two reviews came with a run.
@@ -495,6 +528,14 @@ class LessonsPolicy(Strict):
     classes: dict[str, str] = {}  # extra classes: name -> regex over finding text, added to the built-in ones
 
 
+class DocsPolicy(Strict):
+    """Library docs for the builder (libdocs.py). Off by default: dependency names go to context7.com."""
+
+    context7: bool = False
+    max_libraries: int = Field(default=3, ge=1, le=10)
+    max_tokens: int = Field(default=3000, ge=500, le=20000)
+
+
 class FactoryConfig(Strict):
     schema_version: Literal[1]
     data_dir: str
@@ -511,6 +552,7 @@ class FactoryConfig(Strict):
     design: DesignPolicy = DesignPolicy()
     routing: Routing = Routing()
     decision_model: DecisionModel = DecisionModel()
+    docs: DocsPolicy = DocsPolicy()
 
 
 class LoadedConfig(BaseModel):

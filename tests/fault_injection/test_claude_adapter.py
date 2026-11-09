@@ -97,3 +97,16 @@ def test_agent_process_is_sandboxed(runtime, tmp_path):
     assert Path(os.path.realpath(secret_dir)) in policy.resolved().denied_read and policy.network == "full"
     argv = runtime._argv(req(tmp_path), resume=False)
     assert "--permission-mode" in argv and "dontAsk" in argv and "--strict-mcp-config" in argv
+
+
+def test_the_last_rate_limit_event_gives_the_plan_windows():
+    from agent_factory.adapters.claude import plan_usage
+
+    event = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "resetsAt": 10, "rateLimitType": "five_hour",
+             "unifiedWindows": {"five_hour": {"utilization": 0.55, "resetsAt": 10, "status": "allowed"},
+                                "seven_day": {"utilization": 0.58, "resetsAt": 20, "status": "allowed"}}}}
+    older = {"type": "rate_limit_event", "rate_limit_info": {"rateLimitType": "five_hour", "utilization": 0.1, "resetsAt": 5}}
+    assert plan_usage([older, event, {"type": "result"}]) == {"five_hour": {"utilization": 0.55, "resets_at": 10.0},
+                                                              "seven_day": {"utilization": 0.58, "resets_at": 20.0}}
+    assert plan_usage([older]) == {"five_hour": {"utilization": 0.1, "resets_at": 5.0}}
+    assert plan_usage([{"type": "result"}]) is None

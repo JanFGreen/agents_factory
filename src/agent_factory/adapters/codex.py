@@ -27,8 +27,8 @@ class CodexRuntime(CliRuntime):
     home_writable = (".codex", ".cache", "Library/Caches", ".local/state")
 
     def __init__(self, binary: str, sandbox: Sandbox, log_dir: Path, pass_env: dict[str, str] | None = None,
-                 prices: dict[str, dict[str, float]] | None = None):
-        super().__init__(binary, sandbox, log_dir, pass_env)
+                 prices: dict[str, dict[str, float]] | None = None, proxy_keys: dict | None = None, key_proxy=None):
+        super().__init__(binary, sandbox, log_dir, pass_env, proxy_keys, key_proxy)
         self.prices = prices or {}
 
     async def capabilities(self) -> RuntimeCapabilities:

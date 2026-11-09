@@ -54,6 +54,24 @@ def test_a_rejected_plan_is_patched_and_the_review_checks_the_patch(make_env):
     assert revised == [{"changed": ["TASK-02"], "added": [], "removed": []}]
 
 
+def test_the_patch_and_its_review_run_on_the_lighter_model(make_env):
+    reviews = []
+
+    def review(request) -> FakeReply:
+        reviews.append(request)
+        return decomposition_reply("CHANGES" if len(reviews) == 1 else "PASS")
+
+    env = make_env("standard", responders={"factory-plan": _patching_planner([]), "factory-decomposition-review": review})
+    job = env.submit("Add exclamation greeting and farewell")
+    assert env.factory.run(job) == "READY_TO_MERGE"
+    lighter = env.cfg.factory.review.repeat_round_models
+    roles = env.cfg.factory.runtime.roles
+    assert [c.model for c in env.runtime.calls if c.skill == "factory-plan"] == [roles["planner"].model, lighter["planner"]]
+    assert [r.model for r in reviews] == [roles["decomposition_reviewer"].model, lighter["decomposition_reviewer"]]
+    routed = [json.loads(e["payload_json"])["skill"] for e in env.events(job, "analysis.routed")]
+    assert routed == ["factory-plan", "factory-decomposition-review"]
+
+
 def test_a_plan_is_patched_after_the_spec_is_redrafted(make_env):
     """Live finding (LearnEnglish F6b): a round from options redrafted the spec, and a patch of the current plan stopped the job."""
     from agent_factory import analysis

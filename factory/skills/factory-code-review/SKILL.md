@@ -33,6 +33,8 @@ complexity than the classification assumed.
   spec scenarios for those requirements; `design.md` contracts when present.
 - Classification of the feature (`complexity_path`, `risk`) and repo-map conventions.
 - Builder handoff (claims to check) and open finding IDs from earlier attempts.
+- `known_findings`: code-review findings other tasks of this feature already have on record. Do not report
+  them again; a finding in a file outside this task's diff never blocks (the controller enforces both).
 - `spec_advisories`: non-blocking spec findings. Not handling one is never blocking by itself.
 - `effect_sites`: files of the diff the controller found to call the network, handle requests,
   write persistent data, use browser storage or timers (`{path, kinds}`), and `probe_workspace`:
