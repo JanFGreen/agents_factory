@@ -207,6 +207,26 @@ def test_sast_tells_a_database_exec_from_a_shell_and_allows_a_pragma_from_a_cons
     assert "migrate.ts" not in bad.excerpt
 
 
+@pytest.mark.skipif(not SEMGREP.exists(), reason="NOT_RUN: pinned semgrep not installed (uv sync --project tools/semgrep)")
+def test_python_repos_get_the_same_sast_check(setup):
+    from agent_factory.runner import load_checks
+
+    runner, wt, _, _ = setup
+    root = Path(__file__).resolve().parents[2]
+    runner.factory_root = root
+    sast = next(c for c in load_checks(root / "factory" / "checks" / "default.yaml").checks if c.name == "sast")
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=wt, check=True)
+    (wt / "README.md").write_text("app\n")
+    base = _commit(wt, "base")
+    (wt / "ok.py").write_text("def add(a, b):\n    return a + b\n")
+    _commit(wt, "clean change")
+    assert runner.run_check(sast, wt, job_id="job-000000000001", head_sha=None, tree_sha=None, base_sha=base).verdict == "PASS"
+    (wt / "run.py").write_text("import subprocess\nsubprocess.run(cmd, shell=True)\n")
+    _commit(wt, "shell")
+    bad = runner.run_check(sast, wt, job_id="job-000000000001", head_sha=None, tree_sha=None, base_sha=base)
+    assert bad.verdict == "FAIL_CODE" and "py-subprocess-shell" in bad.excerpt
+
+
 def _commit(wt, msg):
     subprocess.run(["git", "add", "-A"], cwd=wt, check=True)
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg], cwd=wt, check=True)

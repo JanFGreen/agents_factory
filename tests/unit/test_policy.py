@@ -17,6 +17,21 @@ def test_af11_auth_endpoint_in_ui_change_raises_risk(policy):
     assert report.risk == "high" and "security" in report.surfaces
 
 
+@pytest.mark.parametrize("line", ["const session = startStudySession()", "tokens.push(token)", "color: tokens.primary"])
+def test_a_study_session_or_a_parse_token_is_not_auth(policy, line):
+    report = evaluate_diff([FileDiff("src/game.ts", "M", f"+{line}\n")], policy)
+    assert report.risk == "low" and "security" not in report.surfaces
+
+
+@pytest.mark.parametrize("line", ["const accessToken = res.json()", "req.session.user = id", "headers.Authorization = `Bearer ${t}`"])
+def test_auth_forms_of_session_and_token_raise_risk(policy, line):
+    assert evaluate_diff([FileDiff("src/api.ts", "M", f"+{line}\n")], policy).risk == "high"
+
+
+def test_a_test_file_naming_a_password_does_not_raise_risk(policy):
+    assert evaluate_diff([FileDiff("src/scores.test.ts", "M", '+const password = "x"\n')], policy).risk == "low"
+
+
 def test_ui_surface_detected(policy):
     assert "ui" in evaluate_diff([FileDiff("web/Button.tsx", "M", "+x")], policy).surfaces
 

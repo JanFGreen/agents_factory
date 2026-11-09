@@ -19,7 +19,10 @@ RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 # Signals that raise risk regardless of what intake called the change.
 _CONTENT_RULES: list[tuple[str, re.Pattern[str], str]] = [
-    ("high", re.compile(r"\b(password|passwd|secret|token|api[_-]?key|credential|jwt|oauth|session)\b", re.I), "credential/auth handling"),
+    # Bare `session` and `token` are too common (a study session, a design or parse token); only their auth forms count.
+    ("high", re.compile(r"\b(password|passwd|secret|api[_-]?key|credential|jwt|oauth|bearer|"
+                        r"(access|auth|refresh|id|csrf|api|session)[_-]?token|session[_-]?(id|cookie|secret)|req\.session|set-cookie)\b", re.I),
+     "credential/auth handling"),
     ("high", re.compile(r"@(app|router|bp)\.(route|get|post|put|delete|patch)\b|\bAPIRouter\b|\bexpress\.Router\b"), "new or changed HTTP endpoint"),
     ("high", re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b.+\b(FROM|INTO|SET)\b|execute\(\s*f[\"']", re.I), "SQL"),
     ("high", re.compile(r"\bwebhook\b", re.I), "webhook"),
@@ -231,7 +234,7 @@ def evaluate_diff(
         for line in ([] if _DOCS.search(diff.path) else added.splitlines()):
             if any(p.search(line) for p in _SUPPRESSION):
                 report.violations.append(f"quality check suppressed in {diff.path}: {line.strip()[:120]}")
-        for level, pattern, label in _CONTENT_RULES:
+        for level, pattern, label in ([] if is_test_file(diff.path) else _CONTENT_RULES):
             if pattern.search(added):
                 report.risk = max_risk(report.risk, level)
                 report.risk_reasons.append(f"{label} in {diff.path}")

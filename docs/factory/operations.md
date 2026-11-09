@@ -677,7 +677,7 @@ Deterministic checks run before the agent review:
   pass) and key-shaped literals: private key, AWS, GitHub, OpenAI/Anthropic, Google,
   Slack, Stripe live, JWT, and outside tests also `password = "<random value>"`. The result is FAIL_POLICY
   with the file and line. The value never goes into evidence;
-- **`sast`** (`node.yaml` manifest): pinned semgrep (`tools/semgrep`, `uv sync --project tools/semgrep`)
+- **`sast`** (`node.yaml` and `default.yaml` manifests): pinned semgrep (`tools/semgrep`, `uv sync --project tools/semgrep`)
   with the local rules `factory/checks/semgrep/security.yml`. Works offline, with no network in the sandbox,
   `--metrics=off`. With `--baseline-commit {base_sha}` it reports only code added by the job.
   The rules cover eval, command and SQL injection, HTML sinks (XSS), weak randomness and password hashes,
