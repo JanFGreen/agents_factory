@@ -23,7 +23,7 @@ the operator, Claude CLI agents and test commands run in a sandbox. The descript
 | State and evidence | `data_dir/state.db`, `data_dir/artifacts/` | source of truth for guards |
 | Configuration and checks | `factory/` in the factory repo | they define what counts as PASS |
 | Holdout | `data_dir/holdout/` | private evaluator scenarios (the mechanism is not implemented; only the deny exists) |
-| Operator credentials | `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.netrc`, `~/.docker`, `~/.kube`, `~/.npmrc`, `~/.pypirc`, variables such as `GH_TOKEN` | access to external systems |
+| Operator credentials | `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.netrc`, `~/.docker`, `~/.kube`, `~/.npmrc`, `~/.pypirc`, `~/.config/gcloud`, `~/.azure`, `~/.config/op`, `~/.terraform.d`, `~/.git-credentials`, variables such as `GH_TOKEN` | access to external systems |
 | Base branch | `origin/<base>` | merge of unverified code |
 | Other jobs' worktrees | `data_dir/worktrees/<other-job>` | job isolation |
 

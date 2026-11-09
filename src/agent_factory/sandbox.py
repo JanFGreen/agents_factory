@@ -20,7 +20,10 @@ from typing import Literal
 Network = Literal["none", "localhost", "full"]
 
 SAFE_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM")
-HOME_SECRET_DIRS = (".ssh", ".aws", ".gnupg", ".config/gh", ".netrc", ".docker", ".kube", ".npmrc", ".pypirc")
+HOME_SECRET_DIRS = (
+    ".ssh", ".aws", ".gnupg", ".config/gh", ".netrc", ".docker", ".kube", ".npmrc", ".pypirc",
+    ".config/gcloud", ".azure", ".config/op", ".terraform.d", ".git-credentials",
+)
 
 
 class SandboxUnavailable(RuntimeError):

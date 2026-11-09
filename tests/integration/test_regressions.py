@@ -125,6 +125,15 @@ def test_agents_cannot_read_factory_golden_tests():
     assert evals in [p.resolve() for p in default_denied_reads(Path("/nonexistent"))]
 
 
+def test_agents_cannot_read_cloud_and_password_manager_credentials():
+    from pathlib import Path
+
+    from agent_factory.sandbox import default_denied_reads
+    denied = default_denied_reads(Path("/nonexistent"))
+    for name in (".config/gcloud", ".azure", ".config/op", ".terraform.d", ".git-credentials"):
+        assert Path.home() / name in denied
+
+
 def test_generated_bytecode_is_never_committed_or_counted(make_env):
     """Live finding: a builder ran Python via Bash; .pyc files were committed, inflating the diff,
     triggering a false reclassification and out-of-scope review/policy failures."""
