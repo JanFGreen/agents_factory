@@ -234,3 +234,21 @@ Fix rounds cost the most (builder + 5 reviewers on Opus) — the main cost lever
 | Role models are not chosen by benchmark | role eval on the dev suite, then record the choice in `docs/factory/model-routing.md` |
 
 Without authorization, the following were not run live: GitHub (PR/merge/CI), issue intake and release. Their implementation and stub tests exist. I do not claim they work against real GitHub.
+
+## A/B: smallest-change principles (EP-5 ladder, EP-20, EP-21), 2026-11-09
+
+`single-agent` profile, `tests/evals/dev.yaml`, 20 tasks × 2 runs per arm, Claude Sonnet 5.5 builder. Arm *old* =
+the principles before 4a7d0d8, arm *new* = after; nothing else differs. Pilot (n=40 per arm, small tasks).
+
+| Arm | Golden PASS | Code lines added | Test lines added | Cost | Median time |
+|---|---|---|---|---|---|
+| old | 38/40 | 400 (median 8.5 per task) | 909 | $4.12 ($0.103 a task) | 19.3 s |
+| new | 38/40 | 358 (median 8.0) | 865 | $4.34 ($0.109 a task) | 19.9 s |
+
+- Correctness is unchanged; both arms fail E07 (ids after delete) twice.
+- New code is 10.5% smaller. The cut comes from the larger tasks: E05/E06 −30%, E15 −11%, one E14 run 7 lines
+  instead of 20. On one- and two-line fixes there was nothing to cut. Example (E06): the old arm added a custom
+  `NoteNotFoundError` class, the new one raised the built-in `KeyError` (ladder step 3).
+- The builder costs 5% more, which matches the longer principles text in the prompt.
+- Not measured: the reviewers' lean pass and the full pipeline (`--profile full`). The ponytail benchmark's −53%
+  came from larger tasks than this suite.
