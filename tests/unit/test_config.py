@@ -13,6 +13,18 @@ def test_project_config_loads(tmp_path):
     assert len(cfg.policy_digest) == 64
 
 
+def test_parallelism_limits_are_outside_the_policy_digest(tmp_path):
+    d = make_factory_dir(tmp_path)
+    before = load_config(d).policy_digest
+    raw = yaml.safe_load((d / "config.yaml").read_text())
+    raw["execution"].update(max_agent_processes=6, max_builders_per_job=5, max_test_processes=3)
+    (d / "config.yaml").write_text(yaml.safe_dump(raw))
+    assert load_config(d).policy_digest == before
+    raw["execution"]["job_deadline_minutes"] += 1
+    (d / "config.yaml").write_text(yaml.safe_dump(raw))
+    assert load_config(d).policy_digest != before
+
+
 def test_unquoted_off_is_a_boolean_and_rejected(tmp_path):
     d = make_factory_dir(tmp_path)
     text = (d / "config.yaml").read_text().replace("human_interaction: 'off'", "human_interaction: off")

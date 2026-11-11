@@ -172,7 +172,8 @@ lane agents, marks attempts `abandoned`, restores the tasks and removes the lane
 - **Parallelism across jobs**: `factory run` without `--job` processes jobs one by one; `max_active_jobs`,
   `max_test_processes`, `max_integration_candidates`, `command_timeout_seconds`, `job_deadline_minutes`
   are validated but unused. Enforced are the `agent_process` slot (`max_agent_processes`) and
-  `max_builders_per_job` (lanes above).
+  `max_builders_per_job` (lanes above). These two and `max_test_processes` are capacity, not policy: they
+  are left out of the policy digest, so raising them during a job and running `factory resume` keeps its evidence.
 
 - **Skills not called in orchestration**: `factory-repo-map` (the controller does `git ls-files`),
   `factory-test-design`, `factory-evidence-audit`, `factory-recover`, `factory-retrospective`,

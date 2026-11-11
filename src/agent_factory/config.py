@@ -624,6 +624,16 @@ def _merge_models(raw_factory: dict, raw_models: Any, source: Path) -> dict:
     return merged
 
 
+# Capacity, not policy: how many agents and test runs go at once changes no result, so raising it
+# during a job (then `factory resume`) keeps the job's evidence valid.
+_CAPACITY_KEYS = ("max_agent_processes", "max_builders_per_job", "max_test_processes")
+
+
+def _policy_view(raw_factory: dict) -> dict:
+    execution = {k: v for k, v in raw_factory["execution"].items() if k not in _CAPACITY_KEYS}
+    return {**raw_factory, "execution": execution}
+
+
 def load_config(factory_dir: Path) -> LoadedConfig:
     factory_dir = factory_dir.resolve()
     raw_factory = load_yaml(factory_dir / "config.yaml")
@@ -642,5 +652,5 @@ def load_config(factory_dir: Path) -> LoadedConfig:
         workflow=workflow,
         selection=selection,
         factory_dir=factory_dir,
-        policy_digest=digest({"factory": raw_factory, "workflow": raw_workflow, "selection": raw_selection, "models": raw_models}),
+        policy_digest=digest({"factory": _policy_view(raw_factory), "workflow": raw_workflow, "selection": raw_selection, "models": raw_models}),
     )
