@@ -46,7 +46,11 @@ def _literal_prefix(pattern: str) -> str:
 
 def _code_scope(scope: list[str]) -> list[str]:
     # Test files are in every task's scope (policy); a clash there shows up as a merge conflict.
-    return [p for p in scope if not is_test_file(p) and _literal_prefix(p) not in ("tests", "test")]
+    code = [p for p in scope if not is_test_file(p) and _literal_prefix(p) not in ("tests", "test")]
+    # A task that owns only named test-side files (e.g. src/ui/tests/focusRingRule.ts) is decided by those files.
+    if not code and scope and all(p == _literal_prefix(p) and "." in p.rsplit("/", 1)[-1] for p in scope):
+        return scope
+    return code
 
 
 def scopes_overlap(a: list[str], b: list[str]) -> bool:

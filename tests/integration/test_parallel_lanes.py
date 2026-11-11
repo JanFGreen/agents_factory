@@ -198,6 +198,9 @@ def test_one_builder_per_job_builds_sequentially(make_env):
     (["src/a.ts", "src/a.test.ts"], ["src/b.ts", "src/a.test.ts"], False),
     ([], ["src/b.ts"], True),
     (["tests"], ["src/b.ts"], True),  # no code scope = unknown = conservative
+    (["src/ui/tests/focusRingRule.ts"], ["src/ui/tests/targetSizeRule.ts"], False),  # named files under tests/
+    (["src/ui/tests/focusRingRule.ts"], ["src/ui/tests/focusRingRule.ts"], True),
+    (["src/ui/tests/*.ts"], ["src/ui/tests/targetSizeRule.ts"], True),
 ])
 def test_scope_overlap(a, b, overlap):
     assert scopes_overlap(a, b) is overlap
