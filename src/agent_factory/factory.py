@@ -3249,7 +3249,9 @@ class Factory(ParallelLanes):
     def _record_plan_usage(self, windows: dict[str, dict[str, float]]) -> None:
         """The subscription usage the last run reported, shared by every job and controller of this data dir."""
         path = self.data_dir / "plan-usage.json"
-        tmp = path.with_suffix(f".{os.getpid()}.tmp")
+        # One temp file per call: parallel lanes are threads of one process, so a pid alone is shared
+        # and one lane's replace took the file another was about to move (F11 lane crash).
+        tmp = path.with_suffix(f".{os.getpid()}.{uuid.uuid4().hex}.tmp")
         tmp.write_text(json.dumps({"windows": windows, "recorded_at": time.time()}))
         os.replace(tmp, path)
 

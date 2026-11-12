@@ -71,6 +71,39 @@ def test_independent_tasks_build_at_the_same_time_and_both_land(make_env):
     assert "--" not in sh(wt, "git", "worktree", "list")  # no lane left registered
 
 
+def test_a_lane_directory_left_without_its_worktree_is_cleared_on_recovery(make_env):
+    env = _env(make_env, {"factory-implement": lambda r: _impl(EDITS[_task(r)])})
+    job = env.submit("Add exclamation greeting and farewell")
+    for _ in range(60):
+        if env.state(job) == "BUILD_TASK":
+            break
+        env.factory.step(job)
+    lane = env.factory._lane_path(job, "TASK-01")
+    (lane / ".vite-cache").mkdir(parents=True)  # a crashed lane's test wrote this after git removed the worktree
+    with env.store.tx() as conn:
+        conn.execute("UPDATE tasks SET state = 'BUILDING', attempts = 1 WHERE job_id = ?", (job,))
+    env.store.update_job_context(job, parallel_wave=["TASK-01", "TASK-02"])
+    assert _run(env, job) == "READY_TO_MERGE"
+    wt = Path(env.store.job(job)["worktree"])
+    assert (wt / "app" / "farewell.py").read_text() == FAREWELL and (wt / "app" / "greet.py").read_text() == GREET_BANG
+    assert not lane.exists()
+
+
+def test_a_building_task_missing_from_the_recorded_wave_is_recovered_not_deadlocked(make_env):
+    env = _env(make_env, {"factory-implement": lambda r: _impl(EDITS[_task(r)])})
+    job = env.submit("Add exclamation greeting and farewell")
+    for _ in range(60):
+        if env.state(job) == "BUILD_TASK":
+            break
+        env.factory.step(job)
+    with env.store.tx() as conn:  # a lane that died before its wave was recorded
+        conn.execute("UPDATE tasks SET state = 'BUILDING', attempts = 1 WHERE job_id = ? AND task_id = 'TASK-02'", (job,))
+    env.store.update_job_context(job, parallel_wave=None)
+    assert _run(env, job) == "READY_TO_MERGE"
+    assert {t["state"] for t in _tasks(env, job).values()} == {"ACCEPTED"}
+    assert any(e["kind"] == "lanes.recovered" and json.loads(e["payload_json"])["tasks"] == ["TASK-02"] for e in env.store.events_for(job))
+
+
 def test_lane_agents_cannot_read_the_job_worktree_or_other_lanes(make_env):
     env = _env(make_env, {"factory-implement": lambda r: _impl(EDITS[_task(r)])})
     job = env.submit("Add exclamation greeting and farewell")

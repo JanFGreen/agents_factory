@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -126,8 +127,14 @@ class ParallelLanes:
         return wave if len(wave) >= 2 or any(t in kept for t in wave) else []
 
     def _recover_wave(self: "Factory", job_id: str) -> None:
-        """A controller that died with lanes running left them behind: stop their agents, drop the lanes."""
-        wave = self._ctx(job_id).get("parallel_wave")
+        """A controller that died with lanes running left them behind: stop their agents, drop the lanes.
+
+        Besides the recorded wave, any other BUILDING task but the sequential current one is an orphan too: no wave
+        runs between steps (one controller per job), and a lane that failed to start left no record (F11 TASK-05)."""
+        ctx = self._ctx(job_id)
+        wave = list(ctx.get("parallel_wave") or [])
+        wave += [r["task_id"] for r in self.store.all("SELECT task_id FROM tasks WHERE job_id = ? AND state = 'BUILDING' ORDER BY order_idx", (job_id,))
+                 if r["task_id"] not in wave and r["task_id"] != ctx.get("current_task")]
         if not wave:
             return
         repo = Path(self._job(job_id)["repo_path"])
@@ -499,4 +506,7 @@ class ParallelLanes:
     def _remove_lane(repo: Path, path: Path) -> None:
         if path.exists():
             subprocess.run(["git", "worktree", "remove", "--force", str(path)], cwd=repo, capture_output=True)
+        # Not a worktree any more but still there: a test of the crashed lane wrote a cache (.vite-cache) after
+        # git removed it, and `worktree add` refuses an existing directory (F11 TASK-05). The path is this lane's own.
+        shutil.rmtree(path, ignore_errors=True)
         subprocess.run(["git", "worktree", "prune"], cwd=repo, capture_output=True)

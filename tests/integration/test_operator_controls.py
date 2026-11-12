@@ -181,6 +181,29 @@ def test_a_nearly_full_claude_plan_pauses_the_job_until_the_window_resets(make_e
     assert env.factory.run(job) == "READY_TO_MERGE"
 
 
+def test_parallel_lanes_record_plan_usage_without_racing(make_env):
+    import threading
+    env = make_env("trivial")
+    windows = {"five_hour": {"utilization": 0.2, "resets_at": time.time() + 3600}}
+    errors: list[BaseException] = []
+
+    def record():
+        try:
+            for _ in range(50):
+                env.factory._record_plan_usage(windows)
+        except BaseException as exc:  # noqa: BLE001 - the race shows as FileNotFoundError in a lane thread
+            errors.append(exc)
+
+    threads = [threading.Thread(target=record) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert json.loads((env.factory.data_dir / "plan-usage.json").read_text())["windows"] == windows
+    assert not list(env.factory.data_dir.glob("plan-usage.*.tmp"))
+
+
 def test_no_agent_starts_while_memory_is_short_and_the_job_stops_visibly(make_env):
     env = make_env("trivial", **{"execution.memory_wait_seconds": 0})
     env.factory.memory_probe = lambda: {"free_percent": 4, "critical": False}
