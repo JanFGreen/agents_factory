@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
@@ -25,6 +26,10 @@ from .protocol import (
     RuntimeCapabilities,
     Usage,
 )
+
+
+# How long a process may stay alive after its result event before its process group is stopped.
+RESULT_EXIT_GRACE_SECONDS = 15.0
 
 
 class ClaudeRuntime(CliRuntime):
@@ -107,10 +112,23 @@ class ClaudeRuntime(CliRuntime):
 
     async def _snapshot(self, handle: RunHandle, events: list[dict]) -> RunSnapshot:
         model_id = None
-        for event in events:
+        last_init = -1
+        for i, event in enumerate(events):
             if event.get("type") == "system" and event.get("subtype") == "init":
-                model_id = event.get("model")
-        result = next((e for e in reversed(events) if e.get("type") == "result"), None)
+                model_id, last_init = event.get("model"), i
+        # Only a result of the current turn ends the run. Live finding (tic-tac-toe2 TASK-09): a resumed session first
+        # emitted a 0-turn result for its stopped background shell, then a new init and five more minutes of edits.
+        result_at = next((i for i in range(len(events) - 1, last_init, -1) if events[i].get("type") == "result"), None)
+        result = events[result_at] if result_at is not None else None
+        if result is not None and self._alive(handle):
+            # The CLI exits right after its result; one still alive is waiting on something it started (a background
+            # shell, a server) that must not outlive the run and write to the worktree under the reviewers.
+            seen = handle.meta.get("result_seen")
+            if not seen or seen[0] != result_at:
+                handle.meta["result_seen"] = seen = [result_at, time.time()]
+            if time.time() - seen[1] < RESULT_EXIT_GRACE_SECONDS:
+                return RunSnapshot("running", model_id=model_id, events_seen=len(events))
+            await self.cancel(handle)  # the result stands; whatever kept the process alive is stopped with its group
         fatal = _fatal_api_error(events)
         if fatal is not None:
             # The CLI keeps re-prompting itself after a rejected request (old CLI for the model,

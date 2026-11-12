@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 import time
 from pathlib import Path
 
+from agent_factory.adapters import claude as claude_adapter
 from agent_factory.adapters.claude import ClaudeRuntime
 from agent_factory.adapters.protocol import RunHandle
 
@@ -76,3 +78,45 @@ def test_rejected_login_on_the_result_event_names_the_reason(tmp_path):
     other = {**revoked, "api_error_status": None, "result": "Prompt is too long"}
     snap = asyncio.run(ClaudeRuntime("claude", None, tmp_path).poll(_log(tmp_path, [other])))  # type: ignore[arg-type]
     assert snap.state == "failed" and snap.error == "Prompt is too long"
+
+
+def _alive_handle(tmp_path: Path, events: list[dict]) -> tuple[RunHandle, subprocess.Popen]:
+    proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    time.sleep(0.2)  # until the child leads its own process group (killpg before that is EPERM on macOS)
+    handle = _log(tmp_path, events)
+    handle.pid = proc.pid
+    return handle, proc
+
+
+INIT = {"type": "system", "subtype": "init", "model": "claude-opus-5-5"}
+RESULT = {"type": "result", "subtype": "success", "is_error": False, "result": "done", "total_cost_usd": 0.5,
+          "structured_output": ENVELOPE}
+
+
+def test_a_result_before_the_last_init_does_not_end_a_resumed_run(tmp_path):
+    """Live finding (tic-tac-toe2 TASK-09): a resumed session's 0-turn result ended the run while it kept editing."""
+    events = [INIT, {**RESULT, "num_turns": 0, "structured_output": None}, INIT, _tool_use({"file_path": "src/ui/app.css"})]
+    handle, proc = _alive_handle(tmp_path, events)
+    try:
+        assert asyncio.run(ClaudeRuntime("claude", None, tmp_path).poll(handle)).state == "running"  # type: ignore[arg-type]
+        proc.kill()
+        proc.wait()
+        snap = asyncio.run(ClaudeRuntime("claude", None, tmp_path).poll(handle))  # type: ignore[arg-type]
+        assert snap.state == "failed" and "without result event" in (snap.error or "")
+    finally:
+        proc.kill()
+
+
+def test_a_process_alive_after_its_result_is_stopped_before_the_run_ends(tmp_path, monkeypatch):
+    handle, proc = _alive_handle(tmp_path, [INIT, RESULT])
+    runtime = ClaudeRuntime("claude", None, tmp_path)  # type: ignore[arg-type]
+    runtime._procs[handle.run_id] = proc  # as after a launch: the runtime reaps its own child
+    try:
+        assert asyncio.run(runtime.poll(handle)).state == "running"  # within the grace: the CLI may still be exiting
+        assert proc.poll() is None
+        monkeypatch.setattr(claude_adapter, "RESULT_EXIT_GRACE_SECONDS", 0.0)
+        snap = asyncio.run(runtime.poll(handle))
+        assert snap.state == "succeeded" and snap.structured == ENVELOPE
+        assert proc.wait(timeout=10) is not None  # its process group was stopped
+    finally:
+        proc.kill()
